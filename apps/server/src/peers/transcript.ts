@@ -15,6 +15,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   type PeerName,
+  type PeerThreadCursor,
   type PeerThreadStatus,
   type PeerThreadSummary,
   type PeerTranscriptEntry,
@@ -96,20 +97,48 @@ export const summarizePeerThread = (
   model: thread.modelSelection.model ?? null,
   status: resolvePeerThreadStatus(thread),
   lastActivityAt: peerThreadLastActivityAt(thread),
+  createdAt: thread.createdAt,
   branch: thread.branch,
 });
 
+const descendingBy = (
+  timestampOf: (summary: PeerThreadSummary) => string,
+): ((a: PeerThreadSummary, b: PeerThreadSummary) => number) => {
+  return (a, b) => {
+    const left = Date.parse(timestampOf(a));
+    const right = Date.parse(timestampOf(b));
+    const leftMs = Number.isNaN(left) ? Number.NEGATIVE_INFINITY : left;
+    const rightMs = Number.isNaN(right) ? Number.NEGATIVE_INFINITY : right;
+    if (leftMs !== rightMs) return rightMs - leftMs;
+    // Descending on the tiebreak too, so it matches the cursor comparison
+    // below and paging cannot skip or repeat a row at a shared timestamp.
+    return b.threadId.localeCompare(a.threadId);
+  };
+};
+
 /** Most-recent-first, with a stable tiebreak so equal timestamps do not shuffle. */
-export const comparePeerThreadsByActivity = (
-  a: PeerThreadSummary,
-  b: PeerThreadSummary,
-): number => {
-  const left = Date.parse(a.lastActivityAt);
-  const right = Date.parse(b.lastActivityAt);
-  const leftMs = Number.isNaN(left) ? Number.NEGATIVE_INFINITY : left;
-  const rightMs = Number.isNaN(right) ? Number.NEGATIVE_INFINITY : right;
-  if (leftMs !== rightMs) return rightMs - leftMs;
-  return a.threadId.localeCompare(b.threadId);
+export const comparePeerThreadsByActivity = descendingBy((summary) => summary.lastActivityAt);
+
+/** Newest-first by creation. The only order a `(createdAt, threadId)` cursor can traverse. */
+export const comparePeerThreadsByCreation = descendingBy((summary) => summary.createdAt);
+
+/**
+ * Keeps only the threads strictly after the cursor in creation order, matching
+ * the comparator above so a page boundary never drops or duplicates a thread
+ * whose `createdAt` ties with the cursor's.
+ */
+export const applyPeerThreadCursor = (
+  threads: ReadonlyArray<PeerThreadSummary>,
+  cursor: PeerThreadCursor,
+): ReadonlyArray<PeerThreadSummary> => {
+  const cursorMs = Date.parse(cursor.createdAt);
+  const cursorKey = Number.isNaN(cursorMs) ? Number.NEGATIVE_INFINITY : cursorMs;
+  return threads.filter((thread) => {
+    const parsed = Date.parse(thread.createdAt);
+    const threadKey = Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+    if (threadKey !== cursorKey) return threadKey < cursorKey;
+    return thread.threadId.localeCompare(cursor.threadId) < 0;
+  });
 };
 
 const clip = (value: string, maxChars: number): string =>

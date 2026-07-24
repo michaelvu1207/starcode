@@ -78,6 +78,21 @@ export const exchangePeerPairingToken = Effect.fn("peers.exchangePairingToken")(
     .pipe(Effect.timeout(PEER_REQUEST_TIMEOUT));
 });
 
+/**
+ * Asks the peer what a bearer token actually grants. Used to validate a
+ * directly-supplied peer token: the granted scopes come from the peer's own
+ * session store, so a caller cannot misdeclare what they pasted in.
+ */
+export const fetchPeerSessionState = Effect.fn("peers.fetchSessionState")(function* (input: {
+  readonly baseUrl: string;
+  readonly credential: string;
+}) {
+  const client = yield* makePeerClient(input.baseUrl);
+  return yield* client.auth
+    .session({ headers: bearer(input.credential) })
+    .pipe(Effect.timeout(PEER_REQUEST_TIMEOUT));
+});
+
 /** Unauthenticated peer identity probe, used to stamp the registry entry. */
 export const fetchPeerDescriptor = Effect.fn("peers.fetchDescriptor")(function* (baseUrl: string) {
   const client = yield* makePeerClient(baseUrl);

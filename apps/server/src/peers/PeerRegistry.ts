@@ -13,8 +13,8 @@
  * @module PeerRegistry
  */
 import {
+  AuthEnvironmentScope,
   PeerEnvironment,
-  type AuthEnvironmentScope,
   type PeerName,
   type PeerRegisterInput,
 } from "@t3tools/contracts";
@@ -38,9 +38,12 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   exchangePeerPairingToken,
   fetchPeerDescriptor,
+  fetchPeerSessionState,
   normalizePeerBaseUrl,
   PEER_CREDENTIAL_SCOPES,
 } from "./PeerEnvironmentClient.ts";
+
+const isAuthEnvironmentScope = Schema.is(AuthEnvironmentScope);
 
 export class PeerRegistryStateError extends Schema.TaggedErrorClass<PeerRegistryStateError>()(
   "PeerRegistryStateError",
@@ -58,8 +61,10 @@ export const PeerRegistrationFailureReason = Schema.Literals([
   "invalid_base_url",
   "duplicate_name",
   "exchange_rejected",
+  "token_rejected",
   "peer_unreachable",
   "scope_not_granted",
+  "scope_too_broad",
 ]);
 export type PeerRegistrationFailureReason = typeof PeerRegistrationFailureReason.Type;
 
@@ -188,6 +193,81 @@ export const make = Effect.gen(function* () {
     return Option.map(credential, (value) => ({ peer, credential: value }) satisfies ResolvedPeer);
   });
 
+  interface ResolvedCredential {
+    readonly credential: string;
+    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly credentialExpiresAt: string;
+  }
+
+  /**
+   * Turns either credential input into a stored bearer plus the scopes the
+   * peer says it carries. Both branches end up asking the peer, never the
+   * caller, what the credential is actually good for.
+   */
+  const resolveCredential = Effect.fn("PeerRegistry.resolveCredential")(function* (
+    baseUrl: string,
+    input: PeerRegisterInput,
+  ): Effect.fn.Return<ResolvedCredential, PeerRegistrationError> {
+    const now = yield* DateTime.now;
+    if ("token" in input.credential) {
+      const state = yield* fetchPeerSessionState({
+        baseUrl,
+        credential: input.credential.token,
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.mapError(
+          (cause) =>
+            new PeerRegistrationError({
+              reason: "peer_unreachable",
+              name: input.name,
+              detail: Cause.pretty(Cause.fail(cause)),
+            }),
+        ),
+      );
+      if (!state.authenticated) {
+        return yield* new PeerRegistrationError({
+          reason: "token_rejected",
+          name: input.name,
+          detail: "The peer did not recognize this token.",
+        });
+      }
+      return {
+        credential: input.credential.token,
+        grantedScopes: state.scopes ?? [],
+        // A session token carries its own expiry; when the peer does not
+        // report one, record the request time so the entry still shows an age.
+        credentialExpiresAt: DateTime.formatIso(
+          state.expiresAt === undefined ? now : state.expiresAt,
+        ),
+      };
+    }
+
+    // Redeem first: a pairing token is single-use, so persisting before the
+    // exchange would leave an entry whose credential can never be obtained.
+    const exchanged = yield* exchangePeerPairingToken({
+      baseUrl,
+      pairingToken: input.credential.pairingToken,
+      label: `t3 peer ${input.name}`,
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.mapError(
+        (cause) =>
+          new PeerRegistrationError({
+            reason: "exchange_rejected",
+            name: input.name,
+            detail: Cause.pretty(Cause.fail(cause)),
+          }),
+      ),
+    );
+    return {
+      credential: exchanged.access_token,
+      grantedScopes: (parseOAuthScope(exchanged.scope) ?? []).filter(isAuthEnvironmentScope),
+      credentialExpiresAt: DateTime.formatIso(
+        DateTime.addDuration(now, `${Math.max(exchanged.expires_in, 0)} seconds`),
+      ),
+    };
+  });
+
   const register: PeerRegistryShape["register"] = Effect.fn("PeerRegistry.register")(
     function* (input) {
       const baseUrl = normalizePeerBaseUrl(input.baseUrl);
@@ -204,31 +284,31 @@ export const make = Effect.gen(function* () {
         return yield* new PeerRegistrationError({ reason: "duplicate_name", name: input.name });
       }
 
-      // Redeem first: a pairing token is single-use, so persisting before the
-      // exchange would leave an entry whose credential can never be obtained.
-      const exchanged = yield* exchangePeerPairingToken({
-        baseUrl,
-        pairingToken: input.pairingToken,
-        label: `t3 peer ${input.name}`,
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.mapError(
-          (cause) =>
-            new PeerRegistrationError({
-              reason: "exchange_rejected",
-              name: input.name,
-              detail: Cause.pretty(Cause.fail(cause)),
-            }),
-        ),
-      );
+      const resolved = yield* resolveCredential(baseUrl, input);
 
-      const grantedScopes = parseOAuthScope(exchanged.scope) ?? [];
-      const missing = PEER_CREDENTIAL_SCOPES.filter((scope) => !grantedScopes.includes(scope));
+      // Least privilege is enforced here rather than trusted from the caller:
+      // both paths report the scopes the *peer* says the credential carries.
+      // A token that can also operate the peer is refused outright, so a
+      // mis-issued administrative token cannot quietly become a federation
+      // credential with write authority over another machine.
+      const missing = PEER_CREDENTIAL_SCOPES.filter(
+        (scope) => !resolved.grantedScopes.includes(scope),
+      );
       if (missing.length > 0) {
         return yield* new PeerRegistrationError({
           reason: "scope_not_granted",
           name: input.name,
-          detail: `Peer granted "${exchanged.scope}" but federation requires ${missing.join(", ")}.`,
+          detail: `Peer granted "${resolved.grantedScopes.join(" ")}" but federation requires ${missing.join(", ")}.`,
+        });
+      }
+      const excess = resolved.grantedScopes.filter(
+        (scope) => !(PEER_CREDENTIAL_SCOPES as ReadonlyArray<string>).includes(scope),
+      );
+      if (excess.length > 0) {
+        return yield* new PeerRegistrationError({
+          reason: "scope_too_broad",
+          name: input.name,
+          detail: `Peer credential also grants ${excess.join(", ")}. Issue a read-only token with \`t3 auth session issue --token-only --read-only\`.`,
         });
       }
 
@@ -242,9 +322,6 @@ export const make = Effect.gen(function* () {
 
       const now = yield* DateTime.now;
       const registeredAt = DateTime.formatIso(now);
-      const credentialExpiresAt = DateTime.formatIso(
-        DateTime.addDuration(now, `${Math.max(exchanged.expires_in, 0)} seconds`),
-      );
 
       const peer: PeerEnvironment = {
         name: input.name,
@@ -257,11 +334,9 @@ export const make = Effect.gen(function* () {
           onNone: () => null,
           onSome: (value) => value.label,
         }),
-        scopes: grantedScopes.filter((scope): scope is AuthEnvironmentScope =>
-          (PEER_CREDENTIAL_SCOPES as ReadonlyArray<string>).includes(scope),
-        ),
+        scopes: resolved.grantedScopes,
         registeredAt,
-        credentialExpiresAt,
+        credentialExpiresAt: resolved.credentialExpiresAt,
       };
 
       yield* writeSemaphore.withPermits(1)(
@@ -270,7 +345,7 @@ export const make = Effect.gen(function* () {
           if (file.peers.some((candidate) => candidate.name === peer.name)) {
             return yield* new PeerRegistrationError({ reason: "duplicate_name", name: peer.name });
           }
-          yield* writeCredential(peer.name, exchanged.access_token);
+          yield* writeCredential(peer.name, resolved.credential);
           yield* writeFile({ version: 1, peers: [...file.peers, peer] });
         }),
       );

@@ -16,9 +16,11 @@ import {
   PeerFederationError,
   type PeerName,
   type PeerQueryFailure,
+  type PeerThreadCursor,
   type PeerThreadReadResult,
   type PeerThreadSummary,
   type PeerThreadsListResult,
+  type PeerThreadsOrder,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -31,7 +33,9 @@ import { HttpClient } from "effect/unstable/http";
 import { fetchPeerShellSnapshot, fetchPeerThreadSnapshot } from "./PeerEnvironmentClient.ts";
 import { PeerRegistry, type ResolvedPeer } from "./PeerRegistry.ts";
 import {
+  applyPeerThreadCursor,
   comparePeerThreadsByActivity,
+  comparePeerThreadsByCreation,
   renderPeerTranscript,
   resolvePeerThreadStatus,
   summarizePeerThread,
@@ -41,6 +45,8 @@ export interface PeerThreadReaderShape {
   readonly listThreads: (options: {
     readonly peer?: PeerName | undefined;
     readonly limit?: number | undefined;
+    readonly order?: PeerThreadsOrder | undefined;
+    readonly cursor?: PeerThreadCursor | undefined;
   }) => Effect.Effect<PeerThreadsListResult, PeerFederationError>;
   readonly readThread: (options: {
     readonly peer: PeerName;
@@ -116,6 +122,15 @@ export const make = Effect.gen(function* () {
     "PeerThreadReader.listThreads",
   )(function* (options) {
     const limit = clampLimit(options.limit, PEER_THREADS_LIST_DEFAULT, PEER_THREADS_LIST_MAX);
+    const order = options.order ?? "activity";
+    if (options.cursor !== undefined && order !== "created") {
+      return yield* new PeerFederationError({
+        operation: "list",
+        reason: "cursor_requires_created_order",
+        detail:
+          "Activity order is a ranked head, not a traversable sequence — there is no last_activity_at column to key a cursor on. Pass order=created to page.",
+      });
+    }
     const registered = yield* registry.list.pipe(
       Effect.mapError((cause) => registryUnavailable("list", cause)),
     );
@@ -167,17 +182,28 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
 
-    const threads = results
+    const merged = results
       .flatMap((result) => result.threads)
-      .toSorted(comparePeerThreadsByActivity);
+      .toSorted(order === "created" ? comparePeerThreadsByCreation : comparePeerThreadsByActivity);
+    const eligible =
+      options.cursor === undefined ? merged : applyPeerThreadCursor(merged, options.cursor);
+    const page = eligible.slice(0, limit);
+    const last = page.at(-1);
 
     return {
-      threads: threads.slice(0, limit),
-      totalAvailable: threads.length,
+      threads: page,
+      totalAvailable: eligible.length,
       peersQueried: targets.map((peer) => peer.name),
       failures: results
         .map((result) => result.failure)
         .filter((failure): failure is PeerQueryFailure => failure !== null),
+      order,
+      // Only a creation-ordered page can be resumed; an activity-ranked head
+      // would silently reorder underneath the cursor.
+      nextCursor:
+        order === "created" && last !== undefined && eligible.length > page.length
+          ? { createdAt: last.createdAt, threadId: last.threadId }
+          : null,
     } satisfies PeerThreadsListResult;
   });
 

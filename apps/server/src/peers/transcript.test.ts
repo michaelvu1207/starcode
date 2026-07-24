@@ -6,10 +6,14 @@ import {
   TurnId,
   type OrchestrationMessage,
   type OrchestrationThreadActivity,
+  type PeerThreadCursor,
+  type PeerThreadSummary,
 } from "@t3tools/contracts";
 
 import {
+  applyPeerThreadCursor,
   comparePeerThreadsByActivity,
+  comparePeerThreadsByCreation,
   peerThreadLastActivityAt,
   renderPeerTranscript,
   resolvePeerThreadStatus,
@@ -152,20 +156,62 @@ it("takes the latest timestamp the peer itself reported", () => {
   ).toBe("2026-07-24T00:05:00.000Z");
 });
 
+const summary = (id: string, lastActivityAt: string, createdAt: string) => ({
+  peer: "alpha",
+  title: "t",
+  provider: null,
+  model: null,
+  status: "idle" as const,
+  branch: null,
+  threadId: ThreadId.make(id),
+  lastActivityAt,
+  createdAt,
+});
+
 it("sorts most recently active first with a stable tiebreak", () => {
-  const base = {
-    peer: "alpha",
-    title: "t",
-    provider: null,
-    model: null,
-    status: "idle",
-    branch: null,
-  } as const;
   const sorted = [
-    { ...base, threadId: ThreadId.make("b"), lastActivityAt: "2026-07-24T00:00:00.000Z" },
-    { ...base, threadId: ThreadId.make("c"), lastActivityAt: "2026-07-24T00:02:00.000Z" },
-    { ...base, threadId: ThreadId.make("a"), lastActivityAt: "2026-07-24T00:00:00.000Z" },
+    summary("b", "2026-07-24T00:00:00.000Z", "2026-07-24T00:00:00.000Z"),
+    summary("c", "2026-07-24T00:02:00.000Z", "2026-07-24T00:00:00.000Z"),
+    summary("a", "2026-07-24T00:00:00.000Z", "2026-07-24T00:00:00.000Z"),
   ].toSorted(comparePeerThreadsByActivity);
 
-  expect(sorted.map((entry) => entry.threadId)).toEqual(["c", "a", "b"]);
+  expect(sorted.map((entry) => entry.threadId)).toEqual(["c", "b", "a"]);
+});
+
+it("pages creation order with a (createdAt, threadId) cursor without skips or repeats", () => {
+  // Two threads share a createdAt, which is exactly where a timestamp-only
+  // cursor would either drop one or hand it back twice.
+  const all = [
+    summary("d", "2026-07-24T09:00:00.000Z", "2026-07-24T00:03:00.000Z"),
+    summary("b", "2026-07-24T08:00:00.000Z", "2026-07-24T00:01:00.000Z"),
+    summary("c", "2026-07-24T07:00:00.000Z", "2026-07-24T00:01:00.000Z"),
+    summary("a", "2026-07-24T06:00:00.000Z", "2026-07-24T00:00:00.000Z"),
+  ].toSorted(comparePeerThreadsByCreation);
+
+  expect(all.map((entry) => entry.threadId)).toEqual(["d", "c", "b", "a"]);
+
+  const walked: Array<string> = [];
+  let cursor: PeerThreadCursor | undefined = undefined;
+  for (let page = 0; page < 10; page += 1) {
+    const eligible: ReadonlyArray<PeerThreadSummary> =
+      cursor === undefined ? all : applyPeerThreadCursor(all, cursor);
+    if (eligible.length === 0) break;
+    const rows = eligible.slice(0, 2);
+    walked.push(...rows.map((entry) => entry.threadId));
+    const last = rows.at(-1)!;
+    cursor = { createdAt: last.createdAt, threadId: last.threadId };
+  }
+
+  expect(walked).toEqual(["d", "c", "b", "a"]);
+});
+
+it("a cursor at the last row yields an empty next page", () => {
+  const all = [summary("a", "2026-07-24T06:00:00.000Z", "2026-07-24T00:00:00.000Z")];
+
+  expect(
+    applyPeerThreadCursor(all, {
+      createdAt: "2026-07-24T00:00:00.000Z",
+      threadId: ThreadId.make("a"),
+    }),
+  ).toEqual([]);
 });

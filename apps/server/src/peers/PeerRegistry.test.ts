@@ -39,12 +39,30 @@ it.effect("refuses a base URL that is not an absolute http(s) origin", () =>
       .register({
         name: PeerName.make("bad"),
         baseUrl: "file:///etc/passwd",
-        pairingToken: "irrelevant",
+        credential: { pairingToken: "irrelevant" },
       })
       .pipe(Effect.flip);
 
     assert.isTrue(error._tag === "PeerRegistrationError" && error.reason === "invalid_base_url");
     // The rejection happens before any network call, so nothing is persisted.
+    assert.deepEqual([...(yield* registry.list)], []);
+  }).pipe(Effect.provide(makePeerRegistryLayer())),
+);
+
+it.effect("refuses a direct token before it can be stored when the peer is unreachable", () =>
+  Effect.gen(function* () {
+    const registry = yield* PeerRegistry.PeerRegistry;
+
+    const error = yield* registry
+      .register({
+        name: PeerName.make("offline"),
+        // Reserved by RFC 5737 for documentation; never routable.
+        baseUrl: "http://192.0.2.1:9",
+        credential: { token: "some-bearer-token" },
+      })
+      .pipe(Effect.flip);
+
+    assert.isTrue(error._tag === "PeerRegistrationError" && error.reason === "peer_unreachable");
     assert.deepEqual([...(yield* registry.list)], []);
   }).pipe(Effect.provide(makePeerRegistryLayer())),
 );

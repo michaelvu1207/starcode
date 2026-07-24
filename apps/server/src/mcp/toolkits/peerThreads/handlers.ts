@@ -30,6 +30,8 @@ const handlers = {
         reader.listThreads({
           ...(input.peer === undefined ? {} : { peer: input.peer }),
           ...(input.limit === undefined ? {} : { limit: input.limit }),
+          ...(input.order === undefined ? {} : { order: input.order }),
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         }),
       ),
     ),

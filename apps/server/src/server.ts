@@ -91,9 +91,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import { peersHttpApiLayer } from "./peers/http.ts";
-import * as PeerRegistry from "./peers/PeerRegistry.ts";
-import * as PeerThreadReader from "./peers/PeerThreadReader.ts";
+import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -370,10 +368,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
-  // The peer reader backs the MCP toolkit; the registry additionally backs the
-  // admin routes, so both are provided once for every route in this layer.
-  Layer.provide(PeerThreadReader.layer),
-  Layer.provide(PeerRegistry.layer),
+  Layer.provide(PeerServicesLive),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(browserApiCorsLayer),
 );

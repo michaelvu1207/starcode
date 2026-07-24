@@ -57,11 +57,31 @@ export const PeerEnvironment = Schema.Struct({
 });
 export type PeerEnvironment = typeof PeerEnvironment.Type;
 
+/**
+ * Two ways to hand this environment a peer credential.
+ *
+ * `token` is the v1 path for a small fixed fleet: run
+ * `t3 auth session issue --token-only --read-only` on the peer and paste the
+ * result. Nothing is redeemed — the token is verified against the peer's own
+ * session endpoint and stored.
+ *
+ * `pairingToken` is the browser/one-time path: a single-use pairing credential
+ * is redeemed through the existing RFC 8693 exchange, which narrows the
+ * resulting bearer to `orchestration:read`.
+ *
+ * Either way the stored credential must end up read-only; the difference is
+ * only who narrowed it — the CLI flag, or the exchange.
+ */
+export const PeerCredentialInput = Schema.Union([
+  Schema.Struct({ token: TrimmedNonEmptyString }),
+  Schema.Struct({ pairingToken: TrimmedNonEmptyString }),
+]);
+export type PeerCredentialInput = typeof PeerCredentialInput.Type;
+
 export const PeerRegisterInput = Schema.Struct({
   name: PeerName,
   baseUrl: PeerBaseUrl,
-  /** A single-use pairing token minted on the peer with `orchestration:read`. */
-  pairingToken: TrimmedNonEmptyString,
+  credential: PeerCredentialInput,
 });
 export type PeerRegisterInput = typeof PeerRegisterInput.Type;
 
@@ -100,9 +120,34 @@ export const PeerThreadSummary = Schema.Struct({
   model: Schema.NullOr(TrimmedNonEmptyString),
   status: PeerThreadStatus,
   lastActivityAt: IsoDateTime,
+  createdAt: IsoDateTime,
   branch: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type PeerThreadSummary = typeof PeerThreadSummary.Type;
+
+/**
+ * The fork's thread-list cursor convention. `(createdAt, threadId)` is chosen
+ * to match `idx_projection_threads_shell_active`, so if list paging is ever
+ * pushed down to SQL the cursor already lines up with the supporting index.
+ *
+ * It deliberately does not key on activity: there is no `last_activity_at`
+ * column — activity is a fold over four fields across two projections — so an
+ * activity-keyed cursor could never be satisfied by an index scan.
+ */
+export const PeerThreadCursor = Schema.Struct({
+  createdAt: IsoDateTime,
+  threadId: ThreadId,
+});
+export type PeerThreadCursor = typeof PeerThreadCursor.Type;
+
+/**
+ * `activity` ranks the most recently active threads first and is what an agent
+ * asking "what is running elsewhere" wants; it is a ranked head, bounded by
+ * `limit`. `created` is newest-first by creation and is the only order a
+ * cursor can traverse deterministically.
+ */
+export const PeerThreadsOrder = Schema.Literals(["activity", "created"]);
+export type PeerThreadsOrder = typeof PeerThreadsOrder.Type;
 
 /**
  * One peer that could not be reached. Reported alongside successful results so
@@ -120,6 +165,9 @@ export const PeerThreadsListResult = Schema.Struct({
   totalAvailable: NonNegativeInt,
   peersQueried: Schema.Array(PeerName),
   failures: Schema.Array(PeerQueryFailure),
+  order: PeerThreadsOrder,
+  /** Pass back as `cursor` for the next page. Only set when order is `created`. */
+  nextCursor: Schema.NullOr(PeerThreadCursor),
 });
 export type PeerThreadsListResult = typeof PeerThreadsListResult.Type;
 
@@ -162,7 +210,19 @@ export const PeerThreadsListInput = Schema.Struct({
       Schema.isGreaterThanOrEqualTo(1),
       Schema.isLessThanOrEqualTo(PEER_THREADS_LIST_MAX),
     ).annotate({
-      description: `Maximum threads to return, most recently active first. Defaults to ${PEER_THREADS_LIST_DEFAULT}.`,
+      description: `Maximum threads to return. Defaults to ${PEER_THREADS_LIST_DEFAULT}.`,
+    }),
+  ),
+  order: Schema.optional(
+    PeerThreadsOrder.annotate({
+      description:
+        "activity (default) returns the most recently active threads first. created returns newest-first by creation and is the only order that can be paged with a cursor.",
+    }),
+  ),
+  cursor: Schema.optional(
+    PeerThreadCursor.annotate({
+      description:
+        "Pass the previous response's nextCursor to fetch the next page. Requires order=created.",
     }),
   ),
 });
@@ -203,6 +263,7 @@ export const PeerFederationReason = Schema.Literals([
   "thread_not_found",
   "capability_unavailable",
   "registry_unavailable",
+  "cursor_requires_created_order",
 ]);
 export type PeerFederationReason = typeof PeerFederationReason.Type;
 

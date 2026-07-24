@@ -23,7 +23,7 @@ const peerReadTool = <T extends Tool.Any>(tool: T): T =>
 export const PeerThreadsListTool = peerReadTool(
   Tool.make("peer_threads_list", {
     description:
-      "List agent threads running on other machines registered as peers of this environment. Returns thread id, title, provider, status, and last activity, most recently active first. Pass peer to scope to one machine; omit it to see every peer. Use this to find a thread, then read it with peer_thread_read.",
+      "List agent threads running on other machines registered as peers of this environment. Returns thread id, title, provider, status, and last activity, most recently active first. Pass peer to scope to one machine; omit it to see every peer. To walk every thread rather than just the active head, pass order=created and follow nextCursor. Use this to find a thread, then read it with peer_thread_read.",
     parameters: PeerThreadsListInput,
     success: PeerThreadsListResult,
     failure: PeerFederationError,

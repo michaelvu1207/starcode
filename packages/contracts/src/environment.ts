@@ -51,6 +51,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
+  /** Server serves `/api/peers*` and exposes the peer_threads_* MCP tools, so
+      it can be registered as a federation peer and can register others. Absent
+      on upstream servers, which is exactly the version-skew contract the
+      settlement/snooze capabilities use: missing means unsupported. */
+  peerFederation: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
