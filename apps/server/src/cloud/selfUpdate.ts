@@ -32,6 +32,7 @@ import {
   quoteSystemdValue,
   renderBootServiceUnit,
 } from "./bootService.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 import { ensurePinnedRuntimeInstalled, removePinnedRuntimeInstallation } from "./pinnedRuntime.ts";
 
 /**
@@ -78,19 +79,7 @@ export function isPublishedCliEntry(entryPath: string): boolean {
   return normalizeEntryPath(entryPath).includes("/node_modules/t3/dist/");
 }
 
-/**
- * FORK SWITCH — keep this on while this fork ships under the package name
- * `t3`. Every self-update path npm-installs `t3@<version>` from the PUBLIC
- * registry (pinnedRuntime.ts) and respawns onto it, so a single click on the
- * version-skew banner would replace this fork's server with upstream's build.
- * The banner fires on any version-string inequality, including every dev
- * build, so that click is one stray tap away at all times. With no capability
- * advertised the client degrades to "Copy update command"
- * (ServerUpdateAction.tsx) and the update RPC rejects with the manual-relaunch
- * message. Turn this off only once the published package name is no longer
- * upstream's.
- */
-export const FORK_DISABLE_SELF_UPDATE: boolean = true;
+export { FORK_DISABLE_SELF_UPDATE };
 
 /**
  * The update path this process can offer, or null when only a manual

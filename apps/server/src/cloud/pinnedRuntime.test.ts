@@ -9,12 +9,12 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
-  ensurePinnedRuntimeInstalled,
+  installPinnedRuntime,
   pinnedRuntimePaths,
   removePinnedRuntimeInstallation,
 } from "./pinnedRuntime.ts";
 
-it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+it.layer(NodeServices.layer)("installPinnedRuntime", (it) => {
   it.effect("serializes concurrent installs of the same runtime", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -45,7 +45,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             };
           }),
       });
-      const install = ensurePinnedRuntimeInstalled({
+      const install = installPinnedRuntime({
         baseDir,
         version: "0.0.29",
         fs,
@@ -98,7 +98,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       });
 
       const installFiber = yield* Effect.forkChild(
-        ensurePinnedRuntimeInstalled({
+        installPinnedRuntime({
           baseDir,
           version: "0.0.30",
           fs,

@@ -17,6 +17,7 @@ import {
 import { reconcileService } from "../cli/service.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 
 const isUnsupportedError = Schema.is(BootService.BootServiceUnsupportedError);
 const isCommandError = Schema.is(BootService.BootServiceCommandError);
@@ -246,54 +247,62 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("pins a runtime via npm install when running from the npx cache", () =>
-    Effect.gen(function* () {
-      const { dirs, fs, path } = yield* makeTestContext();
-      const commands: Array<RecordedCommand> = [];
-      const service = yield* BootService.make({
-        baseDir: dirs.baseDir,
-        logsDir: dirs.logsDir,
-        cliVersion: "0.0.27",
-        host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+  // FORK: the three tests below drive the npm-install path, which
+  // FORK_DISABLE_SELF_UPDATE refuses outright. Skipped rather than deleted so
+  // they come back with the switch. The refusal itself is covered by
+  // "refuses to reconcile from an ephemeral CLI" at the end of this suite.
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "pins a runtime via npm install when running from the npx cache",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
 
-      const plan = yield* service.install;
+        const plan = yield* service.install;
 
-      const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
-      assert.equal(
-        plan.t3EntryPath,
-        path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
-      );
-      assert.deepEqual(commands[0], {
-        command: "npm",
-        args: ["install", "--prefix", runtimeDir, "--no-fund", "--no-audit", "t3@0.0.27"],
-      });
-      // Success is recorded via a sentinel so interrupted installs re-run.
-      assert.isTrue(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
-    }),
+        const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
+        assert.equal(
+          plan.t3EntryPath,
+          path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
+        );
+        assert.deepEqual(commands[0], {
+          command: "npm",
+          args: ["install", "--prefix", runtimeDir, "--no-fund", "--no-audit", "t3@0.0.27"],
+        });
+        // Success is recorded via a sentinel so interrupted installs re-run.
+        assert.isTrue(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      }),
   );
 
-  it.effect("reinstalls a pinned runtime when its entry point is missing", () =>
-    Effect.gen(function* () {
-      const { dirs, fs, path } = yield* makeTestContext();
-      const commands: Array<RecordedCommand> = [];
-      const service = yield* BootService.make({
-        baseDir: dirs.baseDir,
-        logsDir: dirs.logsDir,
-        cliVersion: "0.0.27",
-        host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "reinstalls a pinned runtime when its entry point is missing",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
 
-      const plan = yield* service.install;
-      yield* fs.makeDirectory(path.dirname(plan.t3EntryPath), { recursive: true });
-      yield* fs.writeFileString(plan.t3EntryPath, "#!/usr/bin/env node\n");
-      yield* fs.remove(plan.t3EntryPath);
-      commands.length = 0;
+        const plan = yield* service.install;
+        yield* fs.makeDirectory(path.dirname(plan.t3EntryPath), { recursive: true });
+        yield* fs.writeFileString(plan.t3EntryPath, "#!/usr/bin/env node\n");
+        yield* fs.remove(plan.t3EntryPath);
+        commands.length = 0;
 
-      yield* service.install;
+        yield* service.install;
 
-      assert.isTrue(commands.some(({ command }) => command === "npm"));
-    }),
+        assert.isTrue(commands.some(({ command }) => command === "npm"));
+      }),
   );
 
   it.effect("reads executable metadata from host process references", () =>
@@ -317,7 +326,35 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("cleans up and fails when the pinned runtime install fails", () =>
+  // Skipped for the reason above, and specifically because the fork's refusal
+  // also surfaces as a BootServiceCommandError with no runtime directory —
+  // this test would keep passing while no longer exercising npm cleanup.
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "cleans up and fails when the pinned runtime install fails",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(
+          Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "npm" })),
+          provideHostRefs(dirs.home),
+        );
+
+        const error = yield* service.install.pipe(Effect.flip);
+        assert.isTrue(isCommandError(error));
+        const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
+        // The half-installed tree must not be reused by the next attempt.
+        assert.isFalse(yield* fs.exists(runtimeDir));
+        assert.isFalse(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      }),
+  );
+
+  it.effect("refuses to reconcile from an ephemeral CLI without running npm", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
@@ -325,18 +362,26 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
+        // What `npx t3 service update` looks like: the entry point lives in an
+        // ephemeral cache, so upstream would npm-install t3@0.0.27 and point
+        // the unit at that tree.
         host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(
-        Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "npm" })),
-        provideHostRefs(dirs.home),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+
+      const error = yield* reconcileService().pipe(
+        Effect.provideService(BootService.BootService, service),
+        Effect.flip,
       );
 
-      const error = yield* service.install.pipe(Effect.flip);
       assert.isTrue(isCommandError(error));
-      const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
-      // The half-installed tree must not be reused by the next attempt.
-      assert.isFalse(yield* fs.exists(runtimeDir));
-      assert.isFalse(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      assert.include(error.message, "this fork disables");
+      assert.include(error.message, "npm install t3@0.0.27");
+      // Nothing ran and nothing was staged: no npm, no systemctl, no tree.
+      assert.deepEqual(commands, []);
+      assert.isFalse(yield* fs.exists(path.join(dirs.baseDir, "runtime", "versions", "0.0.27")));
+      assert.isFalse(
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+      );
     }),
   );
 
