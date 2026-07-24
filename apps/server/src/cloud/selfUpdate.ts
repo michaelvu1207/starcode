@@ -32,6 +32,7 @@ import {
   quoteSystemdValue,
   renderBootServiceUnit,
 } from "./bootService.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 import { ensurePinnedRuntimeInstalled, removePinnedRuntimeInstallation } from "./pinnedRuntime.ts";
 
 /**
@@ -78,9 +79,27 @@ export function isPublishedCliEntry(entryPath: string): boolean {
   return normalizeEntryPath(entryPath).includes("/node_modules/t3/dist/");
 }
 
+export { FORK_DISABLE_SELF_UPDATE };
+
 /**
  * The update path this process can offer, or null when only a manual
- * relaunch works. "desktop-managed" — the T3 Code desktop app spawned this
+ * relaunch works. Always null in this fork — see FORK_DISABLE_SELF_UPDATE.
+ */
+export const resolveServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_capability",
+)(function* (input: {
+  /** True when the desktop app supervises this backend (mode "desktop"). */
+  readonly desktopManaged: boolean;
+}) {
+  if (FORK_DISABLE_SELF_UPDATE) {
+    return null;
+  }
+  return yield* resolveHostServerSelfUpdateCapability(input);
+});
+
+/**
+ * The update path the host process shape would support, ignoring the fork
+ * switch. "desktop-managed" — the T3 Code desktop app spawned this
  * backend and owns its version; only updating the app updates it.
  * "boot-service" — this is the systemd-supervised process from
  * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
@@ -88,8 +107,8 @@ export function isPublishedCliEntry(entryPath: string): boolean {
  * detached child. Windows foreground runs are unsupported for now (no
  * equivalent of the detach-and-exec handoff below).
  */
-export const resolveServerSelfUpdateCapability = Effect.fn(
-  "cloud.server_self_update.resolve_capability",
+export const resolveHostServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_host_capability",
 )(function* (input: {
   /** True when the desktop app supervises this backend (mode "desktop"). */
   readonly desktopManaged: boolean;

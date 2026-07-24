@@ -94,7 +94,62 @@ it("recognizes published npm artifacts as swappable entry points", () => {
   assert.isFalse(SelfUpdate.isPublishedCliEntry(""));
 });
 
-it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
+it.layer(NodeServices.layer)("FORK_DISABLE_SELF_UPDATE", (it) => {
+  it.effect("advertises no capability even for a shape that could respawn", () =>
+    Effect.gen(function* () {
+      assert.isTrue(
+        SelfUpdate.FORK_DISABLE_SELF_UPDATE,
+        "the fork must not offer an update path onto upstream's npm package",
+      );
+      const entryPath = "/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs";
+      const hostRefs = provideHostRefs({
+        platform: "darwin",
+        env: { HOME: "/home/theo" },
+        entryPath,
+      });
+      assert.equal(
+        yield* SelfUpdate.resolveHostServerSelfUpdateCapability({ desktopManaged: false }).pipe(
+          hostRefs,
+        ),
+        "respawn",
+      );
+      assert.isNull(
+        yield* SelfUpdate.resolveServerSelfUpdateCapability({ desktopManaged: false }).pipe(
+          hostRefs,
+        ),
+      );
+    }),
+  );
+
+  it.effect("rejects the update RPC without installing anything", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* SelfUpdate.make().pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            makeRecordingRunnerLayer(commands),
+            ServerConfig.layerTest(home, path.join(home, ".t3")),
+          ),
+        ),
+        provideHostRefs({
+          platform: "darwin",
+          env: { HOME: home },
+          entryPath: path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs"),
+        }),
+      );
+
+      const error = yield* service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(error.reason, "cannot update itself");
+      // Nothing may reach npm: the install would fetch upstream's package.
+      assert.deepEqual(commands, []);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
   const makeHome = Effect.fn("test.makeHome")(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -127,7 +182,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
       const { home, path } = yield* makeHome();
       const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
       yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(
         provideHostRefs({
@@ -149,7 +204,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
       const { home, path } = yield* makeHome();
       const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
       yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(
         provideHostRefs({
@@ -169,7 +224,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
       yield* writeUnitReferencing(home, entryPath);
       // Same unit on disk, but no INVOCATION_ID: restarting the unit would
       // not replace this process, so it must respawn itself instead.
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(provideHostRefs({ platform: "linux", env: { HOME: home }, entryPath }));
       assert.equal(method, "respawn");
@@ -179,7 +234,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
   it.effect("reports respawn for a foreground npx artifact on darwin", () =>
     Effect.gen(function* () {
       const { home } = yield* makeHome();
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(
         provideHostRefs({
@@ -199,7 +254,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
       // systemd-looking pinned artifact belongs to the app that spawned it.
       const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
       yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: true,
       }).pipe(
         provideHostRefs({
@@ -219,7 +274,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
   it.effect("reports no method for dev checkouts and Windows", () =>
     Effect.gen(function* () {
       const { home } = yield* makeHome();
-      const devMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const devMethod = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(
         provideHostRefs({
@@ -229,7 +284,7 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
         }),
       );
       assert.isNull(devMethod);
-      const windowsMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+      const windowsMethod = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
       }).pipe(
         provideHostRefs({
@@ -243,7 +298,15 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
   );
 });
 
-it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
+it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
+  // FORK: FORK_DISABLE_SELF_UPDATE resolves every capability to null, so
+  // update() always rejects and none of the machinery below is reachable.
+  // Skipped rather than deleted so the coverage comes back with the switch.
+  const it = {
+    ...baseIt,
+    effect: baseIt.effect.skipIf(SelfUpdate.FORK_DISABLE_SELF_UPDATE),
+  };
+
   interface RecordedSpawn {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
