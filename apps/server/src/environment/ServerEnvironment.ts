@@ -142,6 +142,7 @@ export const make = Effect.gen(function* () {
       connectionProbe: true,
       threadSettlement: true,
       threadSnooze: true,
+      peerFederation: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
     },
   };
