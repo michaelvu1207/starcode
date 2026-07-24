@@ -1,26 +1,16 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type {
-  ScopedThreadRef,
-  SidebarProjectGroupingMode,
-  SidebarV2ThreadSortOrder,
-} from "@t3tools/contracts";
+import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
-  ArrowUpDownIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -107,7 +97,6 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
   formatWorkingDurationLabel,
-  firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -117,10 +106,8 @@ import {
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
-import { rankThreadsForSidebarV2 } from "./SidebarV2.activity";
+import { partitionSidebarV2Threads } from "./Sidebar.partition";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -152,10 +139,11 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
-import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarV2ThreadSortMenu } from "./sidebar/SidebarV2ThreadSortMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -164,10 +152,6 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
-const THREAD_SORT_ORDER_LABELS: Record<SidebarV2ThreadSortOrder, string> = {
-  activity: "Needs attention",
-  created_at: "Newest first",
-};
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -967,24 +951,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              {/* The flat list mixes every connected machine, so a remote row
-                names its own: which machine a thread is on decides where its
-                worktree, ports and logs live, and an unlabeled server glyph
-                answers "not here" without answering "then where". */}
-              <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+              <span
+                aria-hidden
+                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+              >
                 {isRemote ? (
-                  <span className="inline-flex min-w-0 items-center gap-1 text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5 shrink-0" />
+                  // One list spans every connected machine, so the glyph names
+                  // the machine: which one a thread runs on decides where its
+                  // worktree, ports and logs live, and a bare server icon
+                  // answers "not here" without answering "then where".
+                  <span className="inline-flex shrink-0 items-center gap-1 text-sidebar-muted-foreground/70">
+                    <ServerIcon aria-hidden className="size-3.5" />
                     {props.environmentLabel ? (
                       <span className="max-w-24 truncate">{props.environmentLabel}</span>
                     ) : null}
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span
-                    aria-hidden
-                    className="pointer-events-none inline-flex shrink-0 items-center opacity-60"
-                  >
+                  <span className="inline-flex shrink-0 items-center opacity-60">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
@@ -1379,66 +1363,18 @@ export default function SidebarV2() {
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
-    // Snooze classification uses a REAL clock, not the quantized minute:
-    // wake times are second-precise and a woken thread must not linger on
-    // the shelf for the rest of the minute. snoozeWakeTick re-runs this
-    // memo exactly at the next wake boundary.
+    // snoozeWakeTick re-runs this memo exactly at the next wake boundary.
     void snoozeWakeTick;
-    const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
-    const active: EnvironmentThreadShell[] = [];
-    const snoozed: EnvironmentThreadShell[] = [];
-    const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-      // Snooze outranks settled classification: an explicitly snoozed thread
-      // belongs to the shelf even if it would also auto-settle (the shelf's
-      // wake time is a stronger statement about when it matters again).
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
-      }
-    }
-    return {
-      activeThreads:
-        threadSortOrder === "activity"
-          ? rankThreadsForSidebarV2(active, {
-              lastVisitedAt: (thread) =>
-                threadLastVisitedAtById[
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-                ],
-            })
-          : sortThreadsForSidebarV2(active),
-      // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
-        (left, right) =>
-          firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
-      ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled),
-      snoozeNow: preciseNow,
-    };
+    return partitionSidebarV2Threads({
+      threads,
+      scopedProjectKeys,
+      serverConfigs,
+      changeRequestStateByKey,
+      autoSettleAfterDays,
+      threadLastVisitedAtById,
+      threadSortOrder,
+      nowMinute,
+    });
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
@@ -2364,57 +2300,7 @@ export default function SidebarV2() {
                   </MenuRadioGroup>
                 </MenuPopup>
               </Menu>
-              <Menu>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <MenuTrigger
-                        render={
-                          <SidebarMenuButton
-                            size="sm"
-                            className="size-8 shrink-0 justify-center rounded-md bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-                            type="button"
-                            aria-label="Sort threads"
-                          />
-                        }
-                      />
-                    }
-                  >
-                    <ArrowUpDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
-                  </TooltipTrigger>
-                  <TooltipPopup side="right">Sort threads</TooltipPopup>
-                </Tooltip>
-                <MenuPopup align="end" side="bottom" className="min-w-52">
-                  <MenuGroup>
-                    <div className="px-2 py-1 font-medium text-muted-foreground sm:text-xs">
-                      Sort threads
-                    </div>
-                    <MenuRadioGroup
-                      value={threadSortOrder}
-                      onValueChange={(value) =>
-                        updateSettings({
-                          sidebarV2ThreadSortOrder: value as SidebarV2ThreadSortOrder,
-                        })
-                      }
-                    >
-                      {(
-                        Object.entries(THREAD_SORT_ORDER_LABELS) as Array<
-                          [SidebarV2ThreadSortOrder, string]
-                        >
-                      ).map(([value, label]) => (
-                        <MenuRadioItem
-                          key={value}
-                          value={value}
-                          closeOnClick
-                          className="min-h-7 py-1 sm:text-xs"
-                        >
-                          {label}
-                        </MenuRadioItem>
-                      ))}
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                </MenuPopup>
-              </Menu>
+              <SidebarV2ThreadSortMenu />
               <Tooltip>
                 <TooltipTrigger
                   render={
