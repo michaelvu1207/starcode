@@ -21,6 +21,14 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+// Sidebar v2 keeps its own thread order because its list is one flat
+// cross-environment inbox, not a per-project tree: "activity" ranks the rows
+// that are blocked on a human first, "created_at" is v2's original static
+// order where a row never moves until its lifecycle changes.
+export const SidebarV2ThreadSortOrder = Schema.Literals(["activity", "created_at"]);
+export type SidebarV2ThreadSortOrder = typeof SidebarV2ThreadSortOrder.Type;
+export const DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER: SidebarV2ThreadSortOrder = "activity";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -114,7 +122,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
-  sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarV2ThreadSortOrder: SidebarV2ThreadSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER)),
+  ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -604,6 +615,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV2ThreadSortOrder: Schema.optionalKey(SidebarV2ThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

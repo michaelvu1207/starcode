@@ -1,11 +1,6 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -102,7 +97,6 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
   formatWorkingDurationLabel,
-  firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -112,9 +106,8 @@ import {
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
+import { partitionSidebarV2Threads } from "./Sidebar.partition";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -150,6 +143,7 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./u
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarV2ThreadSortMenu } from "./sidebar/SidebarV2ThreadSortMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -962,8 +956,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
                 {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                  // One list spans every connected machine, so the glyph names
+                  // the machine: which one a thread runs on decides where its
+                  // worktree, ports and logs live, and a bare server icon
+                  // answers "not here" without answering "then where".
+                  <span className="inline-flex shrink-0 items-center gap-1 text-sidebar-muted-foreground/70">
                     <ServerIcon aria-hidden className="size-3.5" />
+                    {props.environmentLabel ? (
+                      <span className="max-w-24 truncate">{props.environmentLabel}</span>
+                    ) : null}
                   </span>
                 ) : null}
                 {driverKind ? (
@@ -1005,6 +1006,8 @@ export default function SidebarV2() {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const threadSortOrder = useClientSettings((s) => s.sidebarV2ThreadSortOrder);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
@@ -1360,58 +1363,18 @@ export default function SidebarV2() {
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
-    // Snooze classification uses a REAL clock, not the quantized minute:
-    // wake times are second-precise and a woken thread must not linger on
-    // the shelf for the rest of the minute. snoozeWakeTick re-runs this
-    // memo exactly at the next wake boundary.
+    // snoozeWakeTick re-runs this memo exactly at the next wake boundary.
     void snoozeWakeTick;
-    const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
-    const active: EnvironmentThreadShell[] = [];
-    const snoozed: EnvironmentThreadShell[] = [];
-    const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-      // Snooze outranks settled classification: an explicitly snoozed thread
-      // belongs to the shelf even if it would also auto-settle (the shelf's
-      // wake time is a stronger statement about when it matters again).
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
-      }
-    }
-    return {
-      activeThreads: sortThreadsForSidebarV2(active),
-      // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
-        (left, right) =>
-          firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
-      ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled),
-      snoozeNow: preciseNow,
-    };
+    return partitionSidebarV2Threads({
+      threads,
+      scopedProjectKeys,
+      serverConfigs,
+      changeRequestStateByKey,
+      autoSettleAfterDays,
+      threadLastVisitedAtById,
+      threadSortOrder,
+      nowMinute,
+    });
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
@@ -1419,6 +1382,8 @@ export default function SidebarV2() {
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    threadLastVisitedAtById,
+    threadSortOrder,
     threads,
   ]);
 
@@ -2335,6 +2300,7 @@ export default function SidebarV2() {
                   </MenuRadioGroup>
                 </MenuPopup>
               </Menu>
+              <SidebarV2ThreadSortMenu />
               <Tooltip>
                 <TooltipTrigger
                   render={

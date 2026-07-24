@@ -50,10 +50,25 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings sidebar v2", () => {
-  it("defaults the beta off with a three-day auto-settle threshold", () => {
+  it("defaults on, activity-ranked, with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
-    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.sidebarV2Enabled).toBe(true);
+    expect(settings.sidebarV2ThreadSortOrder).toBe("activity");
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+  });
+
+  it("keeps an explicit opt-out and the static creation order selectable", () => {
+    const settings = decodeClientSettings({
+      sidebarV2Enabled: false,
+      sidebarV2ThreadSortOrder: "created_at",
+    });
+    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.sidebarV2ThreadSortOrder).toBe("created_at");
+  });
+
+  it("rejects an unknown v2 thread sort order", () => {
+    expect(() => decodeClientSettings({ sidebarV2ThreadSortOrder: "updated_at" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV2ThreadSortOrder: "updated_at" })).toThrow();
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
