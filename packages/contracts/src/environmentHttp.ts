@@ -33,6 +33,7 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
+import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
@@ -56,6 +57,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_scope",
   "scope_not_granted",
   "invalid_command",
+  "invalid_peer",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -84,6 +86,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "peers_load_failed",
+  "peer_registration_failed",
+  "peer_remove_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -489,6 +494,42 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentPeerMutationErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
+/**
+ * Peer registry administration. Reading a peer's threads happens through the
+ * MCP toolkit, not here — these routes only manage which peers exist, so they
+ * carry the same `access:*` scopes as the pairing-link routes they mirror.
+ */
+export class EnvironmentPeersHttpApi extends HttpApiGroup.make("peers")
+  .add(
+    HttpApiEndpoint.get("list", "/api/peers", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Array(PeerEnvironment),
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("register", "/api/peers/register", {
+      headers: OptionalBearerHeaders,
+      payload: PeerRegisterInput,
+      success: PeerEnvironment,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("remove", "/api/peers/remove", {
+      headers: OptionalBearerHeaders,
+      payload: PeerRemoveInput,
+      success: PeerRemoveResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -554,4 +595,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentPeersHttpApi)
   .add(EnvironmentConnectHttpApi) {}
