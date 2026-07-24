@@ -79,8 +79,38 @@ export function isPublishedCliEntry(entryPath: string): boolean {
 }
 
 /**
+ * FORK SWITCH — keep this on while this fork ships under the package name
+ * `t3`. Every self-update path npm-installs `t3@<version>` from the PUBLIC
+ * registry (pinnedRuntime.ts) and respawns onto it, so a single click on the
+ * version-skew banner would replace this fork's server with upstream's build.
+ * The banner fires on any version-string inequality, including every dev
+ * build, so that click is one stray tap away at all times. With no capability
+ * advertised the client degrades to "Copy update command"
+ * (ServerUpdateAction.tsx) and the update RPC rejects with the manual-relaunch
+ * message. Turn this off only once the published package name is no longer
+ * upstream's.
+ */
+export const FORK_DISABLE_SELF_UPDATE: boolean = true;
+
+/**
  * The update path this process can offer, or null when only a manual
- * relaunch works. "desktop-managed" — the T3 Code desktop app spawned this
+ * relaunch works. Always null in this fork — see FORK_DISABLE_SELF_UPDATE.
+ */
+export const resolveServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_capability",
+)(function* (input: {
+  /** True when the desktop app supervises this backend (mode "desktop"). */
+  readonly desktopManaged: boolean;
+}) {
+  if (FORK_DISABLE_SELF_UPDATE) {
+    return null;
+  }
+  return yield* resolveHostServerSelfUpdateCapability(input);
+});
+
+/**
+ * The update path the host process shape would support, ignoring the fork
+ * switch. "desktop-managed" — the T3 Code desktop app spawned this
  * backend and owns its version; only updating the app updates it.
  * "boot-service" — this is the systemd-supervised process from
  * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
@@ -88,8 +118,8 @@ export function isPublishedCliEntry(entryPath: string): boolean {
  * detached child. Windows foreground runs are unsupported for now (no
  * equivalent of the detach-and-exec handoff below).
  */
-export const resolveServerSelfUpdateCapability = Effect.fn(
-  "cloud.server_self_update.resolve_capability",
+export const resolveHostServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_host_capability",
 )(function* (input: {
   /** True when the desktop app supervises this backend (mode "desktop"). */
   readonly desktopManaged: boolean;

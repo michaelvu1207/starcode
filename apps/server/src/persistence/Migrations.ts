@@ -9,6 +9,7 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 
@@ -110,6 +111,41 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+/** Migrator.make's default tracking table; we never pass a `table` option. */
+const MIGRATIONS_TABLE = "effect_sql_migrations";
+
+/**
+ * Fail the boot when a migration was never applied.
+ *
+ * The Migrator only runs migrations whose id is greater than the highest id
+ * already recorded, and silently skips everything at or below it. So an id
+ * that lands under a previously applied one - a renumbering, a fork/upstream
+ * merge that reuses ids, a reserved high id range - never runs and never
+ * reports anything. The tracking table is the only place that difference is
+ * visible, so compare it against the entries we intended to run.
+ */
+const assertMigrationsApplied = Effect.fn("assertMigrationsApplied")(function* ({
+  toMigrationInclusive,
+}: RunMigrationsOptions) {
+  const sql = yield* SqlClient.SqlClient;
+  const applied = yield* sql<{
+    readonly migration_id: number;
+  }>`SELECT migration_id FROM ${sql(MIGRATIONS_TABLE)}`.withoutTransform;
+  const appliedIds = new Set(applied.map((row) => row.migration_id));
+  const missing = migrationEntries
+    .filter(
+      ([id]) =>
+        (toMigrationInclusive === undefined || id <= toMigrationInclusive) && !appliedIds.has(id),
+    )
+    .map(([id, name]) => `${id}_${name}`);
+  if (missing.length > 0) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: `Migrations were skipped and never applied: ${missing.join(", ")}. Their ids are at or below the highest id in ${MIGRATIONS_TABLE}, so the Migrator passed over them. Renumber them above every applied id (they must be idempotent) rather than editing the tracking table.`,
+    });
+  }
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -120,6 +156,9 @@ export interface RunMigrationsOptions {
  * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
  * then runs any migrations with ID greater than the latest recorded migration.
  *
+ * Fails if any entry is still unrecorded afterwards - see
+ * assertMigrationsApplied.
+ *
  * Returns array of [id, name] tuples for migrations that were run.
  *
  * @returns Effect containing array of executed migrations
@@ -128,6 +167,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  yield* assertMigrationsApplied({ toMigrationInclusive });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

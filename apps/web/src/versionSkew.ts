@@ -57,9 +57,13 @@ export function resolveServerSelfUpdateCapability(
   return serverConfig?.environment.capabilities.serverSelfUpdate ?? null;
 }
 
-/** The command to hand users whose server cannot update itself. */
+/** The command to hand users whose server cannot update itself.
+    FORK: upstream hands out `npx t3@<version>`, which installs upstream's
+    public npm package over this fork's server. This fork is not published to
+    npm — see FORK_DISABLE_SELF_UPDATE in apps/server/src/cloud/selfUpdate.ts —
+    so the only manual update is pulling and rebuilding its checkout. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return `git pull && vp i && vp run start # in the t3code fork checkout (target ${targetVersion})`;
 }
 
 /** One sentence telling the user how to resolve version skew for a server,
