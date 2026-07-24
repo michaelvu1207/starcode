@@ -12,10 +12,15 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+  SidebarV2ThreadSortOrder,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArrowUpDownIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -115,6 +120,7 @@ import {
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
+import { rankThreadsForSidebarV2 } from "./SidebarV2.activity";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -146,7 +152,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -158,6 +164,10 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const THREAD_SORT_ORDER_LABELS: Record<SidebarV2ThreadSortOrder, string> = {
+  activity: "Needs attention",
+  created_at: "Newest first",
+};
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -957,17 +967,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
+              {/* The flat list mixes every connected machine, so a remote row
+                names its own: which machine a thread is on decides where its
+                worktree, ports and logs live, and an unlabeled server glyph
+                answers "not here" without answering "then where". */}
+              <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
                 {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5" />
+                  <span className="inline-flex min-w-0 items-center gap-1 text-sidebar-muted-foreground/70">
+                    <ServerIcon aria-hidden className="size-3.5 shrink-0" />
+                    {props.environmentLabel ? (
+                      <span className="max-w-24 truncate">{props.environmentLabel}</span>
+                    ) : null}
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
+                  <span
+                    aria-hidden
+                    className="pointer-events-none inline-flex shrink-0 items-center opacity-60"
+                  >
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
@@ -1005,6 +1022,8 @@ export default function SidebarV2() {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const threadSortOrder = useClientSettings((s) => s.sidebarV2ThreadSortOrder);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
@@ -1402,7 +1421,15 @@ export default function SidebarV2() {
       }
     }
     return {
-      activeThreads: sortThreadsForSidebarV2(active),
+      activeThreads:
+        threadSortOrder === "activity"
+          ? rankThreadsForSidebarV2(active, {
+              lastVisitedAt: (thread) =>
+                threadLastVisitedAtById[
+                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                ],
+            })
+          : sortThreadsForSidebarV2(active),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
@@ -1419,6 +1446,8 @@ export default function SidebarV2() {
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    threadLastVisitedAtById,
+    threadSortOrder,
     threads,
   ]);
 
@@ -2333,6 +2362,57 @@ export default function SidebarV2() {
                       );
                     })}
                   </MenuRadioGroup>
+                </MenuPopup>
+              </Menu>
+              <Menu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        render={
+                          <SidebarMenuButton
+                            size="sm"
+                            className="size-8 shrink-0 justify-center rounded-md bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                            type="button"
+                            aria-label="Sort threads"
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <ArrowUpDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Sort threads</TooltipPopup>
+                </Tooltip>
+                <MenuPopup align="end" side="bottom" className="min-w-52">
+                  <MenuGroup>
+                    <div className="px-2 py-1 font-medium text-muted-foreground sm:text-xs">
+                      Sort threads
+                    </div>
+                    <MenuRadioGroup
+                      value={threadSortOrder}
+                      onValueChange={(value) =>
+                        updateSettings({
+                          sidebarV2ThreadSortOrder: value as SidebarV2ThreadSortOrder,
+                        })
+                      }
+                    >
+                      {(
+                        Object.entries(THREAD_SORT_ORDER_LABELS) as Array<
+                          [SidebarV2ThreadSortOrder, string]
+                        >
+                      ).map(([value, label]) => (
+                        <MenuRadioItem
+                          key={value}
+                          value={value}
+                          closeOnClick
+                          className="min-h-7 py-1 sm:text-xs"
+                        >
+                          {label}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
                 </MenuPopup>
               </Menu>
               <Tooltip>
