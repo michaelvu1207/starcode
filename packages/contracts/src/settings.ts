@@ -29,6 +29,13 @@ export const SidebarV2ThreadSortOrder = Schema.Literals(["activity", "created_at
 export type SidebarV2ThreadSortOrder = typeof SidebarV2ThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER: SidebarV2ThreadSortOrder = "activity";
 
+// What the sidebar v2 list is a list OF: "inbox" is the flat cross-environment
+// stream, "connections" groups the same threads under the machine that runs
+// them. Defaults to "inbox" so the view only changes when a user asks for it.
+export const SidebarV2ViewMode = Schema.Literals(["inbox", "connections"]);
+export type SidebarV2ViewMode = typeof SidebarV2ViewMode.Type;
+export const DEFAULT_SIDEBAR_V2_VIEW_MODE: SidebarV2ViewMode = "inbox";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -125,6 +132,9 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarV2ThreadSortOrder: SidebarV2ThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER)),
+  ),
+  sidebarV2ViewMode: SidebarV2ViewMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_VIEW_MODE)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -620,6 +630,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   sidebarV2ThreadSortOrder: Schema.optionalKey(SidebarV2ThreadSortOrder),
+  sidebarV2ViewMode: Schema.optionalKey(SidebarV2ViewMode),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

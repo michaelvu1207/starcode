@@ -143,7 +143,8 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./u
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { SidebarV2ThreadSortMenu } from "./sidebar/SidebarV2ThreadSortMenu";
+import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
+import { SidebarV2ViewMenu } from "./sidebar/SidebarV2ViewMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -1007,6 +1008,7 @@ export default function SidebarV2() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const threadSortOrder = useClientSettings((s) => s.sidebarV2ThreadSortOrder);
+  const viewMode = useClientSettings((s) => s.sidebarV2ViewMode);
   const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
@@ -2300,7 +2302,7 @@ export default function SidebarV2() {
                   </MenuRadioGroup>
                 </MenuPopup>
               </Menu>
-              <SidebarV2ThreadSortMenu />
+              <SidebarV2ViewMenu />
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -2415,6 +2417,19 @@ export default function SidebarV2() {
                     />
                   );
                 };
+                // Connections view: the same rows, grouped under the machine
+                // that runs them instead of merged into one stream.
+                if (viewMode === "connections") {
+                  return (
+                    <SidebarConnectionsView
+                      activeThreads={activeThreads}
+                      snoozedThreads={snoozedThreads}
+                      settledThreads={settledThreads}
+                      routeThreadKey={routeThreadKey}
+                      renderThreadRow={renderThreadRow}
+                    />
+                  );
+                }
                 const items: ReactNode[] = activeThreads.map((thread) =>
                   renderThreadRow(thread, "active"),
                 );
@@ -2481,7 +2496,7 @@ export default function SidebarV2() {
                 }
                 return items;
               })()}
-              {settledShelfExpanded && hiddenSettledCount > 0 ? (
+              {viewMode === "inbox" && settledShelfExpanded && hiddenSettledCount > 0 ? (
                 <li className="list-none">
                   <button
                     type="button"
