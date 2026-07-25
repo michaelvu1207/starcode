@@ -23,6 +23,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   HistorySessionId,
+  HistoryTranscriptEntry,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ import {
   useRefreshHistoryImports,
 } from "~/state/terminalHistory";
 import { buildThreadRouteParams } from "~/threadRoutes";
+import ChatMarkdown from "../ChatMarkdown";
 import { subscribeImportPicker } from "../sidebar/importPicker";
 import { HistoryProviderIcon, historyProviderLabel } from "../sidebar/HistoryProviderIcon";
 import { Button } from "../ui/button";
@@ -50,6 +52,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
 import {
   buildImportPickerRows,
+  buildImportPreviewTimeline,
   matchesImportPickerFilter,
   resolveImportAttempt,
   resolveImportPickerScope,
@@ -345,15 +348,22 @@ export function ImportConversationDialog(): ReactNode {
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col">
-            <ImportPreviewPane
-              row={selectedRow}
-              preview={previewQuery.data}
-              isPending={previewQuery.isPending}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? null
-              }
-            />
+            {selectedRow === null ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs text-muted-foreground/60">
+                Select a conversation to see where it got to.
+              </div>
+            ) : (
+              <ImportPreviewPane
+                key={selectedRow.sessionId}
+                row={selectedRow}
+                preview={previewQuery.data}
+                isPending={previewQuery.isPending}
+                machineLabel={
+                  environments.find((environment) => environment.environmentId === environmentId)
+                    ?.label ?? null
+                }
+              />
+            )}
             <footer className="shrink-0 border-t border-border/60 px-5 py-3">
               {prompt?.kind === "error" ? (
                 <p
@@ -454,19 +464,53 @@ function ImportPickerRow(props: {
 }
 
 function ImportPreviewPane(props: {
-  readonly row: ImportPickerRowModel | null;
+  readonly row: ImportPickerRowModel;
   readonly preview: ReturnType<typeof useHistoryPreview>["data"];
   readonly isPending: boolean;
   readonly machineLabel: string | null;
 }): ReactNode {
-  if (props.row === null) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs text-muted-foreground/60">
-        Select a conversation to see how it started and where it got to.
-      </div>
-    );
-  }
   const { preview } = props;
+  const timeline = useMemo(() => buildImportPreviewTimeline(preview), [preview]);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Land on the newest message, and stay there while the content is still
+  // settling: markdown resolves its code highlighting asynchronously, so a
+  // single scroll on mount aims at a container that is about to grow and
+  // leaves the newest message hundreds of pixels below the fold. Pinning on
+  // resize is what makes this behave like a thread scrolled to its end.
+  // Released the moment the reader scrolls for themselves.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (content === null) return;
+    let pinned = true;
+    const release = () => {
+      pinned = false;
+    };
+    const pin = () => {
+      if (pinned) bottomRef.current?.scrollIntoView({ block: "end" });
+    };
+    pin();
+    // The observer catches content that grows late (code highlighting), but
+    // not content that was already complete before it started observing and
+    // only settled its layout afterwards — hence the frames as well. Both are
+    // cheap and idempotent, and both stop at the first scroll by hand.
+    const frame = window.requestAnimationFrame(() => {
+      pin();
+      window.requestAnimationFrame(pin);
+    });
+    const settle = window.setTimeout(pin, 250);
+    const observer = new ResizeObserver(pin);
+    observer.observe(content);
+    content.addEventListener("wheel", release, { passive: true });
+    content.addEventListener("touchmove", release, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+      observer.disconnect();
+      content.removeEventListener("wheel", release);
+      content.removeEventListener("touchmove", release);
+    };
+  }, [timeline]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-border/60 px-5 py-3">
@@ -487,7 +531,15 @@ function ImportPreviewPane(props: {
         </p>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 px-5 py-4" data-testid="import-picker-preview">
+        {/* `justify-end` on a full-height column is what bottom-anchors this:
+            a short conversation sits against the composer edge instead of
+            floating at the top, which is how a thread you have scrolled to the
+            end of actually looks. */}
+        <div
+          ref={contentRef}
+          className="flex min-h-full flex-col justify-end gap-3 px-5 py-4"
+          data-testid="import-picker-preview"
+        >
           {props.isPending && preview === null ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Spinner className="size-3" />
@@ -499,41 +551,71 @@ function ImportPreviewPane(props: {
               This machine cannot show a preview. Importing still works.
             </p>
           ) : null}
-          {preview?.opening != null ? <PreviewEntry entry={preview.opening} /> : null}
-          {preview?.gap === true ? (
-            <p className="select-none text-center text-xs tracking-[0.4em] text-muted-foreground/40">
-              · · ·
+          {timeline.caption !== null ? (
+            <p
+              data-testid="import-picker-preview-caption"
+              className="truncate text-[11px] text-muted-foreground/60"
+            >
+              <span className="text-muted-foreground/45">Started with: </span>
+              {timeline.caption}
             </p>
           ) : null}
-          {(preview?.tail ?? []).map((entry) => (
-            <PreviewEntry key={entry.offset} entry={entry} />
+          {timeline.showBreak ? (
+            <div aria-hidden className="flex select-none items-center gap-2 py-0.5">
+              <span className="h-px flex-1 bg-border/60" />
+              <span className="text-[10px] tracking-[0.35em] text-muted-foreground/40">···</span>
+              <span className="h-px flex-1 bg-border/60" />
+            </div>
+          ) : null}
+          {timeline.entries.map((entry) => (
+            <PreviewEntry key={entry.offset} entry={entry} cwd={props.row.projectPath} />
           ))}
+          <div ref={bottomRef} />
         </div>
       </ScrollArea>
     </div>
   );
 }
 
+/**
+ * One message, wearing the same clothes the real transcript gives it.
+ *
+ * The role labels this used to print are gone: a right-aligned bubble is the
+ * user and full-bleed prose is the assistant, everywhere else in the app, and
+ * a preview that invents its own vocabulary for the same two things reads as a
+ * different product. Assistant text goes through `ChatMarkdown` for the same
+ * reason — the CLIs write markdown, and a preview showing literal asterisks
+ * looks broken rather than lossy.
+ */
 function PreviewEntry(props: {
-  readonly entry: {
-    readonly role: "user" | "assistant";
-    readonly text: string;
-    readonly truncated: boolean;
-    readonly toolCalls: ReadonlyArray<string>;
-  };
+  readonly entry: HistoryTranscriptEntry;
+  readonly cwd: string | null;
 }): ReactNode {
   const { entry } = props;
+  const text = entry.truncated ? `${entry.text}…` : entry.text;
+  if (entry.role === "user") {
+    return (
+      <div className="flex flex-col items-end">
+        <div className="max-w-[85%] min-w-0 break-words rounded-2xl bg-accent px-3 py-2 text-xs">
+          {/* `lineBreaks` for the same reason the real timeline sets it: a
+              human typing into a composer means their newlines. */}
+          <ChatMarkdown
+            text={text}
+            cwd={props.cwd ?? undefined}
+            className="text-foreground"
+            lineBreaks
+          />
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">
-        {entry.role === "user" ? "You" : "Assistant"}
-      </span>
-      <p className="whitespace-pre-wrap break-words text-xs text-foreground/85">
-        {entry.text}
-        {entry.truncated ? <span className="text-muted-foreground/50">…</span> : null}
-      </p>
+    <div className="min-w-0 text-xs">
+      {text.trim().length > 0 ? <ChatMarkdown text={text} cwd={props.cwd ?? undefined} /> : null}
+      {/* Names only, never payloads — the server's renderer is lossy by design
+          and this is the one trace that work happened between two messages. */}
       {entry.toolCalls.length > 0 ? (
-        <p className="font-mono text-[10px] text-muted-foreground/50">
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground/50">
           {entry.toolCalls.join(" · ")}
         </p>
       ) : null}

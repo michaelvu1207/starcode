@@ -23,6 +23,7 @@ import type { HistoryImportAttempt } from "@t3tools/client-runtime/state/termina
 import type {
   EnvironmentId,
   HistoryImportRecord,
+  HistoryTranscriptEntry,
   HistoryImportRefusalReason,
   HistoryProvider,
   HistorySessionId,
@@ -192,6 +193,62 @@ export function formatImportPreludeLine(input: {
   }
   return parts.join(" · ");
 }
+
+/** How much of the opening message survives as a caption above the tail. */
+export const IMPORT_PREVIEW_CAPTION_MAX_CHARS = 120;
+
+export interface ImportPreviewTimeline {
+  /**
+   * The opening message, clipped to a single line, or null when there is no
+   * separate opening to caption — a short session whose opening is already in
+   * `entries`, or a file that yielded no human turn at all.
+   */
+  readonly caption: string | null;
+  /** Oldest first, newest last: the order a thread is read in. */
+  readonly entries: ReadonlyArray<HistoryTranscriptEntry>;
+  /** Whether anything was elided between the caption and the first entry. */
+  readonly showBreak: boolean;
+}
+
+/**
+ * Re-weights a preview toward its end.
+ *
+ * The first cut of this pane led with the opening message and let the tail
+ * trail off below the fold, which put the emphasis on the least useful part:
+ * every session in a repo opens roughly the same way, and what tells two apart
+ * is where they *got to*. So the tail is the content now, rendered like a
+ * thread you just scrolled to the end of, and the opening survives only as a
+ * caption — enough to recognise a conversation you started, not enough to
+ * compete with where it ended up.
+ *
+ * The caption is dropped entirely when the server sent no separate opening,
+ * which is its way of saying the session was short enough that its opening is
+ * already in the tail. Captioning it then would print the same message twice.
+ */
+export function buildImportPreviewTimeline(
+  preview: {
+    readonly opening: HistoryTranscriptEntry | null;
+    readonly tail: ReadonlyArray<HistoryTranscriptEntry>;
+    readonly gap: boolean;
+  } | null,
+): ImportPreviewTimeline {
+  if (preview === null) return { caption: null, entries: [], showBreak: false };
+  const caption = preview.opening === null ? null : clipToSingleLine(preview.opening.text);
+  return {
+    caption,
+    entries: preview.tail,
+    // A break with nothing above it is a line the eye has to explain away.
+    showBreak: preview.gap && caption !== null,
+  };
+}
+
+const clipToSingleLine = (text: string): string | null => {
+  const collapsed = text.replace(/\s+/gu, " ").trim();
+  if (collapsed.length === 0) return null;
+  return collapsed.length <= IMPORT_PREVIEW_CAPTION_MAX_CHARS
+    ? collapsed
+    : `${collapsed.slice(0, IMPORT_PREVIEW_CAPTION_MAX_CHARS).trimEnd()}…`;
+};
 
 /**
  * Which machine a request from the seam lands on.

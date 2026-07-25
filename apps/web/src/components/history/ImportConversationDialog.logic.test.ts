@@ -5,6 +5,7 @@ import type {
   HistoryImportRefusalReason,
   HistorySessionId,
   HistorySessionSummary,
+  HistoryTranscriptEntry,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -13,7 +14,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   IMPORT_PICKER_UNTITLED_LABEL,
+  IMPORT_PREVIEW_CAPTION_MAX_CHARS,
   buildImportPickerRows,
+  buildImportPreviewTimeline,
   describeImportRefusal,
   findHistoryImportForThread,
   formatHistoryAge,
@@ -272,6 +275,104 @@ describe("resolveImportAttempt", () => {
       kind: "prompt",
       prompt: { kind: "error", message: "Timed out." },
     });
+  });
+});
+
+describe("buildImportPreviewTimeline", () => {
+  const entry = (overrides: Partial<HistoryTranscriptEntry> = {}): HistoryTranscriptEntry =>
+    ({
+      offset: 0,
+      role: "assistant",
+      text: "done",
+      truncated: false,
+      toolCalls: [],
+      timestamp: "2026-07-25T11:00:00.000Z",
+      ...overrides,
+    }) as HistoryTranscriptEntry;
+
+  it("makes the tail the content, in the order a thread is read", () => {
+    const tail = [entry({ offset: 10 }), entry({ offset: 20 }), entry({ offset: 30 })];
+
+    const timeline = buildImportPreviewTimeline({ opening: null, tail, gap: false });
+
+    expect(timeline.entries).toEqual(tail);
+  });
+
+  it("demotes the opening message to a one-line caption", () => {
+    const timeline = buildImportPreviewTimeline({
+      opening: entry({ role: "user", text: "why is the sidebar\n  empty on   startup" }),
+      tail: [entry({ offset: 10 })],
+      gap: true,
+    });
+
+    // Whitespace collapsed, because this renders on one line next to a label.
+    expect(timeline.caption).toBe("why is the sidebar empty on startup");
+    expect(timeline.entries).toHaveLength(1);
+  });
+
+  it("clips a long opening rather than letting it wrap", () => {
+    const timeline = buildImportPreviewTimeline({
+      opening: entry({ role: "user", text: "x".repeat(400) }),
+      tail: [],
+      gap: true,
+    });
+
+    expect(timeline.caption).toHaveLength(IMPORT_PREVIEW_CAPTION_MAX_CHARS + 1);
+    expect(timeline.caption?.endsWith("…")).toBe(true);
+  });
+
+  it("prints no caption when the opening is already in the tail", () => {
+    // The server sends `opening: null` for a session short enough that its
+    // first message is one of the last few — captioning it would duplicate it.
+    const timeline = buildImportPreviewTimeline({
+      opening: null,
+      tail: [entry({ offset: 10, role: "user", text: "say only: ok" })],
+      gap: false,
+    });
+
+    expect(timeline.caption).toBeNull();
+    expect(timeline.showBreak).toBe(false);
+  });
+
+  it("only breaks the timeline when something is missing above the break", () => {
+    const withGap = buildImportPreviewTimeline({
+      opening: entry({ role: "user", text: "start" }),
+      tail: [entry({ offset: 10 })],
+      gap: true,
+    });
+    const withoutGap = buildImportPreviewTimeline({
+      opening: entry({ role: "user", text: "start" }),
+      tail: [entry({ offset: 10 })],
+      gap: false,
+    });
+    // A gap with no caption above it would be a rule the eye cannot explain.
+    const gapButNoCaption = buildImportPreviewTimeline({
+      opening: null,
+      tail: [entry({ offset: 10 })],
+      gap: true,
+    });
+
+    expect(withGap.showBreak).toBe(true);
+    expect(withoutGap.showBreak).toBe(false);
+    expect(gapButNoCaption.showBreak).toBe(false);
+  });
+
+  it("survives a machine that could not serve a preview at all", () => {
+    expect(buildImportPreviewTimeline(null)).toEqual({
+      caption: null,
+      entries: [],
+      showBreak: false,
+    });
+  });
+
+  it("drops a whitespace-only opening rather than captioning an empty string", () => {
+    const timeline = buildImportPreviewTimeline({
+      opening: entry({ role: "user", text: "   \n  " }),
+      tail: [entry({ offset: 10 })],
+      gap: true,
+    });
+
+    expect(timeline.caption).toBeNull();
   });
 });
 
