@@ -166,6 +166,25 @@ export const fetchPeerShellSnapshot = Effect.fn("peers.fetchShellSnapshot")(func
     .pipe(Effect.timeout(PEER_REQUEST_TIMEOUT));
 });
 
+/**
+ * The peer's project catalog — its own half, not the folded view.
+ *
+ * Used to turn a project slug into the `projectId` that machine actually
+ * binds. The slug is the one identifier that means the same thing everywhere,
+ * which is precisely why it is the thing worth sending across a peer boundary;
+ * the id it resolves to is local to the peer and never leaves it except as the
+ * target of the create that follows.
+ */
+export const fetchPeerProjectCatalog = Effect.fn("peers.fetchProjectCatalog")(function* (input: {
+  readonly baseUrl: string;
+  readonly credential: string;
+}) {
+  const client = yield* makePeerClient(input.baseUrl);
+  return yield* client.projectCatalog
+    .snapshot({ headers: bearer(input.credential) })
+    .pipe(Effect.timeout(PEER_REQUEST_TIMEOUT));
+});
+
 export const fetchPeerThreadSnapshot = Effect.fn("peers.fetchThreadSnapshot")(function* (input: {
   readonly baseUrl: string;
   readonly credential: string;

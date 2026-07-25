@@ -221,6 +221,19 @@ it.effect("an ordinary session is never shown the master-only tools", () =>
   }),
 );
 
+it.effect("shows every session the project tools, self-filing included", () =>
+  Effect.gen(function* () {
+    // Over the real transport, so this is also the proof the toolkit is
+    // registered at all. `project_file_thread` is visible on purpose: its gate
+    // is a branch inside the handler (yours versus someone else's), not a
+    // capability that can be expressed by hiding the tool.
+    const tools = yield* listToolsFor(workerThreadId);
+    expect(tools).toContain("project_list");
+    expect(tools).toContain("project_get");
+    expect(tools).toContain("project_file_thread");
+  }),
+);
+
 it.effect("the designated master session is shown all of them", () =>
   Effect.gen(function* () {
     const tools = yield* listToolsFor(masterThreadId);

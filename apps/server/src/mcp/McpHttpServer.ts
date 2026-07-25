@@ -27,6 +27,8 @@ import { FeatureMapToolkitHandlersLive } from "./toolkits/featureMap/handlers.ts
 import { FeatureMapToolkit } from "./toolkits/featureMap/tools.ts";
 import { PeerThreadsToolkitHandlersLive } from "./toolkits/peerThreads/handlers.ts";
 import { PeerThreadsToolkit } from "./toolkits/peerThreads/tools.ts";
+import { ProjectsToolkitHandlersLive } from "./toolkits/projects/handlers.ts";
+import { ProjectsToolkit } from "./toolkits/projects/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -227,6 +229,10 @@ export const FeatureMapToolkitRegistrationLive = McpServer.toolkit(FeatureMapToo
   Layer.provide(FeatureMapToolkitHandlersLive),
 );
 
+export const ProjectsToolkitRegistrationLive = McpServer.toolkit(ProjectsToolkit).pipe(
+  Layer.provide(ProjectsToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -237,4 +243,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PeerThreadsToolkitRegistrationLive,
   FeatureMapToolkitRegistrationLive,
+  ProjectsToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

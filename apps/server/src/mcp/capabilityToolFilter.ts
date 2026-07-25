@@ -37,6 +37,13 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  * another thread's mailbox is available to every session by design, so hiding
  * it would remove the one federation write ordinary agents are meant to have.
  * Only the two tools that spend another machine's turn are gated.
+ *
+ * `project_file_thread` is absent for the same reason, and it is the clearest
+ * case of why this list is about *visibility* rather than about writes: the
+ * tool is usable by every session for the caller's own thread and gated only
+ * for somebody else's, so the gate is a branch inside the handler and cannot be
+ * expressed as "hide it". Listing it here would take self-filing away from
+ * every worker to gate a use most of them will never reach for.
  */
 export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.McpCapability> =
   new Map([

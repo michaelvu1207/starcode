@@ -33,46 +33,21 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 import { WorkbenchMasterDefaults } from "./settings.ts";
 
-export const PROJECT_CATEGORY_SLUG_MAX_LENGTH = 64;
+// The slug is defined in its own leaf module to keep `peers.ts` out of a
+// module cycle; re-exported here so it stays part of this contract's surface.
+export {
+  PROJECT_CATEGORY_SLUG_MAX_LENGTH,
+  ProjectCategorySlug,
+  toProjectCategorySlug,
+} from "./projectCategorySlug.ts";
+
 export const PROJECT_CATEGORY_TITLE_MAX_LENGTH = 200;
 export const PROJECT_CATEGORY_SUMMARY_MAX_LENGTH = 500;
 export const PROJECT_CATEGORY_NOTES_MAX_LENGTH = 16_000;
 export const PROJECT_CATEGORY_LINK_MAX_COUNT = 32;
-
-/**
- * The identity, and the join key across machines.
- *
- * Immutable after creation — there is no rename-slug operation anywhere in this
- * contract, and renaming a category changes `display.title` only. That is what
- * makes name drift harmless: two machines can disagree about the title of a
- * category and still agree that it is the same category.
- */
-export const ProjectCategorySlug = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(PROJECT_CATEGORY_SLUG_MAX_LENGTH),
-  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-).pipe(Schema.brand("ProjectCategorySlug"));
-export type ProjectCategorySlug = typeof ProjectCategorySlug.Type;
-
-/**
- * Turns arbitrary text into a slug, or `null` when nothing survives.
- *
- * Lives in contracts rather than in either the server or the client because
- * both seed categories — the client from repository identity, the MCP tools
- * from a name an agent supplied — and two implementations of this would file
- * the same repository under two slugs.
- */
-export function toProjectCategorySlug(input: string): ProjectCategorySlug | null {
-  const slug = input
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, PROJECT_CATEGORY_SLUG_MAX_LENGTH)
-    .replace(/-+$/g, "");
-  return slug.length === 0 ? null : (slug as ProjectCategorySlug);
-}
 
 export const ProjectCategoryLink = Schema.Struct({
   label: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
@@ -321,3 +296,211 @@ export function isValidProjectCatalogFileThreadRequest(
 ): boolean {
   return request.mode === "unfile" ? request.slug === null : request.slug !== null;
 }
+
+/**
+ * Which threads on **one machine** belong to a category.
+ *
+ * ```
+ * threadsOf(slug) = { t | t.projectId ∈ bindings(slug) }   // derived from cwd
+ *                 ∪ { t | t.id ∈ threadIds(slug) }         // explicit add
+ *                 \ { t | t.id ∈ excludedThreadIds(slug) } // explicit remove
+ * ```
+ *
+ * Lives in contracts, beside the record it reads, because two callers need the
+ * same answer and a second implementation would eventually give a different
+ * one: the MCP tools resolve it here, and the web client's
+ * `ProjectCatalog.model.ts` resolves the **cross-machine** generalisation of it
+ * over folded sections. This is the single-machine case — no environment
+ * scoping is needed because every id in a record already belongs to the machine
+ * that wrote it.
+ *
+ * A thread has one project, so the two ways it can be claimed twice are settled
+ * the same way the client settles them: an explicit add beats a derived
+ * binding, and two categories claiming it at the same strength are broken on
+ * the lexicographically smaller slug so the answer never depends on file order.
+ */
+export function resolveLocalProjectMembership(input: {
+  readonly categories: ReadonlyArray<ProjectCategoryRecord>;
+  readonly threads: ReadonlyArray<{ readonly id: ThreadId; readonly projectId: ProjectId }>;
+}): ReadonlyMap<ProjectCategorySlug, ReadonlyArray<ThreadId>> {
+  const slugByBoundProject = new Map<ProjectId, ProjectCategorySlug>();
+  const slugByExplicitThread = new Map<ThreadId, ProjectCategorySlug>();
+  const excluded = new Set<string>();
+
+  for (const category of orderedBySlug(input.categories)) {
+    for (const binding of category.local.bindings) {
+      if (!slugByBoundProject.has(binding.projectId)) {
+        slugByBoundProject.set(binding.projectId, category.slug);
+      }
+    }
+    for (const threadId of category.local.threadIds) {
+      if (!slugByExplicitThread.has(threadId)) slugByExplicitThread.set(threadId, category.slug);
+    }
+    for (const threadId of category.local.excludedThreadIds) {
+      excluded.add(`${category.slug} ${threadId}`);
+    }
+  }
+
+  const bySlug = new Map<ProjectCategorySlug, Array<ThreadId>>();
+  for (const thread of input.threads) {
+    const explicit = slugByExplicitThread.get(thread.id);
+    const derived = slugByBoundProject.get(thread.projectId);
+    const slug =
+      explicit ??
+      (derived !== undefined && !excluded.has(`${derived} ${thread.id}`) ? derived : undefined);
+    if (slug === undefined) continue;
+    const bucket = bySlug.get(slug);
+    if (bucket === undefined) bySlug.set(slug, [thread.id]);
+    else bucket.push(thread.id);
+  }
+  return bySlug;
+}
+
+/** Slug order, so "first claim wins" above means "smallest slug wins". */
+const orderedBySlug = (
+  categories: ReadonlyArray<ProjectCategoryRecord>,
+): ReadonlyArray<ProjectCategoryRecord> =>
+  categories.toSorted((left, right) => left.slug.localeCompare(right.slug));
+
+/**
+ * The project tools, as an agent sees them.
+ *
+ * This is the half of F16 that makes "organized through the tool calls" real.
+ * Two reads open to every session, because an agent that knows which project it
+ * is working in writes better commits and asks better questions; one write that
+ * is open for the caller's *own* thread and gated for anyone else's.
+ *
+ * Everything here is scoped to the machine answering. A tool result never
+ * claims to know what another machine holds — the cross-machine union is the
+ * client's fold, and a server that guessed at it would be inventing.
+ */
+export const ProjectToolOperation = Schema.Literals(["list", "get", "file_thread"]);
+export type ProjectToolOperation = typeof ProjectToolOperation.Type;
+
+export const ProjectToolErrorReason = Schema.Literals([
+  "capability_unavailable",
+  "not_found",
+  "invalid",
+  "storage_failed",
+]);
+export type ProjectToolErrorReason = typeof ProjectToolErrorReason.Type;
+
+export class ProjectToolError extends Schema.TaggedErrorClass<ProjectToolError>()(
+  "ProjectToolError",
+  {
+    operation: ProjectToolOperation,
+    reason: ProjectToolErrorReason,
+    detail: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Project ${this.operation} failed: ${this.reason}.${
+      this.detail === undefined ? "" : ` ${this.detail}`
+    }`;
+  }
+}
+
+/** One project, as a listing row. */
+export const ProjectToolSummary = Schema.Struct({
+  slug: ProjectCategorySlug,
+  title: TrimmedNonEmptyString,
+  summary: Schema.String,
+  archived: Schema.Boolean,
+  /** Folders on this machine filed under the project. */
+  boundWorkspaceRoots: Schema.Array(Schema.String),
+  /** Threads on this machine the project claims, live ones only. */
+  threadCount: Schema.Int,
+  /** This machine names an orchestrator for it. */
+  hasMaster: Schema.Boolean,
+});
+export type ProjectToolSummary = typeof ProjectToolSummary.Type;
+
+export const ProjectListInput = Schema.Struct({
+  includeArchived: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Include archived projects. Defaults to excluding them.",
+    }),
+  ),
+});
+export type ProjectListInput = typeof ProjectListInput.Type;
+
+export const ProjectListResult = Schema.Struct({ projects: Schema.Array(ProjectToolSummary) });
+export type ProjectListResult = typeof ProjectListResult.Type;
+
+export const ProjectGetInput = Schema.Struct({
+  slug: ProjectCategorySlug.annotate({
+    description: "Project slug, as returned by project_list.",
+  }),
+});
+export type ProjectGetInput = typeof ProjectGetInput.Type;
+
+/** A thread the project claims, with enough state to decide whether to touch it. */
+export const ProjectToolThread = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  /** Waiting on a human: an approval or a question. */
+  needsAttention: Schema.Boolean,
+  settled: Schema.Boolean,
+  updatedAt: Schema.String,
+});
+export type ProjectToolThread = typeof ProjectToolThread.Type;
+
+export const ProjectToolLocation = Schema.Struct({
+  projectId: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+});
+export type ProjectToolLocation = typeof ProjectToolLocation.Type;
+
+/** What the sky says this project is building, for the features bound to its threads. */
+export const ProjectToolFeature = Schema.Struct({
+  featureId: Schema.String,
+  name: Schema.String,
+  stage: Schema.String,
+  threadId: Schema.NullOr(ThreadId),
+  planned: Schema.Boolean,
+});
+export type ProjectToolFeature = typeof ProjectToolFeature.Type;
+
+export const ProjectGetResult = Schema.Struct({
+  project: ProjectToolSummary,
+  /** Operator-authored. The reason this tool exists: it is what the human wrote. */
+  notes: Schema.String,
+  links: Schema.Array(ProjectCategoryLink),
+  locations: Schema.Array(ProjectToolLocation),
+  threads: Schema.Array(ProjectToolThread),
+  features: Schema.Array(ProjectToolFeature),
+  masterThreadId: Schema.NullOr(ThreadId),
+});
+export type ProjectGetResult = typeof ProjectGetResult.Type;
+
+export const ProjectFileThreadToolInput = Schema.Struct({
+  threadId: Schema.optional(
+    ThreadId.annotate({
+      description:
+        "Thread to file. Defaults to the calling thread. Filing another thread requires the orchestrator capability.",
+    }),
+  ),
+  slug: Schema.optional(
+    ProjectCategorySlug.annotate({
+      description:
+        "Project to file it under. Omit together with mode=unfile to let the folder decide again.",
+    }),
+  ),
+  mode: Schema.optional(
+    ProjectCatalogFileThreadMode.annotate({
+      description:
+        "assign files the thread, exclude keeps it out of a project its folder would put it in, unfile drops both opinions. Defaults to assign.",
+    }),
+  ),
+});
+export type ProjectFileThreadToolInput = typeof ProjectFileThreadToolInput.Type;
+
+export const ProjectFileThreadToolResult = Schema.Struct({
+  threadId: ThreadId,
+  /** Where the thread ended up, or null when nothing claims it now. */
+  slug: Schema.NullOr(ProjectCategorySlug),
+  mode: ProjectCatalogFileThreadMode,
+});
+export type ProjectFileThreadToolResult = typeof ProjectFileThreadToolResult.Type;
