@@ -15,6 +15,7 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 import { useEnvironments } from "../../state/environments";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
   useProjectCards,
   useProjectCatalogView,
@@ -199,9 +200,9 @@ function ProjectCardTile({ card }: { readonly card: ProjectCard }): ReactNode {
       <div className="relative z-10 flex items-start gap-2.5">
         <span
           className="sc-project-mark mt-px size-7 shrink-0"
-          style={{ "--sc-project-hue": `${projectAccentHue(card.slug)}deg` } as never}
+          style={{ "--sc-project-hue": `${projectAccentHue(card.slug, card.accent)}deg` } as never}
         >
-          <ProjectGlyph slug={card.slug} />
+          <ProjectGlyph slug={card.slug} variant={card.glyph} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">{card.title}</span>
@@ -235,6 +236,14 @@ function ProjectCardTile({ card }: { readonly card: ProjectCard }): ReactNode {
               }`}
         </span>
         {stageLine.length > 0 ? <span>{stageLine}</span> : null}
+        {/* Last, and only when there is one: recency is how you tell a project
+            you left yesterday from one you left in March, but it is the least
+            of the three and a project nobody has touched has nothing to say. */}
+        {card.lastActivityAt !== null ? (
+          <span className="ml-auto text-muted-foreground/55">
+            {formatRelativeTimeLabel(card.lastActivityAt)}
+          </span>
+        ) : null}
       </div>
 
       {machines.length > 0 ? (

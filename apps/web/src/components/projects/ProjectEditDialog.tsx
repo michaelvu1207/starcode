@@ -18,6 +18,8 @@ import type { ProjectCategoryDisplayPatch } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -32,6 +34,9 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import type { ProjectCategoryView } from "./ProjectCatalog.model";
+import { ProjectGlyph } from "./ProjectGlyph";
+import { PROJECT_ACCENTS, PROJECT_GLYPH_VARIANTS, projectAccentHue } from "./ProjectsIndex.model";
+import "./Projects.css";
 
 interface LinkDraft {
   readonly label: string;
@@ -51,6 +56,8 @@ export function ProjectEditDialog({
 }): ReactNode {
   const [title, setTitle] = useState(project.display.title);
   const [summary, setSummary] = useState(project.display.summary);
+  const [accent, setAccent] = useState(project.display.accent);
+  const [glyph, setGlyph] = useState(project.display.glyph);
   const [notes, setNotes] = useState(project.display.notes);
   const [links, setLinks] = useState<ReadonlyArray<LinkDraft>>(project.display.links);
   const [saving, setSaving] = useState(false);
@@ -61,9 +68,15 @@ export function ProjectEditDialog({
     if (!open) return;
     setTitle(project.display.title);
     setSummary(project.display.summary);
+    setAccent(project.display.accent);
+    setGlyph(project.display.glyph);
     setNotes(project.display.notes);
     setLinks(project.display.links);
   }, [open, project.display]);
+
+  // The figure swatches all wear the accent being edited, so choosing a figure
+  // and choosing a colour are one decision seen twice rather than two.
+  const hue = projectAccentHue(project.slug, accent);
 
   const save = async () => {
     const trimmed = title.trim();
@@ -73,6 +86,8 @@ export function ProjectEditDialog({
       await onSave({
         title: trimmed,
         summary: summary.trim(),
+        accent,
+        glyph,
         notes,
         // A half-typed row is not a link. Dropping it silently beats saving a
         // label that points nowhere.
@@ -121,6 +136,62 @@ export function ProjectEditDialog({
                 onChange={(event) => setSummary(event.target.value)}
                 placeholder="One line, shown on the card"
               />
+            </div>
+
+            {/* The mark, which is the only thing distinguishing one card from
+                another at a glance. Both halves default to "derived from the
+                slug", so this section is entirely optional — it exists for the
+                operator who has two projects whose auto-figures look alike. */}
+            <div className="space-y-2">
+              <Label>Mark</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {PROJECT_GLYPH_VARIANTS.map((variant) => (
+                  <button
+                    key={variant === "" ? "auto" : variant}
+                    type="button"
+                    onClick={() => setGlyph(variant)}
+                    aria-pressed={glyph === variant}
+                    aria-label={variant === "" ? "Figure from the name" : `Figure ${variant}`}
+                    className={cn(
+                      "sc-project-mark size-9 rounded-md border p-1.5 transition-colors",
+                      glyph === variant
+                        ? "border-border bg-muted/50"
+                        : "border-border/40 hover:bg-muted/25",
+                    )}
+                    style={{ "--sc-project-hue": `${hue}deg` } as never}
+                  >
+                    <ProjectGlyph slug={project.slug} variant={variant} />
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {PROJECT_ACCENTS.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    onClick={() =>
+                      // Clicking the accent a project already wears returns it
+                      // to the derived one, so "undo" needs no separate control.
+                      setAccent((current) => (current === choice.id ? "" : choice.id))
+                    }
+                    aria-pressed={accent === choice.id}
+                    aria-label={choice.label}
+                    title={choice.label}
+                    className={cn(
+                      "sc-project-mark size-6 rounded-full border transition-colors",
+                      accent === choice.id ? "border-foreground/60" : "border-border/40",
+                    )}
+                    style={{ "--sc-project-hue": `${choice.hue}deg` } as never}
+                  >
+                    <span className="block size-full rounded-full bg-current opacity-80" />
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground/60">
+                {accent === "" && glyph === ""
+                  ? "Both come from the name. Pick a figure or a colour to override either."
+                  : "Click the selected colour again to go back to the one the name gives."}
+              </p>
             </div>
 
             <div className="space-y-1.5">

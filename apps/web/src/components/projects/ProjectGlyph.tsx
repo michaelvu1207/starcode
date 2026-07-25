@@ -15,16 +15,19 @@ import { useMemo } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { projectGlyph } from "./ProjectsIndex.model";
+import { projectGlyph, projectGlyphSeed } from "./ProjectsIndex.model";
 
 export function ProjectGlyph({
   slug,
+  variant = "",
   className,
 }: {
   readonly slug: string;
+  /** Chosen figure. Empty — the default — is the one the slug gives. */
+  readonly variant?: string;
   readonly className?: string;
 }) {
-  const glyph = useMemo(() => projectGlyph(slug), [slug]);
+  const glyph = useMemo(() => projectGlyph(projectGlyphSeed(slug, variant)), [slug, variant]);
 
   return (
     <svg

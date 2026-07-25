@@ -79,7 +79,7 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     );
   }
 
-  const hue = `${projectAccentHue(project.slug)}deg`;
+  const hue = `${projectAccentHue(project.slug, project.display.accent)}deg`;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -102,7 +102,7 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
             <ArrowLeftIcon className="size-4" />
           </Link>
           <span className="sc-project-mark mt-px size-7 shrink-0">
-            <ProjectGlyph slug={project.slug} />
+            <ProjectGlyph slug={project.slug} variant={project.display.glyph} />
           </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium text-foreground">

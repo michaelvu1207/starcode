@@ -55,6 +55,10 @@ export interface ProjectCard {
   readonly slug: ProjectCategorySlug;
   readonly title: string;
   readonly summary: string;
+  /** Chosen accent id, or empty for the one derived from the slug. */
+  readonly accent: string;
+  /** Chosen glyph variant, or empty for the one derived from the slug. */
+  readonly glyph: string;
   readonly archived: boolean;
   readonly machines: ReadonlyArray<ProjectMachineChip>;
   readonly activeCount: number;
@@ -161,6 +165,8 @@ export function buildProjectCards(input: {
       slug: project.slug,
       title: project.display.title,
       summary: project.display.summary,
+      accent: project.display.accent,
+      glyph: project.display.glyph,
       archived: project.archived,
       machines: project.sections.map(
         (section): ProjectMachineChip => ({
@@ -256,6 +262,27 @@ function slice(hash: number, index: number): number {
   return mixed / 0x1_0000_0000;
 }
 
+/**
+ * The seed a project's constellation is drawn from.
+ *
+ * Empty `glyph` means "whatever the slug gives", which is what every project
+ * starts as and what most stay. A chosen variant is a suffix on the same seed
+ * rather than a second hash, so picking one moves the figure without moving it
+ * anywhere a different project already is.
+ */
+export function projectGlyphSeed(slug: string, glyph: string): string {
+  return glyph.length === 0 ? slug : `${slug}#${glyph}`;
+}
+
+/**
+ * The variants offered when an operator wants a different figure.
+ *
+ * Six, because the point is "not that one" rather than "exactly this one" — a
+ * page of forty constellations is a decision nobody wants to make about a
+ * project they just created.
+ */
+export const PROJECT_GLYPH_VARIANTS: ReadonlyArray<string> = ["", "2", "3", "4", "5", "6"];
+
 export function projectGlyph(slug: string): ProjectGlyph {
   const hash = fnv1a(slug);
   // Four to six stars. Fewer reads as an accident, more stops being legible at
@@ -279,12 +306,42 @@ export function projectGlyph(slug: string): ProjectGlyph {
 }
 
 /**
- * The accent a project falls back to when nobody has chosen one.
+ * The accents an operator can choose between.
  *
- * Returns a hue rotation in degrees applied to the theme's own star colour
- * rather than a literal colour, so projects stay inside the palette and a
- * restyle carries them with it. F13's lesson, in one function.
+ * Every one is a rotation applied to the theme's own gold rather than a literal
+ * colour, so a project cannot be given something that sits outside the palette
+ * or comes out neon in one theme and muddy in the other. Named for the hue they
+ * land on, not for the number of degrees, because the degrees are an
+ * implementation detail of `hue-rotate` and the names are what the picker says.
  */
-export function projectAccentHue(slug: string): number {
+export interface ProjectAccentChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly hue: number;
+}
+
+export const PROJECT_ACCENTS: ReadonlyArray<ProjectAccentChoice> = [
+  { id: "gold", label: "Gold", hue: 0 },
+  { id: "ember", label: "Ember", hue: 315 },
+  { id: "rose", label: "Rose", hue: 285 },
+  { id: "iris", label: "Iris", hue: 240 },
+  { id: "sky", label: "Sky", hue: 180 },
+  { id: "jade", label: "Jade", hue: 105 },
+];
+
+/**
+ * The hue rotation a project renders at.
+ *
+ * An unset accent — every project's starting state — is derived from the slug,
+ * so a fresh grid is already distinguishable before anyone has chosen anything.
+ * A chosen one is honoured exactly, and an accent this build does not know
+ * falls back to the derived hue rather than to grey: an id written by a newer
+ * client is not a reason to make a project look broken.
+ */
+export function projectAccentHue(slug: string, accent?: string): number {
+  if (accent !== undefined && accent.length > 0) {
+    const choice = PROJECT_ACCENTS.find((entry) => entry.id === accent);
+    if (choice !== undefined) return choice.hue;
+  }
   return Math.round(slice(fnv1a(slug), 7) * 360);
 }

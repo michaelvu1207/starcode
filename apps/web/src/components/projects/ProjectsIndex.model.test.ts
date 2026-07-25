@@ -7,7 +7,10 @@ import {
   buildProjectCards,
   projectAccentHue,
   projectGlyph,
+  projectGlyphSeed,
   sortProjectCards,
+  PROJECT_ACCENTS,
+  PROJECT_GLYPH_VARIANTS,
   type ProjectCard,
   type ProjectRollupThread,
 } from "./ProjectsIndex.model";
@@ -28,6 +31,8 @@ const local = (overrides?: Partial<ProjectCategoryLocal>): ProjectCategoryLocal 
 const project = (input: {
   readonly slug: string;
   readonly title?: string;
+  readonly accent?: string;
+  readonly glyph?: string;
   readonly archived?: boolean;
   readonly sections?: ReadonlyArray<{
     readonly environmentId: string;
@@ -41,8 +46,8 @@ const project = (input: {
   display: {
     title: input.title ?? input.slug,
     summary: "",
-    accent: "",
-    glyph: "",
+    accent: input.accent ?? "",
+    glyph: input.glyph ?? "",
     parentSlug: null,
     links: [],
     notes: "",
@@ -208,6 +213,17 @@ describe("buildProjectCards", () => {
     ]);
   });
 
+  it("carries a chosen mark onto the card, so every surface draws the same project", () => {
+    const [card] = buildProjectCards({
+      projects: [project({ slug: "alpamayo", accent: "iris", glyph: "3" })],
+      membership: membershipOf({}),
+      threads: [],
+      flow: null,
+    });
+    expect(card?.accent).toBe("iris");
+    expect(card?.glyph).toBe("3");
+  });
+
   it("reports an empty project without inventing threads for it", () => {
     const [card] = buildProjectCards({
       projects: [project({ slug: "reading" })],
@@ -226,6 +242,8 @@ describe("sortProjectCards", () => {
     overrides: Omit<Partial<ProjectCard>, "slug"> & { readonly slug: string },
   ): ProjectCard => ({
     summary: "",
+    accent: "",
+    glyph: "",
     archived: false,
     machines: [],
     activeCount: 0,
@@ -307,6 +325,40 @@ describe("projectGlyph", () => {
       const hue = projectAccentHue(name);
       expect(hue).toBeGreaterThanOrEqual(0);
       expect(hue).toBeLessThanOrEqual(360);
+    }
+  });
+
+  it("honours a chosen accent, and derives one from the slug when there is none", () => {
+    const chosen = PROJECT_ACCENTS[3]!;
+    expect(projectAccentHue("alpamayo", chosen.id)).toBe(chosen.hue);
+    expect(projectAccentHue("alpamayo", "")).toBe(projectAccentHue("alpamayo"));
+  });
+
+  it("falls back to the derived accent rather than to grey for an id it does not know", () => {
+    // A newer client could write an accent this build has never heard of. That
+    // is not a reason to render the project as though it had no identity.
+    expect(projectAccentHue("alpamayo", "ultraviolet")).toBe(projectAccentHue("alpamayo"));
+  });
+
+  it("draws a different figure per variant, and the slug's own for the default", () => {
+    expect(projectGlyphSeed("alpamayo", "")).toBe("alpamayo");
+    expect(projectGlyph(projectGlyphSeed("alpamayo", ""))).toEqual(projectGlyph("alpamayo"));
+
+    const figures = PROJECT_GLYPH_VARIANTS.map((variant) =>
+      JSON.stringify(projectGlyph(projectGlyphSeed("alpamayo", variant))),
+    );
+    expect(new Set(figures).size).toBe(PROJECT_GLYPH_VARIANTS.length);
+  });
+
+  it("keeps every variant legible and inside its box, not just the default", () => {
+    for (const variant of PROJECT_GLYPH_VARIANTS) {
+      const glyph = projectGlyph(projectGlyphSeed("simcloud-platform", variant));
+      expect(glyph.points.length).toBeGreaterThanOrEqual(4);
+      expect(glyph.points.length).toBeLessThanOrEqual(6);
+      for (const point of glyph.points) {
+        expect(point.x - point.r).toBeGreaterThan(0);
+        expect(point.x + point.r).toBeLessThan(1);
+      }
     }
   });
 });

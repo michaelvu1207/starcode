@@ -113,9 +113,13 @@ export function SidebarProjectsMenu({
                 >
                   <span
                     className="sc-project-mark size-3.5 shrink-0"
-                    style={{ "--sc-project-hue": `${projectAccentHue(card.slug)}deg` } as never}
+                    style={
+                      {
+                        "--sc-project-hue": `${projectAccentHue(card.slug, card.accent)}deg`,
+                      } as never
+                    }
                   >
-                    <ProjectGlyph slug={card.slug} />
+                    <ProjectGlyph slug={card.slug} variant={card.glyph} />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                     {card.title}
