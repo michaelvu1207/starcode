@@ -14,8 +14,12 @@ import "./index.css";
 // Must stay last: the starcode token layer overrides `index.css` by cascade
 // order, using the same selectors upstream declares. See the file header.
 import "./starcode-theme.css";
+import { startStarcodeSky } from "./starcodeSky";
 
 import { isElectron } from "./env";
+
+// Time-of-day backdrop phase. Plain module, ticks outside React.
+startStarcodeSky();
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";

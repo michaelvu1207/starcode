@@ -159,6 +159,68 @@ for (const [themeName, label, fg, bg, min] of UI) {
   rows.push([themeName, label, fg, "—", bg, r.toFixed(2), pass ? `>=${min}` : `FAIL(<${min})`]);
 }
 
+// ---------------------------------------------------------------------------
+// Sky backdrop phases.
+//
+// `starcodeSky.ts` tints the TOP of the main pane per time of day, so the
+// darkest surface a text token can land on is no longer `--background` — it is
+// whichever phase colour is lightest. Transcript content sits below where the
+// gradient has resolved, but headers, breadcrumbs, and empty-state copy sit in
+// the tinted band, so every text token is re-checked against the extremes.
+//
+// Values transcribed from SKY_STOPS in `apps/web/src/starcodeSky.ts`.
+const SKY_PHASES = {
+  "night-top": "#080a14",
+  "dawn-top": "#33263a",
+  "dawn-glow": "#3c2739",
+  "day-top": "#1e2739",
+  "day-glow": "#26304a",
+  "dusk-top": "#2e2135",
+  "dusk-glow": "#43293c",
+};
+
+for (const [tName, tHex] of Object.entries(darkText)) {
+  if (tName.startsWith("sidebar-")) continue;
+  for (const [sName, sHex] of Object.entries(SKY_PHASES)) {
+    const r = ratio(tHex, sHex);
+    const pass = r >= 4.5;
+    if (!pass) fails++;
+    rows.push(["sky", tName, tHex, sName, sHex, r.toFixed(2), pass ? "AA" : "FAIL"]);
+  }
+}
+
+// The light theme's wash is a translucent tint over linen rather than an opaque
+// fill, so the surface a token actually lands on is the composite. Checked at
+// the strongest stop of each gradient — 55% on the main pane, 42% on the sidebar
+// band — which is the darkest the paper ever gets.
+const SKY_WASHES = {
+  "night-wash": "#dde1f0",
+  "dawn-wash": "#f7dcd5",
+  "day-wash": "#d5e3f5",
+  "dusk-wash": "#f9dfc3",
+};
+
+/** Composite `over` at `alpha` onto opaque `base`, both `#rrggbb`. */
+function composite(over, base, alpha) {
+  const [o, b] = [over, base].map((h) =>
+    [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16)),
+  );
+  const mixed = o.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)));
+  return `#${mixed.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+for (const [tName, tHex] of Object.entries(lightText)) {
+  for (const [sName, sHex] of Object.entries(SKY_WASHES)) {
+    const surface = tName.startsWith("sidebar-")
+      ? composite(sHex, LIGHT.sidebar, 0.42)
+      : composite(sHex, LIGHT.background, 0.55);
+    const r = ratio(tHex, surface);
+    const pass = r >= 4.5;
+    if (!pass) fails++;
+    rows.push(["sky-lt", tName, tHex, sName, surface, r.toFixed(2), pass ? "AA" : "FAIL"]);
+  }
+}
+
 const w = [6, 34, 9, 12, 9, 7, 10];
 const line = (r) => r.map((c, i) => String(c).padEnd(w[i])).join(" ");
 console.log(line(["theme", "token", "fg", "surface", "bg", "ratio", "verdict"]));

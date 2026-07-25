@@ -97,6 +97,13 @@
   --sc-linen-400: #e6dfcd;
   --sc-linen-500: #cbc0a4;
 
+  /* Overwritten every minute by `starcodeSky.ts`. Declared here so the backdrop
+     is correct on first paint and degrades to plain night if that never runs. */
+  --sc-sky-top: #080a14;
+  --sc-sky-glow: #0d1020;
+  --sc-sky-wash: #dde1f0;
+  --sc-sky-stars: 1;
+
   --sc-font-display: "Baloo 2 Variable", "Baloo 2", ui-rounded, system-ui, sans-serif;
 
   /* Two crops of one sky. `--sc-sky-tile` is exactly the height of the
@@ -357,7 +364,7 @@
   background-image:
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--sc-butter) 10%, transparent) 0%,
+      color-mix(in srgb, var(--sc-sky-wash) 42%, transparent) 0%,
       transparent 100%
     ),
     var(--surface-grain);
@@ -375,14 +382,19 @@
   /* Three layers: the shared star tile, the sky gradient, then the grain the
      panel already had. The gradient is what makes the specks readable — cream
      at 0.35-0.85 alpha disappears against the sidebar surface but reads
-     clearly against the near-black at the top of the band, so the field fades
-     out on its own as it descends into the thread rows. */
+     clearly against the deep colour at the top of the band, so the field fades
+     out on its own as it descends into the thread rows.
+
+     Tinted with `--sc-sky-top` rather than a fixed near-black so the band tracks
+     the phase alongside the main pane. Left fixed, the sidebar stayed midnight
+     while the pane beside it turned plum, and the seam between them was the
+     first thing the eye went to. */
   background-image:
     var(--sc-sky-tile),
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--sc-ink-950) 82%, transparent) 0%,
-      color-mix(in srgb, var(--sc-ink-950) 46%, transparent) 45%,
+      color-mix(in srgb, var(--sc-sky-top) 82%, transparent) 0%,
+      color-mix(in srgb, var(--sc-sky-top) 46%, transparent) 45%,
       transparent 100%
     ),
     var(--surface-grain);
@@ -418,7 +430,10 @@
   /* A 660x540 tile repeats about twice across a laptop viewport. The earlier
      360px tile repeated four times and the eye found the grid. */
   background-size: 660px 540px;
-  opacity: 0.42;
+  /* Scaled by the phase so the specks thin out with the sky and disappear at
+     midday. The floor keeps a trace of them at noon: an empty hero with nothing
+     in it at all reads as a failed load rather than a quiet one. */
+  opacity: calc(0.1 + var(--sc-sky-stars) * 0.32);
 }
 
 :root:not(.dark) .starcode-speck-field {
@@ -426,6 +441,119 @@
      tinting a second tile. */
   filter: invert(1) saturate(0.4);
   opacity: 0.16;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4c. The sky backdrop
+ *
+ * The main pane's background gradiates out of `--background` into a starry sky
+ * whose palette tracks the viewer's local clock — see `starcodeSky.ts`, which
+ * owns the phase and writes `--sc-sky-*` here every minute.
+ *
+ * Painted on `sidebar-inset`, which is the outermost element of the main pane.
+ * Every route then wraps its content in another full-size `bg-background` div,
+ * so the gradient has to be uncovered as well as painted — hence the
+ * transparency rule below. Both `sidebar-inset` and that wrapper resolve to the
+ * same `--background`, so clearing the inner one changes nothing except what
+ * can be seen through it. (`body` is not an option: it sits behind the inset,
+ * which is opaque.) The inset already carries the `surface-grain` utility, so
+ * its grain is restated rather than clobbered — the trap the sidebar sky hit.
+ *
+ * COLOUR ONLY. The backdrop here is a gradient and nothing else — no stars. A
+ * star tile on this element repeats down the whole pane, and on a dense route it
+ * puts specks on top of every settings row; the brand rule is that celestial
+ * marks belong on idle surfaces, and everything else takes the palette alone.
+ * The starfield therefore lives on `.starcode-speck-field`, which the empty
+ * states mount and dense routes do not, and it reads the same `--sc-sky-*`
+ * values so the two stay in step.
+ * ------------------------------------------------------------------------ */
+
+/* Scoped to direct children so nothing deeper — cards, popovers, the composer,
+   any surface that needs to occlude what scrolls under it — loses its fill. */
+[data-slot="sidebar-inset"] > .bg-background {
+  background-color: transparent;
+}
+
+.dark [data-slot="sidebar-inset"] {
+  background-image:
+    linear-gradient(
+      to bottom,
+      var(--sc-sky-top) 0%,
+      var(--sc-sky-glow) 18%,
+      color-mix(in srgb, var(--sc-sky-glow) 45%, transparent) 34%,
+      transparent 58%
+    ),
+    var(--surface-grain);
+  background-repeat: no-repeat, repeat;
+  background-position:
+    top left,
+    top left;
+  background-size:
+    100% 100%,
+    256px 256px;
+}
+
+/* Light theme gets the phase as a wash of colour at the top and no stars: specks
+   on paper read as dust, and a linen page has no sky to be dark. The wash is its
+   own colour rather than a lightened `--sc-sky-glow`; mixing the dark sky into
+   linen lands on grey at every phase, which reads as a smudge on the page rather
+   than as light. It clears well above the hero copy, so the text still sits on
+   flat linen. */
+:root:not(.dark) [data-slot="sidebar-inset"] {
+  background-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--sc-sky-wash) 55%, transparent) 0%,
+      color-mix(in srgb, var(--sc-sky-wash) 18%, transparent) 18%,
+      transparent 36%
+    ),
+    var(--surface-grain);
+  background-repeat: no-repeat, repeat;
+  background-position:
+    top left,
+    top left;
+  background-size:
+    100% 100%,
+    256px 256px;
+}
+
+/* Twinkle. A second copy of the tile, offset so it lands between the stars of
+   the static field rather than on top of them, pulsing on opacity alone — one
+   compositor property, no layout, no paint. Offsetting matters: animating the
+   field itself would blink every star in unison, which reads as a screen fault
+   rather than as a sky.
+
+   Dark only, and only where the field is mounted, so no dense surface can
+   acquire a moving background. */
+.dark .starcode-speck-field::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--sc-speck-tile);
+  background-repeat: repeat;
+  background-position: 180px 90px;
+  background-size: 660px 540px;
+  opacity: calc(var(--sc-sky-stars) * 0.5);
+  animation: starcode-twinkle 9s ease-in-out infinite;
+}
+
+@keyframes starcode-twinkle {
+  0%,
+  100% {
+    opacity: calc(var(--sc-sky-stars) * 0.16);
+  }
+  50% {
+    opacity: calc(var(--sc-sky-stars) * 0.5);
+  }
+}
+
+/* Reduced motion keeps the sky, drops the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .dark .starcode-speck-field::after {
+    animation: none;
+    opacity: calc(var(--sc-sky-stars) * 0.32);
+  }
 }
 
 /* ---------------------------------------------------------------------------
