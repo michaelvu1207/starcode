@@ -70,12 +70,19 @@ interface Harness {
  */
 const claudeSessionFixture = (cwd: string): string =>
   `${[
-    JSON.stringify({ type: "summary", summary: "Codeword session" }),
+    JSON.stringify({ type: "ai-title", aiTitle: "stale first guess" }),
     JSON.stringify({
       type: "user",
       cwd,
+      timestamp: "2026-07-23T09:00:00.000Z",
       message: { role: "user", content: "remember the codeword" },
     }),
+    JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-23T09:00:02.000Z",
+      message: { role: "assistant", content: [{ type: "text", text: "noted" }] },
+    }),
+    JSON.stringify({ type: "ai-title", aiTitle: "Codeword session" }),
   ].join("\n")}\n`;
 
 const codexRolloutFixture = (cwd: string): string =>
@@ -312,8 +319,12 @@ describe("history import", () => {
         assert.equal(result.nativeSessionId, CLAUDE_SESSION_UUID);
         assert.equal(result.cwd, harness.workspace);
         assert.equal(result.projectId, "project-alpha");
-        // The summary record wins over the first message.
+        // The *last* ai-title wins, over both the stale earlier one and the
+        // first user message.
         assert.equal(result.title, "Codeword session");
+        // Provenance for the client's one-line "resumed from…" marker.
+        assert.equal(result.messageCount, 2);
+        assert.equal(result.startedAt, "2026-07-23T09:00:00.000Z");
 
         // One thread, no turn: an imported thread sits idle until someone types.
         assert.lengthOf(threadCreates(harness), 1);

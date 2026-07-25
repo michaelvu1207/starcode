@@ -55,6 +55,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { HistoryIndex } from "./HistoryIndex.ts";
 import {
   claudeNativeSessionIdForPath,
+  codexNativeSessionIdForPath,
   defaultInstanceIdForHistoryProvider,
   findProjectForCwd,
   importResumeCursor,
@@ -62,11 +63,9 @@ import {
   instanceSessionStoreRoot,
   isPathWithin,
   projectTitleForCwd,
-  SessionImportFold,
-  type SessionImportFacts,
 } from "./importFacts.ts";
 import { HistoryImportRegistry } from "./importRegistry.ts";
-import { foldSessionHead } from "./tailReader.ts";
+import { readSessionHead, readSessionStats, type SessionStats } from "./tailReader.ts";
 
 /**
  * An imported thread starts in the safe mode, not the mode the terminal
@@ -112,24 +111,39 @@ export interface HistoryImportInput {
 }
 
 /**
- * Reads the head of a session file for the facts an import needs.
+ * Reads the head of a session file for the working directory an import needs.
  *
- * Failable rather than defaulting: the caller has to be able to tell "this
- * session has no working directory recorded" from "this file was deleted while
- * we were looking at it", and neither is a reason to import anyway.
+ * Failable rather than defaulting, unlike the listing's hydration, which
+ * swallows read errors to keep a row renderable. Here the caller has to be
+ * able to tell "this session recorded no working directory" from "this file
+ * was deleted while we were looking at it", and neither is a reason to import.
  */
-const readImportFacts = (input: {
+const readImportCwd = (input: {
   readonly path: string;
   readonly provider: HistoryProvider;
-}): Effect.Effect<SessionImportFacts, HistoryImportRefusal> =>
+}): Effect.Effect<string | null, HistoryImportRefusal> =>
   Effect.tryPromise({
-    try: () => foldSessionHead(input, new SessionImportFold(input.provider)),
+    try: () => readSessionHead(input),
     catch: (cause) =>
       new HistoryImportRefusal({
         reason: "session_unreadable" satisfies HistoryImportRefusalReason,
         detail: `Could not read the session file: ${String(cause)}`,
       }),
-  });
+  }).pipe(Effect.map((head) => head.projectPath));
+
+/**
+ * Counts the session's messages and finds when it began.
+ *
+ * Best-effort: this feeds one line of provenance UI, and a full scan that
+ * failed is not a reason to refuse an import that is otherwise sound.
+ */
+const readImportStats = (input: {
+  readonly path: string;
+  readonly provider: HistoryProvider;
+}): Effect.Effect<SessionStats> =>
+  Effect.promise(() =>
+    readSessionStats(input).catch(() => ({ messageCount: null, startedAt: null })),
+  );
 
 /**
  * The model the imported thread starts on.
@@ -196,6 +210,8 @@ export const makeHistoryImporter = Effect.gen(function* () {
           provider: recorded.provider,
           providerInstanceId: existingThread.value.thread.modelSelection.instanceId,
           title: existingThread.value.thread.title,
+          messageCount: recorded.messageCount,
+          startedAt: recorded.startedAt,
         } satisfies HistoryImportResult;
       }
       // The thread was deleted outside this registry. Fall through and import
@@ -205,22 +221,23 @@ export const makeHistoryImporter = Effect.gen(function* () {
     const entry = yield* historyIndex.resolve(input.sessionId);
     if (entry === null) return yield* new HistorySessionNotFound();
 
-    const facts = yield* readImportFacts({ path: entry.path, provider: entry.provider });
+    const cwd = yield* readImportCwd({ path: entry.path, provider: entry.provider });
 
+    // Both ids come from the file name, and for Codex that is a correction
+    // rather than a shortcut: a rollout appends a fresh `session_meta` on every
+    // resume — one on this machine carries 180 — so "the id in session_meta" is
+    // ambiguous in exactly the long sessions most worth importing.
     const nativeSessionId =
       entry.provider === "claude"
         ? claudeNativeSessionIdForPath(entry.path)
-        : facts.nativeSessionId;
+        : codexNativeSessionIdForPath(entry.path);
     if (nativeSessionId === null) {
       return yield* refuse(
         "session_id_unusable",
-        entry.provider === "claude"
-          ? "The session file is not named after a session id, so there is nothing to resume."
-          : "The rollout has no `session_meta` record, so it carries no thread id to resume.",
+        "The session file is not named after a session id, so there is nothing to resume.",
       );
     }
 
-    const cwd = facts.cwd;
     if (cwd === null) {
       return yield* refuse(
         "session_cwd_unknown",
@@ -273,7 +290,15 @@ export const makeHistoryImporter = Effect.gen(function* () {
     }
 
     const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-    const title = importThreadTitle({ facts, provider: entry.provider, requested: input.title });
+    // The picker's own title, so importing never renames a session out from
+    // under the person who just recognised it in the list. `hydrate` is cached
+    // by file identity, so listing the row already paid for this.
+    const [summary] = yield* historyIndex.hydrate([entry]);
+    const title = importThreadTitle({
+      provider: entry.provider,
+      sessionTitle: summary?.title,
+      requested: input.title,
+    });
 
     let project: OrchestrationProjectShell | null = null;
     if (input.projectId !== undefined) {
@@ -410,6 +435,11 @@ export const makeHistoryImporter = Effect.gen(function* () {
         ),
       );
 
+    // Counted after the write, not before: it is a full scan of the file and
+    // it feeds one line of provenance, so it must never sit between the
+    // operator's click and the thread appearing.
+    const stats = yield* readImportStats({ path: entry.path, provider: entry.provider });
+
     const record: HistoryImportRecord = {
       historySessionId: input.sessionId,
       nativeSessionId,
@@ -418,6 +448,8 @@ export const makeHistoryImporter = Effect.gen(function* () {
       projectId,
       cwd,
       importedAt: DateTime.formatIso(yield* DateTime.now),
+      messageCount: stats.messageCount,
+      startedAt: stats.startedAt,
     };
     // Provenance is best-effort on purpose: the thread resumes off its binding
     // row whether or not this file was written, and failing an import that has
@@ -443,6 +475,8 @@ export const makeHistoryImporter = Effect.gen(function* () {
       provider: entry.provider,
       providerInstanceId: instanceId,
       title,
+      messageCount: stats.messageCount,
+      startedAt: stats.startedAt,
     } satisfies HistoryImportResult;
   });
 

@@ -47,10 +47,16 @@ export const HISTORY_SESSIONS_DEFAULT_LIMIT = 40;
  */
 export const HISTORY_SESSIONS_MAX_LIMIT = 200;
 
-/** Transcript entries per page when the caller names no limit. */
-export const HISTORY_TRANSCRIPT_DEFAULT_LIMIT = 80;
-/** Hard ceiling on a transcript page. */
-export const HISTORY_TRANSCRIPT_MAX_LIMIT = 300;
+/**
+ * Entries in a preview's tail.
+ *
+ * Bounded, with no cursor and no load-more, because the preview answers one
+ * question — *which conversation is this?* — and the reader that used to
+ * answer "what did it say?" is gone. A mistitled session is identified by how
+ * it opened and where it ended up, so the preview is the opening message plus
+ * this many closing ones. Deeper and we have rebuilt the viewer we deleted.
+ */
+export const HISTORY_PREVIEW_TAIL_ENTRIES = 8;
 /**
  * Per-entry text budget, matching the peer transcript renderer. Long tool
  * output and pasted files are clipped rather than streamed: this is a preview.
@@ -90,6 +96,25 @@ export const HistorySessionsCursor = TrimmedNonEmptyString.check(Schema.isMaxLen
 export type HistorySessionsCursor = typeof HistorySessionsCursor.Type;
 
 /**
+ * Where a session's displayed title came from.
+ *
+ * Carried so the client can render a derived title as derived. Only `session`
+ * is a real title the CLI wrote for itself; the other two are this server
+ * guessing, and a guess that looks authoritative is worse than one that looks
+ * like a guess — especially here, where the entire feature exists because
+ * titles sometimes lie.
+ */
+export const HistoryTitleSource = Schema.Literals([
+  /** Claude's own `ai-title` record. Present on roughly 40% of sessions, never on Codex. */
+  "session",
+  /** Derived from the first thing a human typed. */
+  "message",
+  /** Last resort: the directory the session ran in. */
+  "project",
+]);
+export type HistoryTitleSource = typeof HistoryTitleSource.Type;
+
+/**
  * One session as the listing sees it. Everything here is either free from a
  * `stat` or comes from a bounded head-read of the file; nothing requires
  * parsing the session through to the end.
@@ -111,6 +136,13 @@ export const HistorySessionSummary = Schema.Struct({
    * preamble is unusually large.
    */
   snippet: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Best available name for the session. Null only when the file yielded
+   * nothing at all — no title record, no user message, no working directory.
+   */
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  /** Which rung of the fallback chain `title` came from. Null when it did. */
+  titleSource: Schema.NullOr(HistoryTitleSource),
   /** File mtime: when the CLI last wrote to this session. */
   lastActivityAt: IsoDateTime,
   sizeBytes: NonNegativeInt,
@@ -154,26 +186,27 @@ export const HistoryTranscriptEntry = Schema.Struct({
 export type HistoryTranscriptEntry = typeof HistoryTranscriptEntry.Type;
 
 /**
- * A window of a session, newest last.
+ * Enough of a session to recognise it, and no more.
  *
- * The first page is the *tail* — the newest entries — because that is what a
- * reader wants first and what can be produced without touching the front of a
- * 38 MB file. `nextBefore` walks backwards from there.
+ * Two disjoint slices rather than one list, because they are read from
+ * opposite ends of the file and the space between them is not something this
+ * endpoint will ever fetch. `gap` says whether anything sits in that space, so
+ * the client can mark the elision honestly instead of implying the session is
+ * nine messages long.
  */
-export const HistoryTranscriptPage = Schema.Struct({
+export const HistoryPreview = Schema.Struct({
   session: HistorySessionSummary,
-  /** Ascending by offset: oldest first within the page, newest at the bottom. */
-  entries: Schema.Array(HistoryTranscriptEntry),
-  /** Older records exist before the first returned entry. */
-  hasMore: Schema.Boolean,
   /**
-   * Pass as `before` for the next page back. This is the offset of the oldest
-   * line *examined*, not the oldest line rendered, so records the renderer
-   * skipped are not rescanned on the following page.
+   * The first thing a human typed. Null when the opening already appears in
+   * `tail` (a short session), or when the head read found no human turn.
    */
-  nextBefore: Schema.NullOr(NonNegativeInt),
+  opening: Schema.NullOr(HistoryTranscriptEntry),
+  /** The closing entries, ascending by offset: oldest first, newest last. */
+  tail: Schema.Array(HistoryTranscriptEntry),
+  /** True when entries exist between `opening` and the first of `tail`. */
+  gap: Schema.Boolean,
 });
-export type HistoryTranscriptPage = typeof HistoryTranscriptPage.Type;
+export type HistoryPreview = typeof HistoryPreview.Type;
 
 /**
  * Import: turning one of those on-disk sessions into a real starcode thread.
@@ -286,6 +319,18 @@ export const HistoryImportThreadResult = Schema.Struct({
   provider: HistoryProvider,
   providerInstanceId: ProviderInstanceId,
   title: TrimmedNonEmptyString,
+  /**
+   * Renderable messages in the session behind this thread, and when it began.
+   *
+   * Both exist for one line of UI: an imported thread opens with an empty
+   * transcript that the model nonetheless remembers, which is a genuine
+   * surprise, and "Resumed from a Claude terminal session · 483 messages ·
+   * Jul 12" is what defuses it. `messageCount` is null when counting hit its
+   * byte budget — an honest unknown rather than a low number presented as
+   * fact.
+   */
+  messageCount: Schema.NullOr(NonNegativeInt),
+  startedAt: Schema.NullOr(IsoDateTime),
 });
 export type HistoryImportThreadResult = typeof HistoryImportThreadResult.Type;
 
@@ -328,6 +373,9 @@ export const HistoryImportRecord = Schema.Struct({
   projectId: ProjectId,
   cwd: TrimmedNonEmptyString,
   importedAt: IsoDateTime,
+  /** Counted once at import; see `HistoryImportThreadResult`. */
+  messageCount: Schema.NullOr(NonNegativeInt),
+  startedAt: Schema.NullOr(IsoDateTime),
 });
 export type HistoryImportRecord = typeof HistoryImportRecord.Type;
 

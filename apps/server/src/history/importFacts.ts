@@ -31,8 +31,6 @@ import * as NodePath from "node:path";
 
 import type { HistoryProvider } from "@t3tools/contracts";
 
-import { parseRecord, readRecordProjectPath, renderRecord } from "./records.ts";
-
 /** Title budget. Long enough to be recognisable, short enough for a sidebar row. */
 export const IMPORT_TITLE_MAX_CHARS = 80;
 
@@ -76,96 +74,68 @@ export const claudeNativeSessionIdForPath = (absolutePath: string): string | nul
   return UUID_PATTERN.test(stem) ? stem : null;
 };
 
+/**
+ * Codex's resume id, read from the file name.
+ *
+ * The file name is `rollout-<ISO timestamp>-<uuid>.jsonl` and that uuid is
+ * what `thread/resume` takes. Reading it from the path rather than from
+ * `session_meta` is not a shortcut but a correction: a resumed rollout appends
+ * a fresh `session_meta` every time it is continued — one live rollout on this
+ * machine carries 180 of them — so "the session_meta's id" is ambiguous in
+ * exactly the long-running sessions most worth importing.
+ */
+export const codexNativeSessionIdForPath = (absolutePath: string): string | null => {
+  const base = NodePath.basename(absolutePath);
+  if (!base.endsWith(".jsonl")) return null;
+  const stem = base.slice(0, -".jsonl".length);
+  // The uuid is the last 36 characters; the prefix is `rollout-<ISO>-`, whose
+  // own dashes rule out splitting on the separator.
+  const candidate = stem.slice(-36);
+  return UUID_PATTERN.test(candidate) ? candidate : null;
+};
+
 /** The shape the Claude adapter validates a resume cursor against. */
 export const isImportableNativeSessionId = (value: string): boolean => UUID_PATTERN.test(value);
-
-export interface SessionImportFacts {
-  /** Codex only: the id from `session_meta`. Claude's comes from the path. */
-  readonly nativeSessionId: string | null;
-  /** The directory the session ran in, from the session's own records. */
-  readonly cwd: string | null;
-  /** A summary line the CLI wrote for itself, if it wrote one. */
-  readonly summary: string | null;
-  /** The first thing a human typed, collapsed to one line. */
-  readonly firstUserMessage: string | null;
-}
-
-/**
- * Folds a session's opening records into the facts above.
- *
- * Shaped to `SessionHeadConsumer` so it rides the same budgeted head-read the
- * listing's snippet fold uses. It reports complete only once every field it
- * can still learn is filled — for Claude there is no native id to find in the
- * records, so completeness ignores it.
- */
-export class SessionImportFold {
-  private nativeSessionId: string | null = null;
-  private cwd: string | null = null;
-  private summary: string | null = null;
-  private firstUserMessage: string | null = null;
-  private readonly provider: HistoryProvider;
-
-  constructor(provider: HistoryProvider) {
-    this.provider = provider;
-  }
-
-  push(line: string): boolean {
-    const record = parseRecord(line);
-    if (record === null) return this.complete;
-
-    if (this.cwd === null) this.cwd = readRecordProjectPath(this.provider, record);
-
-    if (this.nativeSessionId === null && this.provider === "codex") {
-      if (record["type"] === "session_meta") {
-        const payload = record["payload"];
-        if (isRecord(payload)) {
-          this.nativeSessionId =
-            asNonEmptyString(payload["id"]) ?? asNonEmptyString(payload["session_id"]);
-        }
-      }
-    }
-
-    // Claude writes a `summary` record at the head of a session it has
-    // compacted or resumed. When one is there it is a better title than the
-    // first message, because it describes the whole session rather than how it
-    // opened.
-    if (this.summary === null && record["type"] === "summary") {
-      this.summary = collapseWhitespace(asNonEmptyString(record["summary"]) ?? "");
-      if (this.summary.length === 0) this.summary = null;
-    }
-
-    if (this.firstUserMessage === null) {
-      const rendered = renderRecord(this.provider, record);
-      if (rendered !== null && rendered.isHumanTurn) {
-        const collapsed = collapseWhitespace(rendered.text);
-        if (collapsed.length > 0) this.firstUserMessage = collapsed;
-      }
-    }
-
-    return this.complete;
-  }
-
-  get complete(): boolean {
-    // The summary is never waited for: most sessions have none, and stopping
-    // on the first user message is what keeps this to a few KB.
-    const idSettled = this.provider === "claude" || this.nativeSessionId !== null;
-    return idSettled && this.cwd !== null && this.firstUserMessage !== null;
-  }
-
-  get result(): SessionImportFacts {
-    return {
-      nativeSessionId: this.nativeSessionId,
-      cwd: this.cwd,
-      summary: this.summary,
-      firstUserMessage: this.firstUserMessage,
-    };
-  }
-}
 
 const collapseWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
 
 const clip = (value: string, maxChars: number): string =>
   value.length <= maxChars ? value : `${value.slice(0, maxChars).trimEnd()}…`;
+
+export type SessionTitleSource = "session" | "message" | "project";
+
+/**
+ * The name a session is shown under, and where that name came from.
+ *
+ * A three-rung chain, because only the top rung is a real title: Claude writes
+ * `ai-title` on roughly 40% of sessions and Codex never does, so most rows are
+ * named by inference. The source travels with the title so the client can
+ * render a derived name as derived — the whole reason this feature exists is
+ * that titles sometimes lie, and a guess dressed up as a title is the same bug
+ * in a new place.
+ */
+export const resolveSessionTitle = (input: {
+  readonly aiTitle: string | null;
+  readonly firstUserMessage: string | null;
+  readonly projectLabel: string | null;
+}): { readonly title: string | null; readonly source: SessionTitleSource | null } => {
+  const aiTitle = asNonEmptyString(input.aiTitle);
+  if (aiTitle !== null) {
+    return { title: clip(collapseWhitespace(aiTitle), IMPORT_TITLE_MAX_CHARS), source: "session" };
+  }
+  const firstUserMessage = asNonEmptyString(input.firstUserMessage);
+  if (firstUserMessage !== null) {
+    return {
+      title: clip(collapseWhitespace(firstUserMessage), IMPORT_TITLE_MAX_CHARS),
+      source: "message",
+    };
+  }
+  const projectLabel = asNonEmptyString(input.projectLabel);
+  if (projectLabel !== null) {
+    return { title: clip(projectLabel, IMPORT_TITLE_MAX_CHARS), source: "project" };
+  }
+  return { title: null, source: null };
+};
 
 /**
  * What to call the imported thread.
@@ -175,16 +145,17 @@ const clip = (value: string, maxChars: number): string =>
  * imported thread's name should keep pointing at the session it came from.
  */
 export const importThreadTitle = (input: {
-  readonly facts: SessionImportFacts;
   readonly provider: HistoryProvider;
+  readonly sessionTitle?: string | null | undefined;
   readonly requested?: string | undefined;
 }): string => {
   const requested = asNonEmptyString(input.requested ?? null);
   if (requested !== null) return clip(collapseWhitespace(requested), IMPORT_TITLE_MAX_CHARS);
-  const summary = asNonEmptyString(input.facts.summary);
-  if (summary !== null) return clip(summary, IMPORT_TITLE_MAX_CHARS);
-  const firstMessage = asNonEmptyString(input.facts.firstUserMessage);
-  if (firstMessage !== null) return clip(firstMessage, IMPORT_TITLE_MAX_CHARS);
+  // The picker and the thread must agree: whatever name the row was shown
+  // under is the name the thread gets, so importing never renames a session
+  // out from under the person who recognised it.
+  const sessionTitle = asNonEmptyString(input.sessionTitle ?? null);
+  if (sessionTitle !== null) return clip(collapseWhitespace(sessionTitle), IMPORT_TITLE_MAX_CHARS);
   return input.provider === "claude" ? "Imported Claude session" : "Imported Codex session";
 };
 

@@ -26,7 +26,7 @@ import type {
   EnvironmentId,
   HistorySessionId,
   HistorySessionsPage,
-  HistoryTranscriptPage,
+  HistoryPreview,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -107,14 +107,12 @@ const buildSessionsQuery = (
   ...(request.limit === undefined ? {} : { limit: String(request.limit) }),
 });
 
-export const fetchEnvironmentHistoryTranscript = Effect.fn(
-  "clientRuntime.state.fetchEnvironmentHistoryTranscript",
+export const fetchEnvironmentHistoryPreview = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentHistoryPreview",
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly sessionId: HistorySessionId;
-  readonly before?: number | undefined;
-  readonly limit?: number | undefined;
   readonly timeoutMs?: number;
 }) {
   // Built by hand as well as templated by the client, because a relay
@@ -122,7 +120,7 @@ export const fetchEnvironmentHistoryTranscript = Effect.fn(
   // agree exactly.
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
-    `/api/history/sessions/${input.sessionId}/transcript`,
+    `/api/history/sessions/${input.sessionId}/preview`,
   );
   const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
   const headers = yield* buildEnvironmentAuthHeaders(
@@ -136,13 +134,9 @@ export const fetchEnvironmentHistoryTranscript = Effect.fn(
     input.timeoutMs ?? DEFAULT_HISTORY_TIMEOUT_MS,
     withEnvironmentCredentials(
       input.prepared.httpAuthorization,
-      client.history.transcript({
+      client.history.preview({
         headers,
         params: { sessionId: input.sessionId },
-        query: {
-          ...(input.before === undefined ? {} : { before: String(input.before) }),
-          ...(input.limit === undefined ? {} : { limit: String(input.limit) }),
-        },
       }),
     ),
   );
@@ -155,12 +149,14 @@ export class TerminalHistoryLoader extends Context.Service<
       readonly prepared: PreparedConnection;
       readonly request: HistorySessionsRequest;
     }) => Effect.Effect<Option.Option<HistorySessionsPage>>;
-    readonly loadTranscript: (input: {
+    /**
+     * One bounded read, with no cursor to page with. History is import-only:
+     * this exists to tell two sessions apart, not to be scrolled.
+     */
+    readonly loadPreview: (input: {
       readonly prepared: PreparedConnection;
       readonly sessionId: HistorySessionId;
-      readonly before?: number | undefined;
-      readonly limit?: number | undefined;
-    }) => Effect.Effect<Option.Option<HistoryTranscriptPage>>;
+    }) => Effect.Effect<Option.Option<HistoryPreview>>;
   }
 >()("@t3tools/client-runtime/state/terminalHistory/TerminalHistoryLoader") {}
 
@@ -195,20 +191,22 @@ export const terminalHistoryLoaderLayer: Layer.Layer<
             ),
           ),
         ),
-      loadTranscript: (input) =>
-        fetchEnvironmentHistoryTranscript({
+      loadPreview: (input) =>
+        fetchEnvironmentHistoryPreview({
           prepared: input.prepared,
           signer,
           sessionId: input.sessionId,
-          before: input.before,
-          limit: input.limit,
         }).pipe(
-          Effect.map(Option.some<HistoryTranscriptPage>),
+          Effect.map(Option.some<HistoryPreview>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchCause((cause) =>
-            Effect.logDebug("Could not read a terminal-history transcript over HTTP.").pipe(
+            // Quiet and `none` for the same reason the sessions loader is: a
+            // machine still on a pre-F12 build answers this route with 200 and
+            // the SPA's HTML, which fails to decode. That must read as "no
+            // preview", not as an error.
+            Effect.logDebug("Could not read a terminal-history preview over HTTP.").pipe(
               Effect.annotateLogs({ cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<HistoryTranscriptPage>()),
+              Effect.as(Option.none<HistoryPreview>()),
             ),
           ),
         ),
@@ -256,11 +254,9 @@ export interface HistorySessionsKey {
   readonly limit?: number | undefined;
 }
 
-export interface HistoryTranscriptKey {
+export interface HistoryPreviewKey {
   readonly environmentId: EnvironmentId;
   readonly sessionId: HistorySessionId;
-  readonly before?: number | undefined;
-  readonly limit?: number | undefined;
 }
 
 /**
@@ -277,8 +273,8 @@ export const historySessionsAtomKey = (key: HistorySessionsKey): string =>
     key.limit ?? null,
   ]);
 
-export const historyTranscriptAtomKey = (key: HistoryTranscriptKey): string =>
-  JSON.stringify([key.environmentId, key.sessionId, key.before ?? null, key.limit ?? null]);
+export const historyPreviewAtomKey = (key: HistoryPreviewKey): string =>
+  JSON.stringify([key.environmentId, key.sessionId]);
 
 const parseSessionsKey = (serialized: string): HistorySessionsKey => {
   const [environmentId, since, until, cursor, limit] = JSON.parse(serialized) as [
@@ -297,19 +293,9 @@ const parseSessionsKey = (serialized: string): HistorySessionsKey => {
   };
 };
 
-const parseTranscriptKey = (serialized: string): HistoryTranscriptKey => {
-  const [environmentId, sessionId, before, limit] = JSON.parse(serialized) as [
-    EnvironmentId,
-    HistorySessionId,
-    number | null,
-    number | null,
-  ];
-  return {
-    environmentId,
-    sessionId,
-    ...(before === null ? {} : { before }),
-    ...(limit === null ? {} : { limit }),
-  };
+const parsePreviewKey = (serialized: string): HistoryPreviewKey => {
+  const [environmentId, sessionId] = JSON.parse(serialized) as [EnvironmentId, HistorySessionId];
+  return { environmentId, sessionId };
 };
 
 export function createEnvironmentTerminalHistoryAtoms<R, E>(
@@ -344,29 +330,24 @@ export function createEnvironmentTerminalHistoryAtoms<R, E>(
       );
   });
 
-  const transcriptAtom = Atom.family((serializedKey: string) => {
-    const key = parseTranscriptKey(serializedKey);
+  const previewAtom = Atom.family((serializedKey: string) => {
+    const key = parsePreviewKey(serializedKey);
     return runtime
       .atom(
         runInEnvironment(
           key.environmentId,
           withPreparedConnection((prepared) =>
             Effect.flatMap(TerminalHistoryLoader, (loader) =>
-              loader.loadTranscript({
-                prepared,
-                sessionId: key.sessionId,
-                ...(key.before === undefined ? {} : { before: key.before }),
-                ...(key.limit === undefined ? {} : { limit: key.limit }),
-              }),
+              loader.loadPreview({ prepared, sessionId: key.sessionId }),
             ),
           ),
         ),
       )
       .pipe(
         Atom.setIdleTTL(HISTORY_IDLE_TTL_MS),
-        Atom.withLabel(`environment-history-transcript:${serializedKey}`),
+        Atom.withLabel(`environment-history-preview:${serializedKey}`),
       );
   });
 
-  return { sessionsAtom, transcriptAtom };
+  return { sessionsAtom, previewAtom };
 }

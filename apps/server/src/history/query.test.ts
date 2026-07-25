@@ -5,9 +5,7 @@ import type { HistoryIndexEntry } from "./HistoryIndex.ts";
 import {
   applyCursor,
   clampSessionsLimit,
-  clampTranscriptLimit,
   formatCursor,
-  parseBefore,
   parseCursor,
   resolveWindow,
   selectPage,
@@ -45,18 +43,6 @@ describe("clampLimit", () => {
     expect(clampSessionsLimit("banana")).toEqual(40);
     expect(clampSessionsLimit("-5")).toEqual(40);
     expect(clampSessionsLimit("0")).toEqual(40);
-    expect(clampTranscriptLimit(undefined)).toEqual(80);
-    expect(clampTranscriptLimit("9999")).toEqual(300);
-  });
-});
-
-describe("parseBefore", () => {
-  it("treats absent and nonsense values as the tail", () => {
-    expect(parseBefore(undefined)).toBeNull();
-    expect(parseBefore("-1")).toBeNull();
-    expect(parseBefore("nope")).toBeNull();
-    expect(parseBefore("0")).toEqual(0);
-    expect(parseBefore("4096")).toEqual(4_096);
   });
 });
 

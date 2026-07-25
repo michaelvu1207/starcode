@@ -1,10 +1,11 @@
 /**
  * Terminal history HTTP routes.
  *
- * Three reads and one write. The reads are cheap by construction: the listing
- * serves a page of an in-memory index and opens files only for the rows it is
- * about to return, the transcript reads backwards from the end of one file,
- * and the import registry is a small JSON file. None of them touch SQLite.
+ * Three reads and one write, and none of them returns a conversation. The
+ * listing serves a page of an in-memory index and opens files only for the
+ * rows it is about to return, the preview reads a bounded slice from each end
+ * of one file, and the import registry is a small JSON file. None of them
+ * touch SQLite.
  *
  * The write — import — is the exception in every sense, and it lives here
  * rather than in its own group because it is addressed by history session id
@@ -21,8 +22,8 @@ import {
   HistoryImportRefusedError,
   type HistoryImportRefusalReason,
   type HistoryImportsPage,
+  type HistoryPreview,
   type HistorySessionsPage,
-  type HistoryTranscriptPage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -40,26 +41,19 @@ import {
 import { HistoryIndex } from "./HistoryIndex.ts";
 import { makeHistoryImporter } from "./import.ts";
 import { HistoryImportRegistry } from "./importRegistry.ts";
-import {
-  clampSessionsLimit,
-  clampTranscriptLimit,
-  parseBefore,
-  parseCursor,
-  resolveWindow,
-  selectPage,
-} from "./query.ts";
-import { readTranscriptTail } from "./tailReader.ts";
+import { clampSessionsLimit, parseCursor, resolveWindow, selectPage } from "./query.ts";
+import { readSessionPreview } from "./preview.ts";
 
 /**
  * The file went away between resolving its id and reading it. Realistic: these
  * stores are the CLIs' own, and a user can delete a project at any moment.
  */
-class HistoryTranscriptReadError extends Schema.TaggedErrorClass<HistoryTranscriptReadError>()(
-  "HistoryTranscriptReadError",
+class HistoryPreviewReadError extends Schema.TaggedErrorClass<HistoryPreviewReadError>()(
+  "HistoryPreviewReadError",
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Failed to read the terminal-history transcript.";
+    return "Failed to read the terminal-history preview.";
   }
 }
 
@@ -122,8 +116,8 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "transcript",
-        Effect.fn("environment.history.transcript")(function* (args) {
+        "preview",
+        Effect.fn("environment.history.preview")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
 
@@ -137,27 +131,19 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
             return yield* failEnvironmentNotFound("history_session_not_found");
           }
 
-          const [tail, summaries] = yield* Effect.all(
+          const [preview, summaries] = yield* Effect.all(
             [
               // Failable on purpose: the file can be deleted between resolving
               // the id and opening it, and that should surface as an error the
-              // viewer can show rather than a defect that kills the fiber.
+              // picker can show rather than a defect that kills the fiber.
               Effect.tryPromise({
-                try: () =>
-                  readTranscriptTail({
-                    path: entry.path,
-                    provider: entry.provider,
-                    before: parseBefore(args.query.before),
-                    limit: clampTranscriptLimit(args.query.limit),
-                  }),
-                catch: (cause) => new HistoryTranscriptReadError({ cause }),
+                try: () => readSessionPreview({ path: entry.path, provider: entry.provider }),
+                catch: (cause) => new HistoryPreviewReadError({ cause }),
               }),
               historyIndex.hydrate([entry]),
             ],
             { concurrency: 2 },
-          ).pipe(
-            Effect.catch((cause) => failEnvironmentInternal("history_transcript_failed", cause)),
-          );
+          ).pipe(Effect.catch((cause) => failEnvironmentInternal("history_preview_failed", cause)));
 
           const session = summaries[0];
           if (session === undefined) {
@@ -165,10 +151,10 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
           }
           return {
             session,
-            entries: tail.entries,
-            hasMore: tail.hasMore,
-            nextBefore: tail.nextBefore,
-          } satisfies HistoryTranscriptPage;
+            opening: preview.opening,
+            tail: preview.tail,
+            gap: preview.gap,
+          } satisfies HistoryPreview;
         }),
       )
       .handle(

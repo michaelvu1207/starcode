@@ -272,7 +272,11 @@ describe("SessionHeadFold", () => {
         JSON.stringify({ type: "user", cwd: "/Users/me/app", message: { content: "do it" } }),
       ),
     ).toBe(true);
-    expect(fold.result).toEqual({ projectPath: "/Users/me/app", snippet: "do it" });
+    expect(fold.result).toEqual({
+      projectPath: "/Users/me/app",
+      snippet: "do it",
+      aiTitle: null,
+    });
   });
 
   it("walks past the metadata records a session opens with", () => {
@@ -313,6 +317,10 @@ describe("SessionHeadFold", () => {
     fold.push(
       JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "ship it" } }),
     );
-    expect(fold.result).toEqual({ projectPath: "/Users/me/proj", snippet: "ship it" });
+    expect(fold.result).toEqual({
+      projectPath: "/Users/me/proj",
+      snippet: "ship it",
+      aiTitle: null,
+    });
   });
 });
