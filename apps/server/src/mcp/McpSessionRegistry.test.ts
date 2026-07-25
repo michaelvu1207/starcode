@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { layerTest as serverSettingsLayerTest } from "../serverSettings.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -29,6 +30,9 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+      // No master designated: these tests are about token lifecycle, and the
+      // capability set they assert on is the ordinary-session one.
+      Effect.provide(serverSettingsLayerTest()),
       Effect.provide(NodeServices.layer),
     );
 

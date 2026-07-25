@@ -91,6 +91,9 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { FeatureFlowServicesLive, featureFlowHttpApiLayer } from "./featureFlow/layer.ts";
+import { mailboxHttpApiLayer } from "./mailbox/layer.ts";
+import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
 import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
 import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
 import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
@@ -273,7 +276,16 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
-  Layer.provideMerge(PersistenceLayerLive),
+  // Fork: the per-thread mailbox rides along with persistence so a single
+  // instance is shared by the turn reactor that drains it and the HTTP route
+  // that fills it. Merged into this entry rather than added as its own because
+  // the surrounding pipe is at its 20-argument overload limit.
+  Layer.provideMerge(
+    Layer.merge(
+      PersistenceLayerLive,
+      ThreadMailbox.layer.pipe(Layer.provide(PersistenceLayerLive)),
+    ),
+  ),
   Layer.provide(ServerSecretStore.layer),
 );
 
@@ -298,7 +310,16 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
+  // Fork: the per-thread mailbox rides along with persistence so a single
+  // instance is shared by the turn reactor that drains it and the HTTP route
+  // that fills it. Merged into this entry rather than added as its own because
+  // the surrounding pipe is at its 20-argument overload limit.
+  Layer.provideMerge(
+    Layer.merge(
+      PersistenceLayerLive,
+      ThreadMailbox.layer.pipe(Layer.provide(PersistenceLayerLive)),
+    ),
+  ),
   Layer.provideMerge(Keybindings.layer),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,
@@ -359,6 +380,8 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(peersHttpApiLayer),
+      Layer.provide(mailboxHttpApiLayer),
+      Layer.provide(featureFlowHttpApiLayer),
       Layer.provide(usageHttpApiLayer),
       Layer.provide(historyHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
@@ -373,6 +396,7 @@ export const makeRoutesLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(PeerServicesLive),
+  Layer.provide(FeatureFlowServicesLive),
   Layer.provide(UsageServicesLive),
   Layer.provide(HistoryServicesLive),
   Layer.provide(ServerSelfUpdate.layer),

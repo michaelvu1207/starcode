@@ -3,8 +3,9 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { FeatureFlowTrunkConfig } from "./featureFlow.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -437,6 +438,23 @@ export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
+/**
+ * How a newly created master thread is configured. The default is the whole
+ * point: an orchestrator that plans and delegates should not be able to write
+ * code, and expressing that as configuration rather than as prompt text means
+ * it holds regardless of what the operator writes into the thread. It is a
+ * default, not a lock — an operator can raise it per thread in the UI.
+ */
+export const WorkbenchMasterDefaults = Schema.Struct({
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
+  ),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("plan" as const)),
+  ),
+});
+export type WorkbenchMasterDefaults = typeof WorkbenchMasterDefaults.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -483,6 +501,30 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+
+  // ---- FORK SETTINGS ----
+  /**
+   * The thread designated as this environment's orchestrator. Its sessions —
+   * and only its sessions — are issued the MCP capability that carries the
+   * peer write tools. Empty means no thread is designated, which is the state
+   * every server starts in and the state a server stays in unless an operator
+   * deliberately names one.
+   *
+   * A plain string rather than `ThreadId` because it is routinely unset, and
+   * the empty-string-means-unset idiom is what the rest of this struct uses.
+   */
+  workbenchMasterThreadId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  workbenchMasterDefaults: WorkbenchMasterDefaults.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Trunk overrides for the feature-flow computation. Empty means every
+   * project auto-detects its trunks, which is right for a fleet whose
+   * repositories share a branch convention.
+   */
+  featureFlowTrunks: Schema.Array(FeatureFlowTrunkConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -584,6 +626,15 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  // ---- FORK SETTINGS ----
+  workbenchMasterThreadId: Schema.optionalKey(TrimmedString),
+  workbenchMasterDefaults: Schema.optionalKey(
+    Schema.Struct({
+      runtimeMode: Schema.optionalKey(RuntimeMode),
+      interactionMode: Schema.optionalKey(ProviderInteractionMode),
+    }),
+  ),
+  featureFlowTrunks: Schema.optionalKey(Schema.Array(FeatureFlowTrunkConfig)),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

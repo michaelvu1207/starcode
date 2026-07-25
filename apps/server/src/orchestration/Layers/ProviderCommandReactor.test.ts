@@ -58,6 +58,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import * as ThreadMailbox from "../../mailbox/ThreadMailbox.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
@@ -378,6 +379,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
+      Layer.provideMerge(ThreadMailbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -387,6 +389,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const mailbox = await runtime.runPromise(Effect.service(ThreadMailbox.ThreadMailbox));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -420,6 +423,7 @@ describe("ProviderCommandReactor", () => {
 
     return {
       engine,
+      mailbox,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -2214,5 +2218,79 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("delivers waiting mailbox messages with the turn, and only once", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const enqueue = (message: string) =>
+      Effect.runPromise(
+        harness.mailbox.enqueue({
+          threadId: ThreadId.make("thread-1"),
+          message,
+          origin: {
+            environmentId: "env-laptop",
+            environmentLabel: "laptop",
+            threadId: "thread-master",
+            threadTitle: "Master planner",
+          },
+          sentAt: "2026-01-01T00:00:00.000Z",
+        } as never),
+      );
+    const startTurn = (commandId: string, messageId: string, text: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          message: { messageId: asMessageId(messageId), role: "user", text, attachments: [] },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+
+    await enqueue("Branch pushed, please review.");
+    await enqueue("Tests are green.");
+
+    await startTurn("cmd-mailbox-turn-1", "user-mailbox-1", "what next?");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    const first = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+    // Both messages arrive, attributed, inside an untrusted-content envelope...
+    expect(first.input).toContain("Branch pushed, please review.");
+    expect(first.input).toContain("Tests are green.");
+    expect(first.input).toContain('from-thread="Master planner"');
+    expect(first.input).toContain("Untrusted input from another agent");
+    // ...and the operator's own message stays last.
+    expect(first.input?.endsWith("what next?")).toBe(true);
+
+    // A second turn must not replay them: the first turn claimed those rows.
+    await startTurn("cmd-mailbox-turn-2", "user-mailbox-2", "and now?");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const second = harness.sendTurn.mock.calls[1]?.[0] as { input?: string };
+    expect(second.input).toBe("and now?");
+  });
+
+  it("leaves the prompt byte-identical when the mailbox is empty", async () => {
+    const harness = await createHarness();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-no-mailbox"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-no-mailbox"),
+          role: "user",
+          text: "plain prompt",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect((harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input).toBe("plain prompt");
   });
 });

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import { PeerName } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,7 +9,11 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { normalizePeerBaseUrl } from "./PeerEnvironmentClient.ts";
+import {
+  judgePeerScopes,
+  normalizePeerBaseUrl,
+  peerCredentialScopes,
+} from "./PeerEnvironmentClient.ts";
 import * as PeerRegistry from "./PeerRegistry.ts";
 
 const makePeerRegistryLayer = () =>
@@ -88,4 +92,51 @@ it("normalizes a peer base URL to its origin and rejects other schemes", () => {
   assert.equal(normalizePeerBaseUrl("t3code://app"), null);
   assert.equal(normalizePeerBaseUrl("127.0.0.1:14233"), null);
   assert.equal(normalizePeerBaseUrl("not a url"), null);
+});
+
+describe("peer credential classes", () => {
+  it("accepts a read peer holding exactly the read scope", () => {
+    assert.deepStrictEqual(judgePeerScopes("read", ["orchestration:read"]), { ok: true });
+  });
+
+  it("accepts an operate peer holding read plus operate", () => {
+    assert.deepStrictEqual(
+      judgePeerScopes("operate", ["orchestration:read", "orchestration:operate"]),
+      { ok: true },
+    );
+  });
+
+  it("refuses an operate peer that was only granted read", () => {
+    const verdict = judgePeerScopes("operate", ["orchestration:read"]);
+    assert.isFalse(verdict.ok);
+    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_not_granted");
+  });
+
+  it("refuses a read peer handed an operate-capable token", () => {
+    // The point of the class: a read registration must not quietly end up
+    // holding write authority over another machine.
+    const verdict = judgePeerScopes("read", ["orchestration:read", "orchestration:operate"]);
+    assert.isFalse(verdict.ok);
+    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_too_broad");
+  });
+
+  it("refuses an operate peer handed an administrative token", () => {
+    const verdict = judgePeerScopes("operate", [
+      "orchestration:read",
+      "orchestration:operate",
+      "access:write",
+    ]);
+    assert.isFalse(verdict.ok);
+    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_too_broad");
+  });
+
+  it("refuses a credential that grants nothing at all", () => {
+    const verdict = judgePeerScopes("read", []);
+    assert.isFalse(verdict.ok);
+    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_not_granted");
+  });
+
+  it("keeps read-class registrations unchanged from F2", () => {
+    assert.deepStrictEqual([...peerCredentialScopes("read")], ["orchestration:read"]);
+  });
 });

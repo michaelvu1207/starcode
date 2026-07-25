@@ -19,6 +19,8 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./peers.ts";
+export * from "./mailbox.ts";
+export * from "./featureFlow.ts";
 export * from "./usage.ts";
 export * from "./history.ts";
 export * from "./t3ProjectFile.ts";

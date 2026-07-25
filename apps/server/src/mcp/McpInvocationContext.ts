@@ -7,7 +7,17 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "peers";
+/**
+ * `peers` is federation read plus mailbox send — everything an agent can do to
+ * another thread without costing it a turn, granted to every session.
+ *
+ * `peers-operate` is the orchestrator's grant: create a thread on another
+ * machine, and interrupt one. It is issued only to sessions of the thread named
+ * by `workbenchMasterThreadId`, which is why gating lives at credential-mint
+ * time rather than in the tool handlers alone — a session that is not the
+ * master never holds a token that carries it.
+ */
+export type McpCapability = "preview" | "peers" | "peers-operate";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

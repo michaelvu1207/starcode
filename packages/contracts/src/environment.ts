@@ -56,6 +56,21 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       on upstream servers, which is exactly the version-skew contract the
       settlement/snooze capabilities use: missing means unsupported. */
   peerFederation: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Server accepts operate-class peer registrations and serves the routes
+   * behind `peer_thread_send` / `peer_thread_create` / `peer_thread_dispatch`.
+   * Absent means the server can still be read as a peer but cannot be operated
+   * on, so a client must not offer to register it as an operator peer.
+   */
+  peerOrchestration: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Server serves `/api/threads/:threadId/mailbox` and injects undelivered
+   * mailbox entries at turn start. Absent means messages sent to this server's
+   * threads would be accepted nowhere, so senders must not try.
+   */
+  threadMailbox: Schema.optionalKey(Schema.Boolean),
+  /** Server serves `/api/feature-flow`. */
+  featureFlow: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

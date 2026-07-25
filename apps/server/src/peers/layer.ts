@@ -11,7 +11,10 @@ import * as Layer from "effect/Layer";
 
 import * as PeerRegistry from "./PeerRegistry.ts";
 import * as PeerThreadReader from "./PeerThreadReader.ts";
+import * as PeerThreadWriter from "./PeerThreadWriter.ts";
 
 export { peersHttpApiLayer } from "./http.ts";
 
-export const PeerServicesLive = PeerThreadReader.layer.pipe(Layer.provideMerge(PeerRegistry.layer));
+export const PeerServicesLive = Layer.mergeAll(PeerThreadReader.layer, PeerThreadWriter.layer).pipe(
+  Layer.provideMerge(PeerRegistry.layer),
+);
