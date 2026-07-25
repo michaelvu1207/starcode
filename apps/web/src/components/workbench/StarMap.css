@@ -1,0 +1,159 @@
+/* ---------------------------------------------------------------------------
+ * Fork-owned: motion for the Workbench sky.
+ *
+ * Scoped to this component and imported by it, so the theme layer stays a
+ * palette and nothing here can leak onto a surface that never asked for it.
+ * It reads `--sc-sky-stars` from that layer and writes nothing back.
+ *
+ * The doctrine, in four rules, each of which cuts an effect rather than tunes
+ * it:
+ *
+ *   1. Slow. Twinkle cycles run 19-29 seconds. The one exception is the pulse
+ *      on a star with a turn running, which is a status signal rather than
+ *      ambience and matches the 2s beat the rest of the app already uses for
+ *      live work.
+ *   2. Low contrast. Nothing swings more than about a fifth of its opacity. If
+ *      you can watch a star blink while reading the sky, it is too strong.
+ *   3. `opacity` only, plus one `stroke-dashoffset` that runs once on load.
+ *      No transforms of position, no scaling, no filters, nothing that
+ *      repaints per frame, no rAF loop anywhere.
+ *   4. Reduced motion takes all of it away and loses nothing: the sky renders
+ *      complete and still, with every line already drawn.
+ * ------------------------------------------------------------------------ */
+
+/* Altitude reads as light, which means opposite things in the two themes.
+   On ink, a higher band carries more of the foreground and gets brighter. On
+   linen there is nothing brighter than the paper, so the ramp runs the other
+   way and a higher band carries *less* ink. Both end up saying "the zenith is
+   the light end"; shipping one ramp for both made the light theme's production
+   band the darkest thing on screen. */
+.sc-starmap-band {
+  fill: currentColor;
+  opacity: var(--sc-band-light);
+}
+
+.dark .sc-starmap-band {
+  opacity: var(--sc-band-dark);
+}
+
+/* The star itself. Twinkle rides on the group, so the core and its halo stay
+   in step — a halo that breathes out of phase with its star reads as two
+   objects. Period and phase come from the layout's hash of the star key, so a
+   star twinkles the same way on every reload. */
+.sc-starmap-star {
+  animation: sc-starmap-twinkle var(--sc-star-period, 23s) ease-in-out infinite;
+  animation-delay: var(--sc-star-delay, 0s);
+}
+
+@keyframes sc-starmap-twinkle {
+  0%,
+  100% {
+    opacity: 0.82;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Work that has come to rest does not twinkle. A settled star is a fixed
+   point: it is finished, and the map should feel that. */
+.sc-starmap-star--settled {
+  animation: none;
+  opacity: 0.55;
+}
+
+/* A turn is running. The halo alone pulses — the core holds steady so the
+   star's position never becomes hard to fix on. */
+.sc-starmap-star--alive .sc-starmap-halo {
+  animation: sc-starmap-alive 2.4s ease-in-out infinite;
+}
+
+@keyframes sc-starmap-alive {
+  0%,
+  100% {
+    opacity: 0.34;
+  }
+  50% {
+    opacity: 0.1;
+  }
+}
+
+/* A star that has just appeared ignites: it fades up once, over most of a
+   second, so new work announces itself without the whole field reacting. */
+.sc-starmap-star--igniting {
+  animation:
+    sc-starmap-ignite 900ms ease-out both,
+    sc-starmap-twinkle var(--sc-star-period, 23s) ease-in-out 900ms infinite;
+}
+
+@keyframes sc-starmap-ignite {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Constellation lines trace themselves in on the first paint, staggered, once.
+   `pathLength="1"` normalises every path to the same dash space, so a long
+   dependency arc and a short figure line take the same time to draw and the
+   stagger stays the thing you read. */
+.sc-starmap-edge--drawing {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sc-starmap-draw 620ms ease-out forwards;
+  animation-delay: var(--sc-edge-delay, 0ms);
+}
+
+@keyframes sc-starmap-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The moon holds a slow breath of its own, an order of magnitude slower than
+   the stars, so the eye never catches the two moving together. */
+.sc-starmap-moon {
+  animation: sc-starmap-moon-glow 46s ease-in-out infinite;
+}
+
+@keyframes sc-starmap-moon-glow {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.sc-starmap-star:focus-visible {
+  outline: none;
+}
+
+.sc-starmap-focus {
+  opacity: 0;
+}
+
+.sc-starmap-star:focus-visible .sc-starmap-focus,
+.sc-starmap-star[data-hovered="true"] .sc-starmap-focus {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-starmap-star,
+  .sc-starmap-star--igniting,
+  .sc-starmap-star--alive .sc-starmap-halo,
+  .sc-starmap-moon {
+    animation: none;
+  }
+
+  /* Lines are already drawn: the dash offset is cleared rather than animated,
+     so a reduced-motion sky is the finished sky and never a half-traced one. */
+  .sc-starmap-edge--drawing {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}

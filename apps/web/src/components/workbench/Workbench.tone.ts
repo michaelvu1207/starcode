@@ -59,6 +59,22 @@ export const WORKBENCH_TONE_DOT_CLASS: Readonly<Record<WorkbenchTone, string>> =
   quiet: "bg-muted-foreground/40",
 };
 
+/**
+ * The same five states again, as a text colour.
+ *
+ * SVG cannot inherit a `bg-*` utility, and `fill` utilities would need a second
+ * copy of the palette; painting a star with `fill="currentColor"` under one of
+ * these classes keeps the sky on exactly the tokens the dots use.
+ */
+export const WORKBENCH_TONE_SVG_CLASS: Readonly<Record<WorkbenchTone, string>> = {
+  working: "text-info",
+  attention: "text-warning",
+  input: "text-primary",
+  failed: "text-destructive",
+  done: "text-success",
+  quiet: "text-muted-foreground/70",
+};
+
 export const WORKBENCH_TONE_TEXT_CLASS: Readonly<Record<WorkbenchTone, string>> = {
   working: "text-info-foreground",
   attention: "text-warning-foreground",

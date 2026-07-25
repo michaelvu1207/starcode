@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import {
   buildFeatureFlowView,
   type FeatureFlowView,
-} from "../components/workbench/FeatureFlow.layout";
+} from "../components/workbench/FeatureFlow.model";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments } from "./environments";
