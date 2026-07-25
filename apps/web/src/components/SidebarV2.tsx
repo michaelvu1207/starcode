@@ -2348,7 +2348,8 @@ export default function SidebarV2() {
               ) : null}
             </ul>
           </TooltipProvider>
-          {activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
+          {viewMode !== "connections" &&
+          activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>

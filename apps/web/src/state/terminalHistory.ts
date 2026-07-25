@@ -16,15 +16,24 @@ import {
   createEnvironmentTerminalHistoryAtoms,
   historySessionsAtomKey,
   historyPreviewAtomKey,
+  type HistoryImportAttempt,
   type HistorySessionsKey,
   type HistoryPreviewKey,
 } from "@t3tools/client-runtime/state/terminal-history";
-import type { HistoryPreview, HistorySessionsPage } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HistoryImportRequest,
+  HistoryImportsPage,
+  HistoryPreview,
+  HistorySessionId,
+  HistorySessionsPage,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "./query";
+import { useAtomCommand } from "./use-atom-command";
 
 const environmentTerminalHistory = createEnvironmentTerminalHistoryAtoms(connectionAtomRuntime);
 
@@ -70,4 +79,50 @@ export function useHistoryPreview(
   key: HistoryPreviewKey | null,
 ): EnvironmentQueryView<HistoryPreview | null> {
   return useEnvironmentQuery(key === null ? null : previewViewAtom(historyPreviewAtomKey(key)));
+}
+
+const importsViewAtom = Atom.family((environmentId: EnvironmentId) =>
+  unwrap(environmentTerminalHistory.importsAtom(environmentId)),
+);
+
+/**
+ * Which of a machine's CLI sessions have already become threads.
+ *
+ * Cached per environment and read by two surfaces: the picker, to badge a row
+ * as imported and offer to open it instead, and an imported thread itself, to
+ * say where it came from. `null` covers both "still loading" and "this machine
+ * cannot say" — the latter on a server predating the route — and both must
+ * render as no badge rather than as "not imported".
+ */
+export function useHistoryImports(
+  environmentId: EnvironmentId | null,
+): EnvironmentQueryView<HistoryImportsPage | null> {
+  return useEnvironmentQuery(environmentId === null ? null : importsViewAtom(environmentId));
+}
+
+/**
+ * Runs one import. Resolves to the outcome the dialog renders — including the
+ * refusals, which are values here rather than failures.
+ */
+export function useImportHistorySession(): (input: {
+  readonly environmentId: EnvironmentId;
+  readonly sessionId: HistorySessionId;
+  readonly request: HistoryImportRequest;
+}) => Promise<HistoryImportAttempt> {
+  const run = useAtomCommand(environmentTerminalHistory.importCommand, {
+    label: "web:history:import",
+    // The command's failure channel is empty by construction: the loader turns
+    // every refusal and every unreachable machine into a value. A toast here
+    // would only ever fire on a defect, and the dialog says it better.
+    reportFailure: false,
+  });
+  return async (input) => {
+    const result = await run({
+      environmentId: input.environmentId,
+      input: { sessionId: input.sessionId, request: input.request },
+    });
+    return AsyncResult.isSuccess(result)
+      ? result.value
+      : { kind: "unavailable", message: "The import could not be started." };
+  };
 }
