@@ -71,6 +71,13 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadMailbox: Schema.optionalKey(Schema.Boolean),
   /** Server serves `/api/feature-flow`. */
   featureFlow: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Server serves `/api/project-catalog*` — it holds its own half of the
+   * cross-machine project categories. Absent means the client must fold this
+   * machine in as "contributes no categories" rather than as a failure, because
+   * an old server answers the route with the SPA catch-all, not a 404.
+   */
+  projectCatalog: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

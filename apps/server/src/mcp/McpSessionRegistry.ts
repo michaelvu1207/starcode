@@ -8,6 +8,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ProjectCatalogRegistry } from "../projectCatalog/ProjectCatalogRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
@@ -98,16 +99,58 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * disabling the capability forever.
    */
   const settingsService = yield* ServerSettingsService;
-  const resolveMasterThreadId: Effect.Effect<string> = settingsService.getSettings.pipe(
-    Effect.map((settings) => settings.workbenchMasterThreadId.trim()),
-    // A settings read that fails must not block a session from starting, so it
-    // degrades to "no master" — which withholds the capability, the safe
-    // direction, and says so in the log rather than silently.
-    Effect.catchCause((cause) =>
-      Effect.logWarning("could not resolve the workbench master thread; withholding operate", {
-        cause,
-      }).pipe(Effect.as("")),
-    ),
+  /**
+   * Declared for the same reason `ServerSettingsService` is. Since F16 a
+   * project can name its own orchestrator, so the catalog is now a source of
+   * masters — and a layer that never declares it is a layer that is never wired
+   * one, which is how the capability got silently withheld from every session
+   * the first time.
+   */
+  const projectCatalogRegistry = yield* ProjectCatalogRegistry;
+
+  const settingsMasterThreadIds: Effect.Effect<ReadonlyArray<string>> =
+    settingsService.getSettings.pipe(
+      Effect.map((settings) => [settings.workbenchMasterThreadId.trim()]),
+      // A settings read that fails must not block a session from starting, so
+      // it degrades to "no master" — which withholds the capability, the safe
+      // direction, and says so in the log rather than silently.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not resolve the workbench master thread; withholding operate", {
+          cause,
+        }).pipe(Effect.as([])),
+      ),
+    );
+
+  const projectMasterThreadIds: Effect.Effect<ReadonlyArray<string>> =
+    projectCatalogRegistry.list.pipe(
+      Effect.map((categories) =>
+        categories.map((category) => category.local.masterThreadId.trim()),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not resolve project master threads; withholding operate", {
+          cause,
+        }).pipe(Effect.as([])),
+      ),
+    );
+
+  /**
+   * Every thread this machine considers an orchestrator: the global
+   * `/workbench` master from settings, plus the master each project names.
+   *
+   * A union rather than a replacement, because the two answer different
+   * questions and both keep their answer — the global master orchestrates the
+   * fleet, a project master orchestrates one project, and designating the
+   * second must not silently demote the first.
+   *
+   * The two halves degrade **independently**. Folding them into one failure
+   * channel would mean a corrupt catalog file taking the global master's tools
+   * away, which is a much larger blast radius than the fault deserves; each
+   * source contributes what it can read and logs what it cannot.
+   */
+  const resolveMasterThreadIds: Effect.Effect<ReadonlySet<string>> = Effect.map(
+    Effect.all([settingsMasterThreadIds, projectMasterThreadIds], { concurrency: 2 }),
+    ([fromSettings, fromProjects]) =>
+      new Set([...fromSettings, ...fromProjects].filter((threadId) => threadId.length > 0)),
   );
 
   const hashToken = (token: string) =>
@@ -132,11 +175,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const expiresAt = issuedAt + maximumLifetimeMs;
-      // Read at mint time, not at layer construction, so re-designating the
+      // Read at mint time, not at layer construction, so re-designating a
       // master takes effect on the next session start rather than on the next
       // server restart.
-      const masterThreadId = yield* resolveMasterThreadId;
-      const isMaster = masterThreadId.length > 0 && masterThreadId === request.threadId;
+      const masterThreadIds = yield* resolveMasterThreadIds;
+      const isMaster = masterThreadIds.has(request.threadId);
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),

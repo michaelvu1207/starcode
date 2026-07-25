@@ -155,6 +155,60 @@ describe("buildFeatureFlowView", () => {
     expect(view.features.map((feature) => feature.threadId)).toEqual(["t-1"]);
   });
 
+  it("scopes the view to one project when the caller asks, and to the fleet when it does not", () => {
+    const machines = [
+      environment({
+        environmentId: "env-mac",
+        label: "mac",
+        snapshot: snapshotFixture([
+          {
+            workspaceRoot: "/a/hub",
+            title: "hub",
+            features: [featureFixture("t-mine", "in-dev"), featureFixture("t-theirs", "in-dev")],
+          },
+        ]),
+      }),
+    ];
+
+    // The default is every feature — `/workbench` must not change because
+    // projects exist.
+    expect(buildFeatureFlowView(machines).features).toHaveLength(2);
+
+    const scoped = buildFeatureFlowView(machines, {
+      includeThreadKey: (key) => key === "env-mac:t-mine",
+    });
+    expect(scoped.features.map((feature) => feature.threadId)).toEqual(["t-mine"]);
+  });
+
+  it("drops a dependency edge onto work the filter excluded", () => {
+    // Otherwise a project's sky would draw a branch to a star that is not in
+    // it, which is a line to nowhere.
+    const scoped = buildFeatureFlowView(
+      [
+        environment({
+          environmentId: "env-mac",
+          label: "mac",
+          snapshot: snapshotFixture([
+            {
+              workspaceRoot: "/a/hub",
+              title: "hub",
+              features: [
+                featureFixture("t-base", "in-dev"),
+                featureFixture("t-stacked", "in-progress", {
+                  dependsOn: [{ dependsOnThreadId: ThreadId.make("t-base"), source: "inferred" }],
+                } as Partial<FeatureFlowFeature>),
+              ],
+            },
+          ]),
+        }),
+      ],
+      { includeThreadKey: (key) => key === "env-mac:t-stacked" },
+    );
+
+    expect(scoped.features.map((feature) => feature.threadId)).toEqual(["t-stacked"]);
+    expect(scoped.features[0]!.dependsOnKeys).toEqual([]);
+  });
+
   it("separates machines that cannot report from machines still answering", () => {
     const view = buildFeatureFlowView([
       environment({ environmentId: "env-old", label: "path-pc", supported: false }),

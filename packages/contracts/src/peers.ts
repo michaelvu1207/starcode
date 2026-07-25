@@ -35,6 +35,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "./orchestration.ts";
+import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 
 /** Upper bound on transcript entries a single `peer_thread_read` may return. */
 export const PEER_THREAD_READ_MAX_ENTRIES = 100;
@@ -339,10 +340,27 @@ export type PeerProjectSummary = typeof PeerProjectSummary.Type;
 
 export const PeerThreadCreateInput = Schema.Struct({
   peer: PeerName.annotate({ description: "Registered peer to create the thread on." }),
-  projectId: ProjectId.annotate({
-    description:
-      "Project on that peer to create the thread in. Use peer_threads_list to discover the peer's projects.",
-  }),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description:
+        "Folder on that peer to create the thread in, by the peer's own id. Use peer_threads_list to discover them. Omit when you pass project instead.",
+    }),
+  ),
+  /**
+   * The cross-machine way to say where work goes.
+   *
+   * A `projectId` is one machine's id for one folder, so delegating by id means
+   * the caller has to know the peer's filesystem. A slug is the same word on
+   * every machine, which is what a project *is* — and because the thread lands
+   * in a folder the peer already binds, the peer files it into that project on
+   * its own with no cross-machine write anywhere.
+   */
+  project: Schema.optional(
+    ProjectCategorySlug.annotate({
+      description:
+        "Project slug to create the thread under. The peer resolves it to whichever of its folders is bound to that project. Use this instead of projectId when you know the project by name.",
+    }),
+  ),
   title: TrimmedNonEmptyString.annotate({ description: "Short name for the new thread." }),
   message: TrimmedNonEmptyString.annotate({
     description: "First message. The new thread starts a turn on it immediately.",

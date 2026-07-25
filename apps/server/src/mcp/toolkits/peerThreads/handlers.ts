@@ -121,10 +121,26 @@ const handlers = {
   peer_thread_create: (input) =>
     Effect.gen(function* () {
       yield* requireOperateCapability("create");
+      // Exactly one way of saying where, refused rather than resolved by
+      // precedence: an agent that passed both is an agent that believes
+      // something about this call, and quietly honouring one of them would let
+      // that belief stay wrong.
+      if ((input.project === undefined) === (input.projectId === undefined)) {
+        return yield* new PeerFederationError({
+          operation: "create",
+          reason: "project_not_found",
+          peer: input.peer,
+          detail:
+            input.project === undefined
+              ? "Say where the thread goes: pass project (a slug, the same on every machine) or projectId (that peer's own folder id)."
+              : "Pass project or projectId, not both — they can name different folders.",
+        });
+      }
       const writer = yield* PeerThreadWriter.PeerThreadWriter;
       return yield* writer.createThread({
         peer: input.peer,
-        projectId: input.projectId,
+        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+        ...(input.project === undefined ? {} : { project: input.project }),
         title: input.title,
         message: input.message,
         ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),

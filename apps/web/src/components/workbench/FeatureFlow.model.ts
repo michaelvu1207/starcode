@@ -78,6 +78,15 @@ export interface FeatureFlowViewOptions {
    * claim something it does not mean.
    */
   readonly excludeThreadKey?: string | null;
+  /**
+   * Membership test, for a sky scoped to one project rather than to the fleet.
+   *
+   * Optional and defaulting to "everything", so `/workbench` keeps its current
+   * behaviour byte for byte. A predicate rather than a set of keys because the
+   * caller resolving membership (the project catalog fold) already holds the
+   * answer and should not have to materialise a second collection to pass it.
+   */
+  readonly includeThreadKey?: ((key: string) => boolean) | null;
 }
 
 export const featureFlowKey = (environmentId: string, threadId: string): string =>
@@ -135,6 +144,7 @@ export function buildFeatureFlowView(
       for (const feature of project.features) {
         const key = featureFlowKey(environment.environmentId, feature.threadId);
         if (key === options?.excludeThreadKey) continue;
+        if (options?.includeThreadKey != null && !options.includeThreadKey(key)) continue;
         collected.push(collect(environment, feature));
       }
       for (const diagnostic of project.diagnostics) {

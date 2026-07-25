@@ -53,6 +53,7 @@ import { ThreadMailbox } from "../mailbox/ThreadMailbox.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   dispatchPeerCommand,
+  fetchPeerProjectCatalog,
   fetchPeerShellSnapshot,
   sendPeerMailboxMessage,
 } from "./PeerEnvironmentClient.ts";
@@ -68,7 +69,17 @@ export interface PeerThreadSendOptions {
 
 export interface PeerThreadCreateOptions {
   readonly peer: PeerName;
-  readonly projectId: ProjectId;
+  /** The peer's own project id. Omit when `project` names one by slug instead. */
+  readonly projectId?: ProjectId | undefined;
+  /**
+   * A project slug, resolved to whatever folder that peer binds under it.
+   *
+   * This is what makes cross-machine delegation say something an operator
+   * recognises: "start this in alpamayo" rather than "start this in
+   * 6b139d93-…". It also does the filing for free — the thread lands in a bound
+   * location, so the peer derives its membership without anyone writing it.
+   */
+  readonly project?: string | undefined;
   readonly title: string;
   readonly message: string;
   readonly instanceId?: string | undefined;
@@ -269,13 +280,73 @@ export const make = Effect.gen(function* () {
         Effect.fail(classifyPeerFailure("create", peer.name, cause as Cause.Cause<unknown>)),
       ),
     );
-    const project = snapshot.projects.find((candidate) => candidate.id === options.projectId);
+
+    /**
+     * A slug names a project; the peer decides which of its folders that is.
+     *
+     * Resolved against the peer's own catalog rather than this machine's,
+     * because the binding is the peer's to hold — the same project can be a
+     * different folder on every machine, and that asymmetry is the whole reason
+     * the catalog splits display from local.
+     */
+    const projectId =
+      options.project === undefined
+        ? options.projectId
+        : yield* Effect.gen(function* () {
+            const catalog = yield* fetchPeerProjectCatalog({
+              baseUrl: peer.baseUrl,
+              credential,
+            }).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.catchCause((cause) =>
+                Effect.fail(
+                  classifyPeerFailure("create", peer.name, cause as Cause.Cause<unknown>),
+                ),
+              ),
+            );
+            const category = catalog.categories.find((entry) => entry.slug === options.project);
+            if (category === undefined) {
+              return yield* failure(
+                "create",
+                "project_not_found",
+                peer.name,
+                `Peer has no project '${options.project}'. Its projects are: ${
+                  catalog.categories.map((entry) => entry.slug).join(", ") || "(none)"
+                }.`,
+              );
+            }
+            // A category with no binding here is a legal state — it is how a
+            // research project with no folder of its own looks — but it is not
+            // somewhere a thread can be created, and saying so beats picking a
+            // folder the operator never bound.
+            const binding = category.local.bindings[0];
+            if (binding === undefined) {
+              return yield* failure(
+                "create",
+                "project_not_found",
+                peer.name,
+                `Peer knows project '${options.project}' but binds no folder to it, so there is nowhere to start the thread. Bind a location there first, or pass projectId.`,
+              );
+            }
+            return binding.projectId;
+          });
+
+    if (projectId === undefined) {
+      return yield* failure(
+        "create",
+        "project_not_found",
+        peer.name,
+        "Pass either project (a slug) or projectId (the peer's own id) to say where the thread should start.",
+      );
+    }
+
+    const project = snapshot.projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) {
       return yield* failure(
         "create",
         "project_not_found",
         peer.name,
-        `Peer has no project '${options.projectId}'. Its projects are: ${snapshot.projects.map((candidate) => candidate.id).join(", ")}.`,
+        `Peer has no project '${projectId}'. Its projects are: ${snapshot.projects.map((candidate) => candidate.id).join(", ")}.`,
       );
     }
 
@@ -291,7 +362,7 @@ export const make = Effect.gen(function* () {
         "create",
         "message_rejected",
         peer.name,
-        `Project '${options.projectId}' has no default model, so instanceId and model must both be given.`,
+        `Project '${projectId}' has no default model, so instanceId and model must both be given.`,
       );
     }
     const modelSelection = {
@@ -327,7 +398,7 @@ export const make = Effect.gen(function* () {
       type: "thread.create",
       commandId,
       threadId,
-      projectId: options.projectId,
+      projectId: projectId,
       title: options.title,
       modelSelection,
       runtimeMode,
@@ -350,7 +421,7 @@ export const make = Effect.gen(function* () {
     return {
       peer: peer.name,
       threadId,
-      projectId: options.projectId,
+      projectId: projectId,
       title: options.title,
     } as PeerThreadCreateResult;
   });

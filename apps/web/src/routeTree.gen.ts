@@ -25,6 +25,8 @@ import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatWorkbenchRouteImport } from './routes/_chat.workbench'
+import { Route as ChatProjectsRouteImport } from './routes/_chat.projects'
+import { Route as ChatProjectsSlugRouteImport } from './routes/_chat.projects_.$slug'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -107,6 +109,16 @@ const ChatWorkbenchRoute = ChatWorkbenchRouteImport.update({
   path: '/workbench',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatProjectsRoute = ChatProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatProjectsSlugRoute = ChatProjectsSlugRouteImport.update({
+  id: '/projects_/$slug',
+  path: '/projects/$slug',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -124,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/projects': typeof ChatProjectsRoute
   '/workbench': typeof ChatWorkbenchRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -137,11 +150,13 @@ export interface FileRoutesByFullPath {
   '/settings/usage': typeof SettingsUsageRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/projects/$slug': typeof ChatProjectsSlugRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/projects': typeof ChatProjectsRoute
   '/workbench': typeof ChatWorkbenchRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -156,6 +171,7 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/projects/$slug': typeof ChatProjectsSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -163,6 +179,7 @@ export interface FileRoutesById {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/_chat/projects': typeof ChatProjectsRoute
   '/_chat/workbench': typeof ChatWorkbenchRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -177,6 +194,7 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/projects_/$slug': typeof ChatProjectsSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -185,6 +203,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/projects'
     | '/workbench'
     | '/connect/callback'
     | '/settings/archived'
@@ -198,11 +217,13 @@ export interface FileRouteTypes {
     | '/settings/usage'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/projects/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/projects'
     | '/workbench'
     | '/connect/callback'
     | '/settings/archived'
@@ -217,12 +238,14 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/projects/$slug'
   id:
     | '__root__'
     | '/_chat'
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/_chat/projects'
     | '/_chat/workbench'
     | '/connect_/callback'
     | '/settings/archived'
@@ -237,6 +260,7 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/projects_/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -361,6 +385,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatWorkbenchRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/projects': {
+      id: '/_chat/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ChatProjectsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/projects_/$slug': {
+      id: '/_chat/projects_/$slug'
+      path: '/projects/$slug'
+      fullPath: '/projects/$slug'
+      preLoaderRoute: typeof ChatProjectsSlugRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -379,17 +417,21 @@ declare module '@tanstack/react-router' {
 }
 
 interface ChatRouteChildren {
+  ChatProjectsRoute: typeof ChatProjectsRoute
   ChatWorkbenchRoute: typeof ChatWorkbenchRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatProjectsSlugRoute: typeof ChatProjectsSlugRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatProjectsRoute: ChatProjectsRoute,
   ChatWorkbenchRoute: ChatWorkbenchRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatProjectsSlugRoute: ChatProjectsSlugRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

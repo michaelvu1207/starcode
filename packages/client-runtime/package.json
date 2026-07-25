@@ -123,6 +123,10 @@
       "types": "./src/state/featureFlow.ts",
       "default": "./src/state/featureFlow.ts"
     },
+    "./state/project-catalog": {
+      "types": "./src/state/projectCatalog.ts",
+      "default": "./src/state/projectCatalog.ts"
+    },
     "./state/terminal-history": {
       "types": "./src/state/terminalHistory.ts",
       "default": "./src/state/terminalHistory.ts"

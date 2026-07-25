@@ -16,6 +16,8 @@ import * as Layer from "effect/Layer";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { FeatureMapRegistry } from "../featureMap/FeatureMapRegistry.ts";
+import { ProjectCatalogRegistry } from "../projectCatalog/ProjectCatalogRegistry.ts";
 import { layerTest as serverSettingsLayerTest } from "../serverSettings.ts";
 import {
   applyCapabilityToolFilter,
@@ -133,6 +135,16 @@ const environmentLayer = Layer.mock(ServerEnvironment.ServerEnvironment)({
 });
 
 /**
+ * A machine with no projects. The registry is real input to the master gate
+ * now, so the session registry needs it as well as the handlers do — and
+ * "empty" keeps these tests asserting on the settings master alone, which is
+ * the split they were written to check.
+ */
+const emptyProjectCatalogLive = Layer.mock(ProjectCatalogRegistry)({
+  list: Effect.succeed([]),
+});
+
+/**
  * The MCP layer registers every toolkit, so standing it up means satisfying
  * the handlers' dependencies. None of them are exercised here — this test only
  * ever lists tools, never calls one — so they are mocked to nothing.
@@ -142,11 +154,14 @@ const HandlerStubsLive = Layer.mergeAll(
   Layer.mock(PeerThreadWriter.PeerThreadWriter)({}),
   Layer.mock(ProjectionSnapshotQuery)({}),
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(FeatureMapRegistry)({}),
+  emptyProjectCatalogLive,
   environmentLayer,
 );
 
 const RegistryLive = McpSessionRegistry.layer.pipe(
   Layer.provide(environmentLayer),
+  Layer.provide(emptyProjectCatalogLive),
   Layer.provide(serverSettingsLayerTest({ workbenchMasterThreadId: masterThreadId })),
 );
 
@@ -203,6 +218,19 @@ it.effect("an ordinary session is never shown the master-only tools", () =>
     expect(tools).toContain("peer_thread_send");
     expect(tools).not.toContain("peer_thread_create");
     expect(tools).not.toContain("peer_thread_dispatch");
+  }),
+);
+
+it.effect("shows every session the project tools, self-filing included", () =>
+  Effect.gen(function* () {
+    // Over the real transport, so this is also the proof the toolkit is
+    // registered at all. `project_file_thread` is visible on purpose: its gate
+    // is a branch inside the handler (yours versus someone else's), not a
+    // capability that can be expressed by hiding the tool.
+    const tools = yield* listToolsFor(workerThreadId);
+    expect(tools).toContain("project_list");
+    expect(tools).toContain("project_get");
+    expect(tools).toContain("project_file_thread");
   }),
 );
 
