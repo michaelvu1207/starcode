@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { SettingsIcon } from "lucide-react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { APP_STAGE_LABEL } from "../../branding";
@@ -22,8 +22,16 @@ import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  actions,
 }: {
   isElectron: boolean;
+  /**
+   * Right-aligned controls rendered beside the brand. When present the brand
+   * gives way to them as the sidebar narrows — first dropping the word, then
+   * (upstream's own rule) the whole mark — instead of pushing them out of the
+   * header.
+   */
+  actions?: ReactNode;
 }) {
   const stageLabel = useSidebarStageLabel();
   const backdropVariant = resolveSidebarStageBackdropVariant(stageLabel);
@@ -43,17 +51,19 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
             "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <SidebarBrand onBackdrop={backdropVariant !== null} shrinkable={actions != null} />
+      {actions}
     </SidebarHeader>
   );
 });
 
-function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+function SidebarBrand({ onBackdrop, shrinkable }: { onBackdrop: boolean; shrinkable: boolean }) {
   return (
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        shrinkable ? "shrink" : "shrink-0",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -62,6 +72,10 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <span
         className={cn(
           "truncate text-sm font-medium tracking-tight",
+          // The word needs ~15.5rem of header to sit beside the actions
+          // without truncating to "T3 Co…", so below that it is dropped and
+          // the mark stands alone. Upstream hides the mark under 13.5rem.
+          shrinkable && "@max-[15.5rem]/sidebar-header:hidden",
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
