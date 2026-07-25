@@ -158,10 +158,10 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
  * layer (`starcode-theme.css` section 4c), so its computed background carries an
  * alpha channel and the titlebar would be handed a colour that means nothing on
  * its own. `.starcode-sky` is the opaque thing behind it, and its
- * `background-color` is the sky gradient's first stop by construction — which is
- * the colour at the top of the window, which is exactly what a titlebar should
- * match. The old selectors stay as the fallback chain for the moments before the
- * layer mounts.
+ * `background-color` is the average of the field's top row by construction —
+ * which is the colour at the top of the window, which is exactly what a titlebar
+ * should match. The old selectors stay as the fallback chain for the moments
+ * before the layer mounts.
  */
 function resolveBrowserChromeSurface(): HTMLElement {
   return (

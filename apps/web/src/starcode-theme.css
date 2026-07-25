@@ -98,48 +98,33 @@
   --sc-linen-500: #cbc0a4;
 
   /* Overwritten every minute by `starcodeSky.ts`. Declared here so the backdrop
-     is correct on first paint and degrades to plain night if that never runs —
-     these are the hour-0 keyframe verbatim. Five gradient stops from zenith to
-     horizon, plus the one directional light and where it sits. The values come
-     from a day-to-night time-lapse; see `starcodeSkyTimeline.ts`. */
-  --sc-sky-top: #090e17;
-  --sc-sky-high: #080f19;
-  --sc-sky-glow: #07111d;
-  --sc-sky-low: #061323;
-  --sc-sky-horizon: #071221;
+     is correct on first paint and degrades to plain night if that never runs.
+     `--sc-sky-top` is the average of the hour-0 field's top row; the two field
+     properties hold the PNGs of the keyframes either side of now, and the blend
+     is how far between them the clock has got. The values come from a
+     day-to-night time-lapse; see `starcodeSkyTimeline.ts`. */
+  --sc-sky-top: #090f18;
   --sc-sky-wash: #d2e6ff;
   --sc-sky-stars: 1;
-  --sc-sky-ember: #496189;
-  --sc-sky-ember-alpha: 0.05;
-  --sc-sky-ember-x: 58.2%;
+  --sc-sky-field-a: none;
+  --sc-sky-field-b: none;
+  --sc-sky-blend: 0;
 
   /* How solid a structural panel is over the sky. The sidebar and the main pane
      are no longer surfaces with their own backdrops — they are tinted glass, and
      this is the tint. Solved rather than chosen: it is the transparency at which
      the tightest text token still clears AA on every one of the 38 keyframes, in
      both themes, with the user's glass slider dragged to its 40% minimum.
-     `scripts/check-starcode-contrast.mjs` re-derives it and fails if a palette
-     or timeline change breaks the guarantee. Lowering it is the one edit in this
-     file that can make the whole app harder to read.
+     `scripts/check-starcode-contrast.mjs` bisects for the lowest value that
+     holds and fails if this one is under it.
 
-     Except that, as of this palette, it cannot: the gate reports the minimum
-     that holds AA as 0%. Every panel base is darker than the sky at every hour,
-     so tinting over the sky can only raise contrast, and the binding constraint
-     is one level up — the timeline's own lightness ceiling, which is already
-     solved against text on the bare star-lit sky. So this number is pure taste,
-     and the gate says so out loud rather than implying a safety it is not
-     providing. 68% was picked from a three-way screenshot at dusk: 82% flattens
-     the sky back into a plate, and 55% starts costing the sidebar its edge. */
-  --sc-glass-panel: 68%;
-
-  /* Baked turbulence, used as a mask over the mesh blobs so their edges come out
-     filamentary instead of elliptical. This is the difference between "three
-     ovals" and "cloud". Same technique as `--surface-grain` in `index.css`, at a
-     hundredth of the frequency: that one is film grain, this one is weather.
-     `stitchTiles` makes it tile, so it repeats seamlessly at any viewport. The
-     alpha ramp keeps it between 45% and 100% coverage — a mask that reaches zero
-     punches visible holes in the blob rather than softening it. */
-  --sc-sky-mesh-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1400' height='1400'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.0035' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.55 0 0 0 0.45'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
+     It is a real gate again. While the sky was a dim gradient the answer came
+     back 0% — every panel base was darker than the sky, so the tint could only
+     raise contrast. The field is much lighter and much more colourful than that
+     gradient was, and its brightest cells now sit above the panel bases, so how
+     much of it shows through is once again a legibility question and not only a
+     taste one. Lower it, re-run the gate, and believe the gate. */
+  --sc-glass-panel: 38%;
 
   /* The ceiling on how bright a star may get anywhere body text can land.
      Solved, not guessed: at this layer opacity the brightest star in the tile
@@ -423,12 +408,13 @@
  * decision in it. Nothing about the sky's *colour* is tunable from this file.
  *
  * THE THREE-TIER DOCTRINE, which is the rule the rest of the theme now obeys:
- *   L0  the sky           — this layer. Gradient, mesh, stars. One composited
- *                           layer for the whole app.
- *   L1  structural panels — sidebar, main pane, shells. Tint only, no filter:
- *                           a blur of a smooth gradient is the same gradient at
- *                           the cost of a full-viewport GPU pass, and it would
- *                           smear the starfield into grey haze.
+ *   L0  the sky           — this layer: the blurred field, with the starfield
+ *                           over it. Three composited layers for the whole app.
+ *   L1  structural panels — sidebar, main pane, shells. Tint only, no filter.
+ *                           The sky is already blurred; blurring it again is a
+ *                           second full-viewport GPU pass for a picture nobody
+ *                           can tell from the input, and it would smear the
+ *                           starfield on top of it into grey haze.
  *   L2  floating surfaces — composer, dropdowns, dialogs, toasts. Unchanged;
  *                           they already blur, and their backdrop is now the
  *                           real sky rather than a flat plate.
@@ -437,10 +423,11 @@
  *                           text. This is the restraint rule applied to
  *                           translucency, not a concession to it.
  *
- * BUDGET. Five composited layers total (sky, three blobs, starfield), all of
- * them `transform` and `opacity` only. No canvas, no WebGL, no rAF, no timer
- * beyond the existing one-minute colour tick. Browsers suspend CSS animations on
- * hidden documents, so a backgrounded window costs nothing.
+ * BUDGET. Three composited layers total: two field frames and the starfield.
+ * The blur is a filter on a static image, so it rasterises once and is cached —
+ * only `opacity` and one very slow `transform` ever change. No canvas, no
+ * WebGL, no rAF, no timer beyond the existing one-minute tick. Browsers suspend
+ * CSS animations on hidden documents, so a backgrounded window costs nothing.
  * ------------------------------------------------------------------------ */
 
 /* THE TRAP THAT COSTS AN AFTERNOON IF YOU MISS IT. `body` does not establish a
@@ -449,7 +436,7 @@
    Body's background therefore paints on top of the sky and hides it completely,
    and because `syncBrowserChromeTheme` keeps body's colour synced to the sky's
    top stop, the result does not look broken: it looks like a flat, correctly
-   tinted app with no gradient, no mesh and no stars. It took a nine-hour
+   tinted app with no field and no stars. It took a nine-hour
    screenshot sweep that came back nine identical frames to find it.
    So body stops painting. `html` keeps the colour (it is behind the sky, and it
    is what shows on overscroll), and the grain moves onto the sky layer, which
@@ -474,12 +461,13 @@ html.dark body {
      classic placement, and the reason this works with zero component edits. */
   z-index: -1;
   pointer-events: none;
-  /* The blobs are deliberately larger than the viewport. */
+  /* The frames overscan the viewport; this clips them. */
   overflow: hidden;
-  /* Opaque, and equal to the gradient's first stop by construction. This is what
+  /* Opaque, and equal to the top of the field by construction. This is what
      `syncBrowserChromeTheme` samples for the browser and native titlebar tint —
      it used to sample the main pane, which is now translucent and would have
-     handed it a colour with an alpha channel. */
+     handed it a colour with an alpha channel. It is also what shows for the one
+     frame before an image decodes. */
   background-color: color-mix(in srgb, var(--sc-sky-wash) 58%, var(--background));
   background-image:
     linear-gradient(
@@ -505,144 +493,86 @@ html.dark body {
   view-transition-name: sc-sky;
 }
 
-/* Zenith to horizon down the viewport, which is both the physical arrangement
-   and the one the source footage has. The last stop resolves to `--background`
-   well before the bottom edge, so the densest part of every route — transcript,
-   composer, settings rows — still sits on flat ink rather than on colour. */
 .dark .starcode-sky {
   background-color: var(--sc-sky-top);
-  background-image:
-    linear-gradient(
-      to bottom,
-      var(--sc-sky-top) 0%,
-      var(--sc-sky-high) 15%,
-      var(--sc-sky-glow) 33%,
-      var(--sc-sky-low) 51%,
-      var(--sc-sky-horizon) 68%,
-      var(--background) 92%
-    ),
-    var(--surface-grain);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 /* ---------------------------------------------------------------------------
- * 4a. The mesh
+ * 4a. The field — the blurred-video layer
  *
- * Michael asked for shaders. This is the compositor-only answer, and it gets
- * most of the way there: three vast radial blobs on slow, non-repeating periods,
- * seen through a baked turbulence mask so their edges are filamentary rather
- * than elliptical. The mask is what separates this from "three ovals" — it is
- * the same technique as `--surface-grain`, a hundred times coarser.
+ * WHAT THIS IS. Each keyframe of the timeline ships a 20x12 PNG of the sky at
+ * that hour, measured off the source footage. The browser stretches it to the
+ * viewport — a seventy-fold upscale, whose own bilinear interpolation does most
+ * of the softening for free — and a blur takes out the interpolation's own
+ * faint diamond structure. The result is the source, at the right time of day,
+ * in this palette, with nothing photographic left in it to read.
  *
- * The mask is STATIC and the blobs move under it. That is not a compromise: a
- * drifting mask means animating `mask-position`, which repaints the layer every
- * frame and is exactly the trap this whole system is built to avoid. Blobs
- * translating beneath a fixed filament field already produce shapes that evolve
- * rather than merely translate, which is the effect being bought.
+ * WHY NOT A GRADIENT, which is what this replaced. A gradient is what you get
+ * when the measurement threw away the horizontal axis, and it looks like it: no
+ * cloud mass, no off-centre glow, no patch of colour that is not the average of
+ * its latitude. Twenty by twelve is the smallest grid that still has all three,
+ * and small enough that no upscale can put detail back.
  *
- * Periods are 137s / 193s / 271s — pairwise coprime, so the three never
- * visibly resynchronise inside any session.
+ * WHY TWO FRAMES. The keyframes are half an hour to an hour apart, so painting
+ * only the nearest one would step the whole sky every thirty minutes. Frame A
+ * holds the keyframe before now and frame B the one after, and B's opacity is
+ * how far between them the clock is. `starcodeSky.ts` rewrites all three values
+ * on its existing minute tick — a step of at most three percent opacity on a
+ * heavily blurred backdrop, which is why there is no transition here and does
+ * not need to be.
+ *
+ * THE SLOW PUSH. One transform, three and a half minutes, scaling by six
+ * percent and back. It is the only motion the backdrop has now that the mesh
+ * blobs are gone, and it reads as the thing it is imitating: a camera breathing
+ * on a very long lens. Compositor-only, and it needs the overscan below anyway.
+ *
+ * DARK ONLY. The light theme keeps its wash gradient. This is a photograph of a
+ * night sky; on linen it is a smudge, which is the same reason the starfield has
+ * never been allowed on paper.
  * ------------------------------------------------------------------------ */
 
-.starcode-sky-mesh {
-  position: absolute;
-  inset: -25%;
-  pointer-events: none;
-  -webkit-mask-image: var(--sc-sky-mesh-mask);
-  mask-image: var(--sc-sky-mesh-mask);
-  -webkit-mask-repeat: repeat;
-  mask-repeat: repeat;
-  -webkit-mask-size: 1400px 1400px;
-  mask-size: 1400px 1400px;
+:root {
+  /* Viewport-relative, so the blur tracks the upscale factor instead of being
+     right on a laptop and wrong on a 5K display. About four percent of the
+     width is where the bilinear grid disappears and the cloud masses do not. */
+  --sc-sky-blur: 3.6vw;
 }
 
-.starcode-sky-blob {
+.dark .starcode-sky-frame {
   position: absolute;
-  border-radius: 50%;
-  /* `closest-side` rather than a hard stop: the blob has no edge at all, which
-     is what lets three of them overlap without showing where one ends. */
-  background-image: radial-gradient(closest-side, var(--sc-blob-color) 0%, transparent 100%);
-  opacity: var(--sc-blob-alpha);
-  animation: starcode-blob-drift var(--sc-blob-period) ease-in-out infinite alternate;
+  /* Overscan. A blur samples transparency outside its element and darkens the
+     edges for its whole radius, so the frame has to be bigger than what is
+     seen — and the push below has to stay covered at its smallest. */
+  inset: -12%;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  filter: blur(var(--sc-sky-blur));
+  animation: starcode-sky-breathe 210s ease-in-out infinite alternate;
 }
 
-@keyframes starcode-blob-drift {
+.dark .starcode-sky-frame-a {
+  background-image: var(--sc-sky-field-a);
+}
+
+/* The half of the crossfade that moves. Its own animation is offset so the two
+   frames are never at the same scale, which keeps the push from reading as one
+   flat image being zoomed. */
+.dark .starcode-sky-frame-b {
+  background-image: var(--sc-sky-field-b);
+  opacity: var(--sc-sky-blend);
+  animation-delay: -70s;
+}
+
+@keyframes starcode-sky-breathe {
   from {
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: scale(1);
   }
   to {
-    transform: translate3d(var(--sc-blob-dx), var(--sc-blob-dy), 0) scale(var(--sc-blob-scale));
+    transform: scale(1.06);
   }
-}
-
-/* The one directional light, and the only thing that stops the backdrop reading
-   as a symmetric vertical ramp. Colour, strength and horizontal position all
-   come from the timeline: it is warm and strong within an hour of sunrise and
-   sunset, and a faint ember the rest of the time — which is what the source
-   footage's night actually looks like, a city under a dark sky.
-   `left` is set from a custom property and steps once a minute rather than
-   transitioning. The anchor moves about two pixels per tick; a transition on
-   `left` would buy nothing and cost a layout pass per frame for sixty seconds. */
-.starcode-sky-blob-ember {
-  left: var(--sc-sky-ember-x);
-  top: 68%;
-  width: 150vw;
-  height: 105vh;
-  margin-left: -75vw;
-  margin-top: -52vh;
-  --sc-blob-color: var(--sc-sky-ember);
-  /* Halved in light: on linen a glow this size reads as a stain long before it
-     reads as light. */
-  --sc-blob-alpha: calc(var(--sc-sky-ember-alpha) * 0.5);
-  --sc-blob-period: 193s;
-  --sc-blob-dx: 3vw;
-  --sc-blob-dy: -2vh;
-  --sc-blob-scale: 1.08;
-}
-
-.dark .starcode-sky-blob-ember {
-  --sc-blob-alpha: var(--sc-sky-ember-alpha);
-}
-
-/* The two ambient blobs are dark only. On paper they have nothing to be: the
-   light theme's sky is a wash at the top of the page, and a coloured cloud
-   drifting under a settings list is a smudge on the paper, not weather. */
-.starcode-sky-blob-high,
-.starcode-sky-blob-wide {
-  display: none;
-}
-
-.dark .starcode-sky-blob-high {
-  display: block;
-  left: 18%;
-  top: 6%;
-  width: 120vw;
-  height: 80vh;
-  margin-left: -60vw;
-  margin-top: -40vh;
-  /* Lifted toward the cream foreground, or a blob tinted from the sky it sits on
-     is invisible by definition. */
-  --sc-blob-color: color-mix(in srgb, var(--sc-sky-high) 46%, var(--sc-cream-100));
-  --sc-blob-alpha: 0.07;
-  --sc-blob-period: 271s;
-  --sc-blob-dx: 6vw;
-  --sc-blob-dy: 3vh;
-  --sc-blob-scale: 1.12;
-}
-
-.dark .starcode-sky-blob-wide {
-  display: block;
-  left: 76%;
-  top: 34%;
-  width: 165vw;
-  height: 70vh;
-  margin-left: -82vw;
-  margin-top: -35vh;
-  --sc-blob-color: color-mix(in srgb, var(--sc-sky-glow) 52%, var(--sc-starlight));
-  --sc-blob-alpha: 0.055;
-  --sc-blob-period: 137s;
-  --sc-blob-dx: -5vw;
-  --sc-blob-dy: 2vh;
-  --sc-blob-scale: 1.06;
 }
 
 /* The chrome starfield, at the solved ceiling: `--sc-star-chrome-max` is the
@@ -1233,9 +1163,9 @@ html.dark body {
 
 /* Reduced motion holds every layer still at its average, so the field is
    identical to the static one it replaced — nothing is lost but the movement.
-   The mesh keeps its colour and loses its drift, parked halfway along its own
-   travel rather than at the start, so a still frame matches the animated
-   average instead of one end of it. */
+   The field keeps its colour and loses its push, parked halfway along the
+   scale rather than at either end, so a still frame matches the animated
+   average instead of one extreme of it. */
 @media (prefers-reduced-motion: reduce) {
   .dark .starcode-star-layer,
   .dark .starcode-sky-field {
@@ -1247,10 +1177,9 @@ html.dark body {
     opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
   }
 
-  .starcode-sky-blob {
+  .dark .starcode-sky-frame {
     animation: none;
-    transform: translate3d(calc(var(--sc-blob-dx) / 2), calc(var(--sc-blob-dy) / 2), 0)
-      scale(calc(1 + (var(--sc-blob-scale) - 1) / 2));
+    transform: scale(1.03);
   }
 }
 

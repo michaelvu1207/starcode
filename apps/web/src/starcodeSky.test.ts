@@ -41,18 +41,17 @@ describe("resolveSkyForHour", () => {
     expect(resolveSkyForHour(-1)).toEqual(resolveSkyForHour(23));
   });
 
-  it("emits colours the stylesheet can consume", () => {
+  it("emits values the stylesheet can consume", () => {
     for (const hour of [0, 3, 6.9, 12, 18, 21, 23.9]) {
       const sky = resolveSkyForHour(hour);
-      for (const colour of [sky.top, sky.high, sky.glow, sky.low, sky.horizon, sky.wash]) {
-        expect(colour).toMatch(/^#[0-9a-f]{6}$/);
+      for (const colour of [sky.top, sky.wash]) expect(colour).toMatch(/^#[0-9a-f]{6}$/);
+      for (const field of [sky.fieldA, sky.fieldB]) {
+        expect(field.startsWith("data:image/png;base64,")).toBe(true);
       }
-      expect(sky.ember.color).toMatch(/^#[0-9a-f]{6}$/);
       expect(sky.stars).toBeGreaterThanOrEqual(0);
       expect(sky.stars).toBeLessThanOrEqual(1);
-      expect(sky.ember.alpha).toBeGreaterThan(0);
-      expect(sky.ember.x).toBeGreaterThanOrEqual(0);
-      expect(sky.ember.x).toBeLessThanOrEqual(100);
+      expect(sky.blend).toBeGreaterThanOrEqual(0);
+      expect(sky.blend).toBeLessThanOrEqual(1);
     }
   });
 
@@ -60,22 +59,36 @@ describe("resolveSkyForHour", () => {
     expect(resolveSkyForHour(0)).toEqual(resolveSkyForHour(24));
   });
 
-  it("puts the low glow east before noon and west after it", () => {
-    // The one asymmetry that makes dawn and dusk tell themselves apart at a
-    // glance. Derived from a fixed solar sweep, not from the source footage —
-    // see the derivation script's header for why the footage's own azimuth is
-    // discarded.
-    expect(resolveSkyForHour(7).ember.x).toBeLessThan(50);
-    expect(resolveSkyForHour(19).ember.x).toBeGreaterThan(50);
+  it("hands over the pair the clock sits between, in order", () => {
+    // The fields are images and do not interpolate in CSS, so the crossfade is
+    // two stacked layers and an opacity. A resolver that returned one field
+    // would step the whole sky every half hour.
+    const midway = resolveSkyForHour(20.25);
+    expect(midway.fieldA).toBe(SKY_TIMELINE.find((f) => f.hour === 20)!.field);
+    expect(midway.fieldB).toBe(SKY_TIMELINE.find((f) => f.hour === 20.5)!.field);
+    expect(midway.blend).toBeCloseTo(0.5, 5);
   });
 
-  it("brightens the low glow around sunrise and sunset and nowhere else", () => {
-    const noon = resolveSkyForHour(13).ember.alpha;
-    const deepNight = resolveSkyForHour(2).ember.alpha;
-    expect(resolveSkyForHour(7).ember.alpha).toBeGreaterThan(noon * 2);
-    expect(resolveSkyForHour(18.5).ember.alpha).toBeGreaterThan(noon * 2);
-    expect(noon).toBeLessThan(0.1);
-    expect(deepNight).toBeLessThan(0.1);
+  it("lands exactly on a keyframe at its own hour", () => {
+    const onIt = resolveSkyForHour(20);
+    expect(onIt.blend).toBe(0);
+    expect(onIt.fieldA).toBe(SKY_TIMELINE.find((f) => f.hour === 20)!.field);
+  });
+
+  it("is brighter at midday than at midnight, which is the whole feature", () => {
+    // The first version solved one lightness ceiling for the entire day, so noon
+    // and dusk rendered identically. This is the regression test for that.
+    const luminance = (hex: string) =>
+      [1, 3, 5]
+        .map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i]!, 0);
+
+    const noon = luminance(resolveSkyForHour(13).top);
+    const dusk = luminance(resolveSkyForHour(19).top);
+    const midnight = luminance(resolveSkyForHour(2).top);
+    expect(noon).toBeGreaterThan(midnight * 4);
+    expect(noon).toBeGreaterThan(dusk * 1.3);
   });
 });
 
@@ -88,14 +101,21 @@ describe("SKY_TIMELINE", () => {
     }
   });
 
-  it("carries five stops per keyframe", () => {
-    for (const frame of SKY_TIMELINE) expect(frame.stops).toHaveLength(5);
+  it("carries a decodable field per keyframe", () => {
+    for (const frame of SKY_TIMELINE) {
+      expect(frame.field.startsWith("data:image/png;base64,")).toBe(true);
+      // The PNG signature, so a truncated or mis-encoded field fails here rather
+      // than as a blank backdrop nobody notices in a screenshot.
+      const bytes = atob(frame.field.slice("data:image/png;base64,".length));
+      const signature = Array.from({ length: 8 }, (_, i) => bytes.charCodeAt(i));
+      expect(signature).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    }
   });
 
   it("closes the loop at midnight", () => {
     const first = SKY_TIMELINE[0]!;
     const last = SKY_TIMELINE[SKY_TIMELINE.length - 1]!;
-    expect(last.stops).toEqual(first.stops);
+    expect(last.field).toBe(first.field);
     expect(last.stars).toBe(first.stars);
     expect(last.wash).toBe(first.wash);
   });

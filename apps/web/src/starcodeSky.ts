@@ -4,22 +4,29 @@
  * WHAT THIS OWNS
  * Only the *hour*: it resolves the viewer's local clock to a set of colours and
  * a star level, writes them to `<html>`, and re-runs every minute. All the
- * painting — the gradient, the mesh, the starfield, the drift — lives in
+ * painting — the field, the blur, the starfield, the drift — lives in
  * `starcode-theme.css` and `components/brand/StarcodeSky.tsx`. Nothing here
  * touches the DOM beyond `documentElement.style`.
  *
  * WHERE THE COLOURS COME FROM
  * They were measured, not chosen. `starcodeSkyTimeline.ts` is generated from a
- * real day-to-night time-lapse: sampled across its full length, reduced to a
- * vertical gradient signature per frame, then compressed into this palette by
+ * real day-to-night time-lapse: sampled across its full length, reduced to one
+ * small 2D colour field per moment, then compressed into this palette by
  * `scripts/lib/starcode-sky-timeline.mjs`. What survives from the footage is the
- * arc — the order the colours arrive in, how long each lasts, and how fast
- * twilight moves. What does not survive is the photograph. See that script's
+ * arc and the shape. What does not survive is the photograph. See that script's
  * header for every decision in between; it is the interesting file, not this one.
  *
  * This module used to carry eight hand-picked colours across four phases. It now
- * carries none: the table is 38 keyframes and the only thing left here is how to
- * find the hour and interpolate between two of them.
+ * carries none: the table is 38 keyframes, each holding a tiny PNG, and the only
+ * thing left here is finding which two the clock sits between.
+ *
+ * WHY IT HANDS OVER A PAIR RATHER THAN A COLOUR
+ * The fields are images, and images do not interpolate in CSS. So instead of
+ * blending them here — which would mean a canvas, a re-encode every minute, and
+ * a main-thread cost on a wallpaper — this resolves the two keyframes either
+ * side of now and how far between them the clock is, and the stylesheet stacks
+ * them and sets the top one's opacity. The crossfade is a compositor property on
+ * two static, already-rasterised layers.
  *
  * WHY IT IS NOT A COMPONENT
  * A React component would need a mount point in the tree and would re-render on
@@ -27,9 +34,11 @@
  * the diff to one import line and keeps the ticking entirely outside React.
  *
  * COST
- * One `setInterval` at 60s, writing ten custom properties. Everything that moves
- * is a CSS animation on the compositor — there is no rAF loop and no canvas. A
- * chat app should not spend a GPU core on its wallpaper.
+ * One `setInterval` at 60s, writing six custom properties. Two of them are the
+ * same data URIs as last minute for twenty-nine minutes out of thirty, so the
+ * browser reuses the decoded image and the blurred raster behind it. Everything
+ * that moves is a CSS animation on the compositor — there is no rAF loop and no
+ * canvas. A chat app should not spend a GPU core on its wallpaper.
  *
  * TUNING
  * Not here. Every knob is a named constant in
@@ -44,7 +53,7 @@
  * real time. The choice persists, and `<html data-sky-phase>` reports what
  * actually rendered.
  */
-import { SKY_TIMELINE, type SkyKeyframe, type SkyPhaseName } from "./starcodeSkyTimeline";
+import { SKY_TIMELINE, type SkyPhaseName } from "./starcodeSkyTimeline";
 
 export type { SkyPhaseName };
 
@@ -76,44 +85,29 @@ function mixHex(from: string, to: string, t: number): string {
 }
 
 export interface ResolvedSky {
-  /** Zenith to horizon, painted top to bottom of the viewport. */
+  /** The keyframe before now, and the one after. Both are PNG data URIs. */
+  readonly fieldA: string;
+  readonly fieldB: string;
+  /** How far between them the clock is, 0 to 1 — frame B's opacity. */
+  readonly blend: number;
+  /** The colour at the top of the window: titlebar tint and first-paint fill. */
   readonly top: string;
-  readonly high: string;
-  readonly glow: string;
-  readonly low: string;
-  readonly horizon: string;
   /** The light theme's tint. */
   readonly wash: string;
   /** Star field opacity, 0 to 1. */
   readonly stars: number;
-  /** The one directional light: a warm low glow at sunrise and sunset. */
-  readonly ember: { readonly color: string; readonly alpha: number; readonly x: number };
   readonly name: SkyPhaseName;
 }
 
-function keyframeToSky(frame: SkyKeyframe): ResolvedSky {
-  const [top, high, glow, low, horizon] = frame.stops;
-  return {
-    top,
-    high,
-    glow,
-    low,
-    horizon,
-    wash: frame.wash,
-    stars: frame.stars,
-    ember: frame.ember,
-    name: frame.name,
-  };
-}
-
 /**
- * Exported for tests: given an hour in [0, 24), return the interpolated sky.
+ * Exported for tests: given an hour in [0, 24), return the sky.
  *
- * Interpolation is linear, not eased. The four-phase table this replaced needed
- * smoothstep because its anchors were hours apart and a linear ramp between them
- * read as a slide; this table is half an hour apart through every twilight and
- * was already Gaussian-smoothed at derivation time, so easing each segment would
- * add a flat spot at every keyframe rather than remove one.
+ * The two fields come back unblended — see the header. The scalars beside them
+ * are interpolated linearly, not eased: the four-phase table this replaced
+ * needed smoothstep because its anchors were hours apart and a linear ramp
+ * between them read as a slide; this table is half an hour apart through every
+ * twilight and was already Gaussian-smoothed at derivation time, so easing each
+ * segment would add a flat spot at every keyframe rather than remove one.
  *
  * The phase *name* is the nearer keyframe's, so a value mid-transition reports
  * the phase it is closest to rather than inventing a fifth name.
@@ -133,22 +127,14 @@ export function resolveSkyForHour(hour: number): ResolvedSky {
   }
   const span = upper.hour - lower.hour;
   const t = span === 0 ? 0 : (clamped - lower.hour) / span;
-  if (t === 0) return keyframeToSky(lower);
-  if (t === 1) return keyframeToSky(upper);
 
   return {
-    top: mixHex(lower.stops[0], upper.stops[0], t),
-    high: mixHex(lower.stops[1], upper.stops[1], t),
-    glow: mixHex(lower.stops[2], upper.stops[2], t),
-    low: mixHex(lower.stops[3], upper.stops[3], t),
-    horizon: mixHex(lower.stops[4], upper.stops[4], t),
+    fieldA: lower.field,
+    fieldB: upper.field,
+    blend: t,
+    top: mixHex(lower.top, upper.top, t),
     wash: mixHex(lower.wash, upper.wash, t),
     stars: lower.stars + (upper.stars - lower.stars) * t,
-    ember: {
-      color: mixHex(lower.ember.color, upper.ember.color, t),
-      alpha: lower.ember.alpha + (upper.ember.alpha - lower.ember.alpha) * t,
-      x: lower.ember.x + (upper.ember.x - lower.ember.x) * t,
-    },
     name: t < 0.5 ? lower.name : upper.name,
   };
 }
@@ -196,16 +182,12 @@ function currentHour(): number {
 }
 
 export function applySky(root: HTMLElement, sky: ResolvedSky): void {
+  root.style.setProperty("--sc-sky-field-a", `url("${sky.fieldA}")`);
+  root.style.setProperty("--sc-sky-field-b", `url("${sky.fieldB}")`);
+  root.style.setProperty("--sc-sky-blend", sky.blend.toFixed(4));
   root.style.setProperty("--sc-sky-top", sky.top);
-  root.style.setProperty("--sc-sky-high", sky.high);
-  root.style.setProperty("--sc-sky-glow", sky.glow);
-  root.style.setProperty("--sc-sky-low", sky.low);
-  root.style.setProperty("--sc-sky-horizon", sky.horizon);
   root.style.setProperty("--sc-sky-wash", sky.wash);
   root.style.setProperty("--sc-sky-stars", sky.stars.toFixed(3));
-  root.style.setProperty("--sc-sky-ember", sky.ember.color);
-  root.style.setProperty("--sc-sky-ember-alpha", sky.ember.alpha.toFixed(3));
-  root.style.setProperty("--sc-sky-ember-x", `${sky.ember.x.toFixed(1)}%`);
   // Readable from the DOM so screenshots and the desktop check can assert which
   // phase actually rendered.
   root.dataset.skyPhase = sky.name;

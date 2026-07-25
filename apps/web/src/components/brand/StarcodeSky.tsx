@@ -23,14 +23,20 @@
  * existing glass vocabulary correct.
  *
  * WHAT IT PAINTS, IN ORDER
- *   1. the gradient — five stops from zenith to horizon, from the timeline
- *   2. the mesh — three vast, slow blobs, masked by baked turbulence so their
- *      edges are filamentary rather than elliptical
- *   3. the starfield — the chrome field, at the solved ceiling, drifting
+ *   1. two field frames — the keyframes either side of now, each a 20x12 PNG
+ *      of the real sky stretched to the viewport and blurred, with the top
+ *      one's opacity carrying the crossfade between them
+ *   2. the starfield — the chrome field, at the solved ceiling, drifting
+ *
+ * It used to paint a five-stop gradient and three mesh blobs under a turbulence
+ * mask, all of it standing in for shape the measurement had thrown away. The
+ * field has the shape, so the blobs are gone: fewer layers, less CSS, and a
+ * backdrop that is the sky rather than an impression of one.
  *
  * All of it is `transform` and `opacity` on pre-painted layers, so it lives on
- * the compositor. No canvas, no WebGL, no rAF, no timer beyond the one-minute
- * tick in `starcodeSky.ts` that moves the colours along.
+ * the compositor. The blur is a filter on a static image and rasterises once.
+ * No canvas, no WebGL, no rAF, no timer beyond the one-minute tick in
+ * `starcodeSky.ts` that moves the pair along.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -45,15 +51,13 @@ export function StarcodeSky() {
 
   return createPortal(
     <div aria-hidden="true" className="starcode-sky">
-      {/* Three blobs, not four: prime-ish periods (137s / 193s / 271s) share no
-          small common multiple, so the mesh never visibly resynchronises, and
-          three is where adding another stops changing what you see. The ember is
-          the only one with a position of its own — it tracks the sun. */}
-      <div className="starcode-sky-mesh">
-        <div className="starcode-sky-blob starcode-sky-blob-ember" />
-        <div className="starcode-sky-blob starcode-sky-blob-high" />
-        <div className="starcode-sky-blob starcode-sky-blob-wide" />
-      </div>
+      {/* Two frames, always both mounted. Swapping which element holds which
+          image would throw away the browser's decoded copy and its blurred
+          raster every half hour; keeping the roles fixed and rewriting the two
+          custom properties lets it reuse both for the twenty-nine minutes out
+          of thirty when neither has changed. */}
+      <div className="starcode-sky-frame starcode-sky-frame-a" />
+      <div className="starcode-sky-frame starcode-sky-frame-b" />
       {/* The chrome starfield. One field for the whole window now rather than
           one per panel, which is why it can afford to drift: the old sidebar
           copy was a quarter the width, so the same speed wrapped four times as

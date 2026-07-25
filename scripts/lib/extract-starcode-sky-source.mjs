@@ -1,5 +1,6 @@
 /**
- * Stage A — pull a vertical gradient signature out of the time-lapse.
+ * Stage A — pull the time-lapse's colour script out of the video, as a series of
+ * tiny 2D colour fields.
  *
  * This is the one step that needs the video. Its output,
  * `starcode-sky-source.json`, is committed; from there
@@ -19,25 +20,45 @@
  * committed JSON has been through `vp fmt` since, so it differs from this
  * script's raw output in whitespace only — compare parsed, not byte for byte.
  *
- * Method, and why each choice rejects a specific artefact:
- *   - ffmpeg decodes to raw rgb24 at 96x144, so there is no PNG decoder here and
- *     no dependency. Aspect is deliberately not preserved: rows are all we want,
- *     and 144 rows off a 1080p source is a clean 7.5:1 box filter.
- *   - Per row we take the MEDIAN across x, never the mean. The sun disc, its
- *     lens flare, and the city lights on the ground are all narrow in x; a mean
- *     lets them drag the row, a median does not see them at all. This is the
- *     "a passing car's headlights must not become a keyframe" rule, applied at
- *     the earliest possible stage.
- *   - Then a temporal median over a +/-2 frame window, which kills the
- *     encoder's exposure steps (the source is a 4.9MB AV1 re-encode of an
- *     already-compressed upload; its luminance staircases by ~2% at scene cuts).
+ * WHY A FIELD AND NOT A GRADIENT — the correction that produced this version.
+ * The first version of this reduced each frame to six vertical colour stops by
+ * taking the MEDIAN ACROSS X of every row. That is a good estimator and it is
+ * the wrong measurement: a median across x is defined by discarding horizontal
+ * structure, and horizontal structure is where a sky keeps its cloud masses, its
+ * off-centre glow, and every patch of colour that is not the average of its
+ * latitude. Six vertical stops can only ever render as a gradient, and it did —
+ * the review was "it just looks like a simple gradient, there should be some
+ * dimensionality". So this emits a small 2D grid instead, and the app upscales
+ * and blurs it, which is as close to "we blurred the video" as you can get
+ * without playing the video.
+ *
+ * WHAT REPLACED THE MEDIAN, since the artefacts it rejected are still there.
+ * Box averaging at this scale does the same job by a different route. Each cell
+ * of the grid covers roughly 96x90 source pixels, so the sun's disc contributes
+ * a few percent of one cell — it warms the cell, which is correct, rather than
+ * defining it. The city lights along the horizon average into a dim glow, which
+ * is what they look like from a distance anyway. What box averaging does NOT
+ * handle is a transient, so the +/-2 frame temporal median stays exactly where
+ * it was. Nothing that happens in one frame of the source can reach a keyframe.
  */
 
 import * as NodeChildProcess from "node:child_process";
 
+/** Decode raster. Detection wants rows; the field is box-averaged down from it. */
 const W = 96;
 const H = 144;
 const FPS = 5;
+
+/**
+ * Field size. Big enough for cloud masses and an asymmetric glow to survive,
+ * small enough that no upscale can reveal photographic detail or sensor noise —
+ * at 20 columns one cell is about a twentieth of the sky, which after a 70x
+ * upscale is a soft shape and cannot be anything else. It is also the whole
+ * bundle cost: the shipped module carries one PNG per keyframe.
+ */
+const FIELD_W = 20;
+const FIELD_H = 12;
+
 const SRC = new URL("./source.webm", import.meta.url).pathname;
 
 const ff = NodeChildProcess.spawnSync(
@@ -72,52 +93,46 @@ function median(values) {
   return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
 }
 
-/** rows[frame][row] = [r, g, b], each the median across x. */
-const rows = [];
+const at = (f, x, y, c) => buf[f * frameBytes + (y * W + x) * 3 + c];
+
+/* Temporal median per pixel, +/-2 frames. This is what kills the encoder's
+   exposure staircase (the source is an AV1 re-encode of an already-compressed
+   upload and its luminance steps by ~2% at scene cuts) and anything else that
+   lives for a single frame. */
+const frames = [];
 for (let f = 0; f < frameCount; f += 1) {
-  const base = f * frameBytes;
-  const frame = [];
+  const out = new Uint8Array(W * H * 3);
   for (let y = 0; y < H; y += 1) {
-    const r = [],
-      g = [],
-      b = [];
     for (let x = 0; x < W; x += 1) {
-      const p = base + (y * W + x) * 3;
-      r.push(buf[p]);
-      g.push(buf[p + 1]);
-      b.push(buf[p + 2]);
+      for (let c = 0; c < 3; c += 1) {
+        const window = [];
+        for (let d = -2; d <= 2; d += 1) {
+          window.push(at(Math.min(frameCount - 1, Math.max(0, f + d)), x, y, c));
+        }
+        out[(y * W + x) * 3 + c] = median(window);
+      }
     }
-    frame.push([median(r), median(g), median(b)]);
   }
-  rows.push(frame);
+  frames.push(out);
 }
 
-/* Temporal median, +/-2 frames. */
-const smoothed = rows.map((_, f) =>
-  rows[f].map((_, y) => {
-    const out = [];
-    for (let c = 0; c < 3; c += 1) {
-      const window = [];
-      for (let d = -2; d <= 2; d += 1) {
-        const i = Math.min(frameCount - 1, Math.max(0, f + d));
-        window.push(rows[i][y][c]);
-      }
-      out.push(median(window));
-    }
-    return out;
-  }),
-);
-
-const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+const rowLum = (frame, y) => {
+  let acc = 0;
+  for (let x = 0; x < W; x += 1) {
+    const p = (y * W + x) * 3;
+    acc += lum(frame[p], frame[p + 1], frame[p + 2]);
+  }
+  return acc / W;
+};
 
 /* Letterbox first. The upload is pillar-boxed into 16:9 with hard black bars,
    and a bar row is a perfect zero in EVERY frame — including the bright opening,
    which is what distinguishes it from the genuinely black night sky at the end.
-   Missing this puts a row of pure black into the zenith band and drags the whole
-   daytime ramp toward the ink floor before the taste transform ever runs. */
+   Missing this puts a band of pure black across the top of every field. */
 const rowMax = Array.from({ length: H }, () => 0);
-for (let f = 0; f < frameCount; f += 1) {
-  for (let y = 0; y < H; y += 1) rowMax[y] = Math.max(rowMax[y], lum(smoothed[f][y]));
+for (const frame of frames) {
+  for (let y = 0; y < H; y += 1) rowMax[y] = Math.max(rowMax[y], rowLum(frame, y));
 }
 let top = 0;
 while (top < H && rowMax[top] < 4) top += 1;
@@ -125,17 +140,18 @@ let bottom = H - 1;
 while (bottom > top && rowMax[bottom] < 4) bottom -= 1;
 console.error(`picture rows ${top}..${bottom} (letterbox trimmed)`);
 
-/* Horizon: the camera is locked, so it is one row for the whole clip. Find it as
+/* Horizon: the camera is locked, so it is one row for the whole clip. Found as
    the row with the largest sustained luminance step, searched only in the lower
    half of the picture, summed over the frames bright enough to have a visible
-   edge at all. */
+   edge at all. Everything below it is ground — trees and a town — which the app
+   never claimed to reproduce and which would put a hard dark band across the
+   bottom of every field. */
 const stepScore = Array.from({ length: H }, () => 0);
 const searchFrom = top + Math.floor((bottom - top) * 0.5);
-for (let f = 0; f < frameCount; f += 1) {
-  const frameLum = smoothed[f].map(lum);
-  if (frameLum[top + 2] < 20) continue; // too dark to locate an edge
+for (const frame of frames) {
+  if (rowLum(frame, top + 2) < 20) continue; // too dark to locate an edge
   for (let y = searchFrom; y < bottom - 2; y += 1) {
-    stepScore[y] += Math.max(0, frameLum[y - 2] - frameLum[y + 2]);
+    stepScore[y] += Math.max(0, rowLum(frame, y - 2) - rowLum(frame, y + 2));
   }
 }
 let horizon = searchFrom;
@@ -144,89 +160,55 @@ console.error(
   `horizon row ${horizon} (${(((horizon - top) / (bottom - top)) * 100).toFixed(1)}% down the picture)`,
 );
 
-/* Six bands across the sky region only, from zenith to just above the horizon.
-   The last band stops 2 rows short so no ground pixel can leak into it. */
-const BANDS = 6;
+/* The sky region, box-averaged into the field. The last row stops 2 short of the
+   horizon so no ground pixel can leak into it. */
 const skyTop = top;
 const skyBottom = horizon - 2;
-const bands = [];
-for (let i = 0; i < BANDS; i += 1) {
-  const centre = skyTop + (i / (BANDS - 1)) * (skyBottom - skyTop);
-  const half = Math.max(1.5, (skyBottom - skyTop) / (BANDS * 2));
-  bands.push([
-    Math.max(skyTop, Math.round(centre - half)),
-    Math.min(skyBottom, Math.round(centre + half)),
-  ]);
-}
 
-/* The sun's horizontal position, for the directional-light anchor. Taken from
-   the ORIGINAL per-x data in the band just above the horizon: argmax of a
-   box-blurred luminance profile, which finds the blaze rather than a hot pixel.
-   Reported with a confidence so the transform can ignore it when the sky is
-   flat (overcast opening, and every frame after dark). */
-const sunTrack = [];
-for (let f = 0; f < frameCount; f += 1) {
-  const base = f * frameBytes;
-  const y0 = Math.max(0, horizon - 18);
-  const y1 = Math.max(1, horizon - 3);
-  const profile = Array.from({ length: W }, () => 0);
-  for (let x = 0; x < W; x += 1) {
-    let acc = 0;
-    for (let y = y0; y < y1; y += 1) {
-      const p = base + (y * W + x) * 3;
-      acc += lum([buf[p], buf[p + 1], buf[p + 2]]);
-    }
-    profile[x] = acc / (y1 - y0);
-  }
-  const blur = profile.map((_, x) => {
-    let acc = 0,
-      n = 0;
-    for (let d = -4; d <= 4; d += 1) {
-      const i = x + d;
-      if (i >= 0 && i < W) {
-        acc += profile[i];
-        n += 1;
+function fieldFor(frame) {
+  const out = Buffer.alloc(FIELD_W * FIELD_H * 3);
+  for (let fy = 0; fy < FIELD_H; fy += 1) {
+    const y0 = skyTop + Math.round(((skyBottom - skyTop + 1) * fy) / FIELD_H);
+    const y1 = skyTop + Math.round(((skyBottom - skyTop + 1) * (fy + 1)) / FIELD_H);
+    for (let fx = 0; fx < FIELD_W; fx += 1) {
+      const x0 = Math.round((W * fx) / FIELD_W);
+      const x1 = Math.round((W * (fx + 1)) / FIELD_W);
+      const acc = [0, 0, 0];
+      let n = 0;
+      for (let y = y0; y < Math.max(y0 + 1, y1); y += 1) {
+        for (let x = x0; x < Math.max(x0 + 1, x1); x += 1) {
+          const p = (y * W + x) * 3;
+          acc[0] += frame[p];
+          acc[1] += frame[p + 1];
+          acc[2] += frame[p + 2];
+          n += 1;
+        }
       }
+      const q = (fy * FIELD_W + fx) * 3;
+      for (let c = 0; c < 3; c += 1) out[q + c] = Math.round(acc[c] / n);
     }
-    return acc / n;
-  });
-  let peak = 0;
-  for (let x = 0; x < W; x += 1) if (blur[x] > blur[peak]) peak = x;
-  const mean = blur.reduce((a, b) => a + b, 0) / W;
-  sunTrack.push({
-    x: Number((peak / (W - 1)).toFixed(4)),
-    // How much the peak stands above the band's own average: a real sun is a
-    // big number, an even overcast or a dark sky is near zero.
-    confidence: Number(Math.max(0, (blur[peak] - mean) / Math.max(1, mean)).toFixed(4)),
-  });
+  }
+  return out;
 }
 
-/* Reduce to 97 evenly spaced samples — dense enough that the derivation script
-   can resample anywhere without inventing detail, small enough to read. */
+/* 97 evenly spaced samples — half a second apart, dense enough that the
+   derivation can resample any hour without inventing detail. */
 const SAMPLES = 97;
 const samples = [];
 for (let s = 0; s < SAMPLES; s += 1) {
   const t = s / (SAMPLES - 1);
   const f = Math.min(frameCount - 1, Math.round(t * (frameCount - 1)));
-  const stops = bands.map(([a, b]) => {
-    const acc = [0, 0, 0];
-    for (let y = a; y <= b; y += 1) for (let c = 0; c < 3; c += 1) acc[c] += smoothed[f][y][c];
-    const n = b - a + 1;
-    return acc.map((v) => Math.round(v / n));
-  });
-  samples.push({
-    t: Number(t.toFixed(4)),
-    stops,
-    sunX: sunTrack[f].x,
-    sunConfidence: sunTrack[f].confidence,
-  });
+  samples.push({ t: Number(t.toFixed(4)), field: fieldFor(frames[f]).toString("base64") });
 }
 
 process.stdout.write(
   `${JSON.stringify(
     {
       source: "https://www.youtube.com/watch?v=qJiopi3GbFw",
-      note: "GENERATED. Day-to-night time-lapse, per-row medians across x, banded from zenith to horizon. Method and re-run instructions: extract-starcode-sky-source.mjs.",
+      note:
+        "GENERATED. Day-to-night time-lapse. Each sample is a base64 RGB grid of the SKY region only " +
+        "(letterbox and ground cropped), box-averaged from a temporally median-filtered decode. " +
+        "Row-major, 3 bytes per cell. Method and re-run instructions: extract-starcode-sky-source.mjs.",
       video: {
         width: 1920,
         height: 1080,
@@ -234,11 +216,18 @@ process.stdout.write(
         sampledFps: FPS,
         frames: frameCount,
       },
-      analysis: { rasterWidth: W, rasterHeight: H, horizonRow: horizon, bands },
+      analysis: {
+        rasterWidth: W,
+        rasterHeight: H,
+        pictureRows: [top, bottom],
+        horizonRow: horizon,
+        fieldWidth: FIELD_W,
+        fieldHeight: FIELD_H,
+      },
       samples,
     },
     null,
     2,
   )}\n`,
 );
-console.error(`emitted ${SAMPLES} samples`);
+console.error(`emitted ${SAMPLES} fields at ${FIELD_W}x${FIELD_H}`);
