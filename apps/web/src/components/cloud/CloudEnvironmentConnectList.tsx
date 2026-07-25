@@ -28,6 +28,8 @@ import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnec
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
   readonly connection: EnvironmentConnectionPresentation;
+  /** The saved connection's display name, which may be a client-side alias. */
+  readonly label?: string;
 }
 
 export function RemoteEnvironmentRowsSkeleton() {
@@ -225,7 +227,11 @@ export function CloudEnvironmentConnectRows({
                           : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
                 }
               />
-              <p className="truncate text-sm font-medium">{environment.label}</p>
+              {/* Discovery knows the relay's name for a machine; once it is
+                  saved, this client's own name for it wins. */}
+              <p className="truncate text-sm font-medium">
+                {savedEnvironment?.label ?? environment.label}
+              </p>
             </div>
             <p
               className={cn(

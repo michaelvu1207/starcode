@@ -132,6 +132,7 @@ import {
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
 import { ServerUpdateAction } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -1350,6 +1351,7 @@ function SavedBackendListRow({
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
+  const [isRenaming, setIsRenaming] = useState(false);
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
@@ -1396,6 +1398,11 @@ function SavedBackendListRow({
       ? environment.entry.profile.value.target
       : null;
   const metadataBits = [
+    // A renamed connection still has to be identifiable as the machine it is,
+    // or two aliases could quietly point at the same host.
+    environment.label === environment.serverLabel
+      ? null
+      : `Named by server: ${environment.serverLabel}`,
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
   ].filter((value): value is string => value !== null);
@@ -1420,7 +1427,22 @@ function SavedBackendListRow({
                   : null
               }
             />
-            <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+            {isRenaming ? (
+              <ConnectionNameInput
+                environmentId={environmentId}
+                serverLabel={environment.serverLabel}
+                className="max-w-64"
+                onDone={() => setIsRenaming(false)}
+              />
+            ) : (
+              <>
+                <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+                <ConnectionRenameTrigger
+                  displayName={environment.label}
+                  onStart={() => setIsRenaming(true)}
+                />
+              </>
+            )}
           </div>
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
