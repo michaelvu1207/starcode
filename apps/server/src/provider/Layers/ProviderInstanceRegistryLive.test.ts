@@ -72,6 +72,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  contextLimitTokens: "",
   ...overrides,
 });
 

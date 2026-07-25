@@ -298,9 +298,24 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    // Stored as text so the schema-driven provider settings form (text /
+    // password / textarea / switch only) can edit it; parsed and clamped by
+    // `resolveClaudeContextLimitTokens` in @t3tools/shared/claudeContextLimit.
+    contextLimitTokens: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Context limit",
+        description:
+          "Token budget this instance is allowed to fill before Claude compacts the conversation. Blank uses the 600k default; accepts 600000 or 600k. Clamped to 200k–1M, the band Claude Code honors.",
+        providerSettingsForm: {
+          placeholder: "600k",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "contextLimitTokens", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

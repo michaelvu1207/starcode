@@ -11,6 +11,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./claudeContextLimit": {
+      "types": "./src/claudeContextLimit.ts",
+      "import": "./src/claudeContextLimit.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

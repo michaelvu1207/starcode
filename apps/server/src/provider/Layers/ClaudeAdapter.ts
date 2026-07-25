@@ -20,6 +20,7 @@ import {
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { resolveClaudeContextLimitTokens } from "@t3tools/shared/claudeContextLimit";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
@@ -3513,10 +3514,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      // `autoCompactWindow` is the only knob Claude Code offers over how much
+      // context a session may accumulate: it becomes the effective window in
+      // the CLI's compaction arithmetic, so the transcript is summarized on
+      // approach instead of growing to the model's native 1M.
+      const contextLimitTokens = resolveClaudeContextLimitTokens(claudeSettings.contextLimitTokens);
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
+        autoCompactWindow: contextLimitTokens,
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       const queryOptions: ClaudeQueryOptions = {
