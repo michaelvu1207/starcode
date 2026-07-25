@@ -19,6 +19,7 @@ import {
   ClockIcon,
   CopyIcon,
   GitBranchIcon,
+  ListChecksIcon,
   MessageSquareIcon,
   PlusIcon,
   ServerIcon,
@@ -56,7 +57,6 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
-import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import {
   deriveProjectGroupingOverrideKey,
@@ -104,11 +104,9 @@ import {
 import { supportsSidebarRangeSelect } from "./Sidebar.connections";
 import { partitionSidebarV2Threads } from "./Sidebar.partition";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
-import {
-  prStatusIndicator,
-  resolveThreadPr,
-  settledPrHoverColorClass,
-} from "./ThreadStatusIndicators";
+import { resolveThreadPr } from "./ThreadStatusIndicators";
+import { ThreadTaskProgress } from "./sidebar/ThreadTaskProgress";
+import { hasThreadTaskProgress } from "./sidebar/ThreadTaskProgress.logic";
 import {
   resolveSnoozePresets,
   snoozeWakeDescription,
@@ -222,6 +220,7 @@ function SidebarV2ThreadTooltip({
     currentBranch: string;
   } | null;
 }) {
+  const planSummary = hasThreadTaskProgress(thread.planSummary) ? thread.planSummary : null;
   return (
     <TooltipPopup
       side="right"
@@ -256,6 +255,25 @@ function SidebarV2ThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-4 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 wrap-break-word text-foreground/90">{thread.branch}</div>
+            </div>
+          ) : null}
+          {/* The row's progress bar is deliberately wordless, so the counts and
+              the step it is currently on live here. */}
+          {planSummary ? (
+            <div className="flex min-w-0 items-start gap-2">
+              <ListChecksIcon
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 stroke-muted-foreground"
+              />
+              <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">
+                <span className="tabular-nums">
+                  {planSummary.completed}/{planSummary.total}
+                </span>{" "}
+                tasks
+                {planSummary.activeStep ? (
+                  <span className="text-muted-foreground"> · {planSummary.activeStep}</span>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -404,7 +422,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
-  const openPrLink = useOpenPrLink();
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
@@ -487,13 +504,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
+  // Rows no longer render the PR: the number and the branch left with the rest
+  // of the row's second-order detail (both still show in the row tooltip and
+  // the thread view). The lookup stays because the PR *state* is load-bearing
+  // below.
   const pr = resolveThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
     hasDedicatedWorktree: thread.worktreePath !== null,
   });
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
-  const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
   const prState = pr?.state ?? null;
@@ -630,13 +649,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
-  const handlePrClick = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      if (pr?.url) openPrLink(event, pr.url);
-    },
-    [openPrLink, pr],
-  );
-
   // All Sidebar V2 rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
@@ -699,25 +711,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     </span>
   );
 
-  const prBadge =
-    prStatus && pr ? (
-      <button
-        type="button"
-        onClick={handlePrClick}
-        className={cn(
-          "shrink-0 font-mono text-xs hover:underline",
-          variant === "slim" && variantAction === "unsettle"
-            ? props.isActive
-              ? "text-muted-foreground/70"
-              : cn("text-muted-foreground/35 transition-colors", settledPrHoverClass)
-            : prStatus.colorClass,
-        )}
-        aria-label={prStatus.tooltip}
-      >
-        #{pr.number}
-      </button>
-    ) : null;
-
   if (variant === "slim") {
     return (
       <li
@@ -756,10 +749,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               />
             </span>
             {title}
-            {/* The PR badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
-            {prBadge}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -933,12 +922,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </div>
             <div className="mt-1 flex min-w-0">{title}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+              {/* The line that used to carry branch + PR number now carries the
+                  one piece of second-line detail that changes while you watch:
+                  how far through its task list the thread is. Rows without a
+                  task list keep the spacer so the card height never jumps. */}
+              {hasThreadTaskProgress(thread.planSummary) ? (
+                <ThreadTaskProgress summary={thread.planSummary} />
               ) : (
                 <span className="flex-1" />
               )}
-              {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}

@@ -414,6 +414,23 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    // A shell from a server that predates the task-progress rollup omits the
+    // key entirely; clients read that as "this environment has no bar to draw".
+    assert.strictEqual(shell.planSummary, undefined);
+
+    const withPlan = yield* decodeOrchestrationThreadShell({
+      ...common,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      planSummary: { total: 4, completed: 2, activeStep: "Write the code" },
+    });
+    assert.deepStrictEqual(withPlan.planSummary, {
+      total: 4,
+      completed: 2,
+      activeStep: "Write the code",
+    });
   }),
 );
 

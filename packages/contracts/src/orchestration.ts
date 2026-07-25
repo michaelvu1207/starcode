@@ -398,6 +398,19 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+// Row-level rollup of a thread's most recent agent task list (TodoWrite /
+// update_plan, surfaced as `turn.plan.updated`). The full step list lives in
+// the thread's activities; shells carry only what a sidebar row can render.
+export const OrchestrationThreadPlanSummary = Schema.Struct({
+  total: NonNegativeInt,
+  completed: NonNegativeInt,
+  // The step a viewer would call "what it's doing now": the first in-progress
+  // step, or the first pending one when nothing is explicitly in progress.
+  // Null once every step is complete.
+  activeStep: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationThreadPlanSummary = typeof OrchestrationThreadPlanSummary.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -424,6 +437,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  // Optional so payloads from servers that predate the summary still decode;
+  // clients render the row's task-progress bar only when it is present.
+  planSummary: Schema.optional(Schema.NullOr(OrchestrationThreadPlanSummary)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

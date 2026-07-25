@@ -20,6 +20,7 @@ import {
   type OrchestrationProject,
   type OrchestrationSession,
   type OrchestrationThreadActivity,
+  type OrchestrationThreadPlanSummary,
   type OrchestrationThreadShell,
   ModelSelection,
   ProjectId,
@@ -50,6 +51,7 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { derivePlanSummary } from "../threadPlanSummary.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -87,6 +89,14 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   }),
 );
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+// Only the columns the row-level plan rollup needs. Plans are read from the
+// activity timeline rather than denormalized onto projection_threads, so the
+// summary needs no migration and can never drift from the activities the
+// thread view renders.
+const ProjectionThreadPlanActivityDbRowSchema = Schema.Struct({
+  threadId: ProjectionThread.fields.threadId,
+  payload: Schema.fromJsonString(Schema.Unknown),
+});
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -261,6 +271,13 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+// Shell fields are omitted, not nulled, when absent: a thread with no task
+// list must produce the same payload a server without this rollup would send.
+function maybePlanSummary(payload: unknown): { planSummary?: OrchestrationThreadPlanSummary } {
+  const summary = derivePlanSummary(payload);
+  return summary === null ? {} : { planSummary: summary };
+}
+
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -379,6 +396,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
         ORDER BY project_id ASC, created_at ASC, thread_id ASC
+      `,
+  });
+
+  // Newest plan activity per thread, in one pass. Ordering mirrors the
+  // ascending convention in ProjectionThreadActivityRepository.listByThreadId
+  // (runtime sequence when present, creation order otherwise), reversed.
+  const listLatestPlanActivityRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadPlanActivityDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          payload_json AS "payload"
+        FROM (
+          SELECT
+            thread_id,
+            payload_json,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+                sequence DESC,
+                created_at DESC,
+                activity_id DESC
+            ) AS plan_rank
+          FROM projection_thread_activities
+          WHERE kind = 'turn.plan.updated'
+        )
+        WHERE plan_rank = 1
       `,
   });
 
@@ -845,6 +892,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  // Single-thread counterpart of listLatestPlanActivityRows, used by the shell
+  // stream's per-thread refetch. Walks the (thread_id, sequence, created_at,
+  // activity_id) index backwards and stops at the first plan row.
+  const getLatestPlanActivityRowByThread = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadPlanActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          payload_json AS "payload"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND kind = 'turn.plan.updated'
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+          sequence DESC,
+          created_at DESC,
+          activity_id DESC
+        LIMIT 1
       `,
   });
 
@@ -1513,6 +1583,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               sessionRows.map((row) => [row.threadId, mapSessionRow(row)] as const),
             );
 
+            // Read after the snapshot transaction rather than inside it: the
+            // rollup is derived and read-only, so a plan appended in between
+            // only makes the bar fresher than the rest of the snapshot.
+            const planRows = yield* listLatestPlanActivityRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getShellSnapshot:listLatestPlanActivities:query",
+                  "ProjectionSnapshotQuery.getShellSnapshot:listLatestPlanActivities:decodeRows",
+                ),
+              ),
+            );
+            const planSummaryByThread = new Map(
+              Arr.filterMap(planRows, (row) => {
+                const summary = derivePlanSummary(row.payload);
+                return summary === null
+                  ? Result.failVoid
+                  : Result.succeed([row.threadId, summary] as const);
+              }),
+            );
+
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
@@ -1546,6 +1636,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      // Omitted rather than null when the thread has no task
+                      // list, so shells stay byte-identical to what servers
+                      // without this rollup send.
+                      ...(planSummaryByThread.has(row.threadId)
+                        ? { planSummary: planSummaryByThread.get(row.threadId) }
+                        : {}),
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1875,7 +1971,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow] = yield* Effect.all([
+      const [threadRow, latestTurnRow, sessionRow, planRow] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -1897,6 +1993,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
               "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+            ),
+          ),
+        ),
+        getLatestPlanActivityRowByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadShellById:getLatestPlanActivity:query",
+              "ProjectionSnapshotQuery.getThreadShellById:getLatestPlanActivity:decodeRow",
             ),
           ),
         ),
@@ -1928,6 +2032,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        ...(Option.isSome(planRow) ? maybePlanSummary(planRow.value.payload) : {}),
       } satisfies OrchestrationThreadShell);
     });
 
