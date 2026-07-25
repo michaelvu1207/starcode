@@ -97,6 +97,7 @@ import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
 import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
 import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
 import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
+import { ProjectCatalogServicesLive, projectCatalogHttpApiLayer } from "./projectCatalog/layer.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -384,6 +385,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(featureFlowHttpApiLayer),
       Layer.provide(usageHttpApiLayer),
       Layer.provide(historyHttpApiLayer),
+      Layer.provide(projectCatalogHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -399,6 +401,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(FeatureFlowServicesLive),
   Layer.provide(UsageServicesLive),
   Layer.provide(HistoryServicesLive),
+  Layer.provide(ProjectCatalogServicesLive),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(browserApiCorsLayer),
 );

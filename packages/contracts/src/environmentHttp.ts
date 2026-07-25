@@ -45,6 +45,15 @@ import {
 import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
 import { FeatureFlowSnapshot } from "./featureFlow.ts";
 import {
+  ProjectCatalogFileThreadRequest,
+  ProjectCatalogLocationsPage,
+  ProjectCatalogRemoveRequest,
+  ProjectCatalogRemoveResult,
+  ProjectCatalogSnapshot,
+  ProjectCatalogUpsertRequest,
+  ProjectCatalogUpsertResult,
+} from "./projectCatalog.ts";
+import {
   ThreadMailboxListResult,
   ThreadMailboxSendInput,
   ThreadMailboxSendResult,
@@ -76,6 +85,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_peer",
   /** A thread addressed its own mailbox, or the message exceeded its bounds. */
   "invalid_mailbox_message",
+  /** A filing request named no category to file into, or named one to unfile from. */
+  "invalid_project_catalog_request",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -115,6 +126,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "history_preview_failed",
   "history_import_failed",
   "history_imports_failed",
+  "project_catalog_load_failed",
+  "project_catalog_save_failed",
+  "project_catalog_locations_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -726,6 +740,82 @@ export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/**
+ * Fork-owned: the project catalog — this machine's half of the cross-machine
+ * category layer.
+ *
+ * Read is `orchestration:read` and every write is `orchestration:operate`, the
+ * same pair history uses, and for the same reason: a paired hub client holds a
+ * pairing credential and reading another machine's catalog is the entire point,
+ * while creating a category on four machines at once is an operator action.
+ *
+ * The routes are POSTs on fixed paths rather than a REST resource with the slug
+ * in the URL. The slug travels in the body so a relay client's DPoP proof — which
+ * binds to the fully interpolated URL — does not have to be recomputed per
+ * category, and so a fan-out write is the same request four times over.
+ */
+export class EnvironmentProjectCatalogHttpApi extends HttpApiGroup.make("projectCatalog")
+  .add(
+    HttpApiEndpoint.get("snapshot", "/api/project-catalog", {
+      headers: OptionalBearerHeaders,
+      success: ProjectCatalogSnapshot,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * This machine's bindable locations, with the repository identity a seeder
+   * groups on. Read-scoped: it is a projection of `projection_projects` plus
+   * the catalog's own bindings, and it exists so a caller can propose one
+   * category per repository without holding a shell snapshot.
+   */
+  .add(
+    HttpApiEndpoint.get("locations", "/api/project-catalog/locations", {
+      headers: OptionalBearerHeaders,
+      success: ProjectCatalogLocationsPage,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Create-or-patch, by slug. An absent section is left alone, which is what
+   * lets the client send `display` to every machine and `local` to one.
+   */
+  .add(
+    HttpApiEndpoint.post("upsert", "/api/project-catalog/upsert", {
+      headers: OptionalBearerHeaders,
+      payload: ProjectCatalogUpsertRequest,
+      success: ProjectCatalogUpsertResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Drops this machine's record. Deliberately local-only in effect: removing a
+   * category everywhere is the client fanning this out, and a machine that was
+   * offline keeps its copy until it is asked again — visible, not silent.
+   */
+  .add(
+    HttpApiEndpoint.post("remove", "/api/project-catalog/remove", {
+      headers: OptionalBearerHeaders,
+      payload: ProjectCatalogRemoveRequest,
+      success: ProjectCatalogRemoveResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Files, excludes, or unfiles one thread. Returns the whole snapshot because
+   * assigning touches every category that previously claimed the thread, and a
+   * caller that had to guess which ones would be re-reading anyway.
+   */
+  .add(
+    HttpApiEndpoint.post("fileThread", "/api/project-catalog/file-thread", {
+      headers: OptionalBearerHeaders,
+      payload: ProjectCatalogFileThreadRequest,
+      success: ProjectCatalogSnapshot,
+      // Plus invalid-request: the payload carries a mode and a nullable slug,
+      // and "assign to nothing" is a 400 the schema cannot express.
+      error: [EnvironmentRequestInvalidError, ...EnvironmentScopedOperationErrors],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -796,4 +886,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentFeatureFlowHttpApi)
   .add(EnvironmentUsageHttpApi)
   .add(EnvironmentHistoryHttpApi)
+  .add(EnvironmentProjectCatalogHttpApi)
   .add(EnvironmentConnectHttpApi) {}

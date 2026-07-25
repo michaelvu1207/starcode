@@ -146,6 +146,7 @@ export const make = Effect.gen(function* () {
       peerOrchestration: true,
       threadMailbox: true,
       featureFlow: true,
+      projectCatalog: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
     },
   };

@@ -23,6 +23,7 @@ export * from "./mailbox.ts";
 export * from "./featureFlow.ts";
 export * from "./usage.ts";
 export * from "./history.ts";
+export * from "./projectCatalog.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
