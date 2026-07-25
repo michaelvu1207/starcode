@@ -45,6 +45,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { resolveSessionTitle, type SessionTitleSource } from "./importFacts.ts";
 import {
   CLAUDE_PROJECTS_DIRNAME,
   CODEX_SESSIONS_DIRNAME,
@@ -54,7 +55,7 @@ import {
   isSessionFileName,
   projectLabelForPath,
 } from "./paths.ts";
-import { readSessionHead } from "./tailReader.ts";
+import { readSessionHead, readSessionTitleTail } from "./tailReader.ts";
 
 /**
  * Minimum gap between rescans. A sidebar strip that expands, collapses, and
@@ -80,6 +81,8 @@ export interface HistoryIndexEntry {
 interface HydratedFields {
   readonly projectPath: string | null;
   readonly snippet: string | null;
+  readonly title: string | null;
+  readonly titleSource: SessionTitleSource | null;
 }
 
 export interface HistoryIndexSnapshot {
@@ -310,14 +313,42 @@ export const makeHistoryIndex = (options?: {
   const hydrationKey = (entry: HistoryIndexEntry): string =>
     `${entry.path}:${entry.mtimeMs}:${entry.sizeBytes}`;
 
+  /**
+   * Reads one row's displayable fields.
+   *
+   * Two reads for Claude, one for Codex. The second is the title scan: Claude
+   * rewrites `ai-title` throughout a session so the *last* one is the current
+   * title, and the last one is only reachable from the end of the file. Codex
+   * writes no titles at all, so it is not asked. Both are bounded, both are
+   * cached by file identity, and neither happens until a page is actually
+   * being returned — the index itself still opens nothing.
+   */
   const hydrateOne = async (entry: HistoryIndexEntry): Promise<HistorySessionSummary> => {
     const key = hydrationKey(entry);
     let fields = hydrationCache.get(key);
     if (fields === undefined) {
-      fields = await readSessionHead({ path: entry.path, provider: entry.provider }).catch(() => ({
-        projectPath: null,
-        snippet: null,
-      }));
+      const [head, tailTitle] = await Promise.all([
+        readSessionHead({ path: entry.path, provider: entry.provider }).catch(() => ({
+          projectPath: null,
+          snippet: null,
+          aiTitle: null,
+        })),
+        entry.provider === "claude"
+          ? readSessionTitleTail({ path: entry.path }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const projectPath = head.projectPath ?? entry.pathDerivedProject;
+      const resolved = resolveSessionTitle({
+        aiTitle: tailTitle ?? head.aiTitle,
+        firstUserMessage: head.snippet,
+        projectLabel: projectLabelForPath(projectPath),
+      });
+      fields = {
+        projectPath: head.projectPath,
+        snippet: head.snippet,
+        title: resolved.title,
+        titleSource: resolved.source,
+      };
       if (hydrationCache.size >= HYDRATION_CACHE_MAX_ENTRIES) {
         const oldest = hydrationCache.keys().next();
         if (!oldest.done) hydrationCache.delete(oldest.value);
@@ -331,6 +362,8 @@ export const makeHistoryIndex = (options?: {
       projectPath,
       projectLabel: projectLabelForPath(projectPath),
       snippet: fields.snippet,
+      title: fields.title,
+      titleSource: fields.titleSource,
       lastActivityAt: DateTime.formatIso(DateTime.makeUnsafe(entry.mtimeMs)),
       sizeBytes: entry.sizeBytes,
     };

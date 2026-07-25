@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 
 import {
   claudeNativeSessionIdForPath,
+  codexNativeSessionIdForPath,
+  resolveSessionTitle,
   defaultInstanceIdForHistoryProvider,
   findProjectForCwd,
   importResumeCursor,
@@ -13,21 +15,10 @@ import {
   instanceSessionStoreRoot,
   isPathWithin,
   projectTitleForCwd,
-  SessionImportFold,
   IMPORT_TITLE_MAX_CHARS,
 } from "./importFacts.ts";
 
 const UUID = "9f2b6c1a-4d3e-4f5a-8b7c-0d1e2f3a4b5c";
-
-const claudeRecord = (fields: Record<string, unknown>): string => JSON.stringify(fields);
-
-const foldLines = (provider: "claude" | "codex", lines: ReadonlyArray<string>) => {
-  const fold = new SessionImportFold(provider);
-  for (const line of lines) {
-    if (fold.push(line)) break;
-  }
-  return fold.result;
-};
 
 describe("native session id", () => {
   it("reads Claude's resume id from the file name", () => {
@@ -37,132 +28,99 @@ describe("native session id", () => {
     );
   });
 
-  it("refuses a Claude file whose name is not a session id", () => {
-    // A hand-copied log or a fragment. `claude --resume` looks up the file by
-    // name, so there is nothing here to resume.
+  it("reads Codex's resume id from the file name, not from session_meta", () => {
+    // A resumed rollout appends a fresh `session_meta` every time it is
+    // continued — one on this machine carries 180 — so "the id in
+    // session_meta" is ambiguous in exactly the long sessions most worth
+    // importing. The file name is not.
+    assert.equal(
+      codexNativeSessionIdForPath(
+        "/home/me/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-019f48a7-522e-7120-a10d-285178db2830.jsonl",
+      ),
+      "019f48a7-522e-7120-a10d-285178db2830",
+    );
+  });
+
+  it("refuses a file whose name is not a session id", () => {
+    // A hand-copied log or a fragment. Both CLIs look a session up by name, so
+    // there is nothing here to resume.
     assert.isNull(claudeNativeSessionIdForPath("/home/me/.claude/projects/-x/session-one.jsonl"));
     assert.isNull(claudeNativeSessionIdForPath(`/home/me/.claude/projects/-x/${UUID}.txt`));
+    assert.isNull(
+      codexNativeSessionIdForPath("/home/me/.codex/sessions/2026/07/24/rollout-x.jsonl"),
+    );
   });
 });
 
-describe("session facts", () => {
-  it("reads a Claude session's working directory and first human turn", () => {
-    const facts = foldLines("claude", [
-      claudeRecord({ type: "queue-operation", sessionId: UUID }),
-      claudeRecord({
-        type: "user",
-        cwd: "/tmp/alpha",
-        message: { role: "user", content: "remember the codeword" },
+describe("session title", () => {
+  it("prefers the title the CLI wrote for itself", () => {
+    // The only rung that is a real title rather than this server guessing.
+    assert.deepEqual(
+      resolveSessionTitle({
+        aiTitle: "check cmux  licensing\n",
+        firstUserMessage: "can you look at the licence",
+        projectLabel: "agent-hub",
       }),
-    ]);
-
-    assert.equal(facts.cwd, "/tmp/alpha");
-    assert.equal(facts.firstUserMessage, "remember the codeword");
-    assert.isNull(facts.summary);
-    // Claude's id is in the path, never in the records.
-    assert.isNull(facts.nativeSessionId);
+      { title: "check cmux licensing", source: "session" },
+    );
   });
 
-  it("prefers a Claude summary record as the title source", () => {
-    const facts = foldLines("claude", [
-      claudeRecord({ type: "summary", summary: "Wiring the import  endpoint\n" }),
-      claudeRecord({
-        type: "user",
-        cwd: "/tmp/alpha",
-        message: { role: "user", content: "carry on" },
+  it("falls back to the first user message, and says so", () => {
+    assert.deepEqual(
+      resolveSessionTitle({
+        aiTitle: null,
+        firstUserMessage: "add a health endpoint",
+        projectLabel: "agent-hub",
       }),
-    ]);
-
-    assert.equal(facts.summary, "Wiring the import endpoint");
-    assert.equal(importThreadTitle({ facts, provider: "claude" }), "Wiring the import endpoint");
+      { title: "add a health endpoint", source: "message" },
+    );
   });
 
-  it("reads a Codex rollout's thread id and cwd from session_meta", () => {
-    const facts = foldLines("codex", [
-      JSON.stringify({
-        type: "session_meta",
-        payload: { id: UUID, session_id: UUID, cwd: "/tmp/beta" },
-      }),
-      JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "ship it" } }),
-    ]);
-
-    assert.equal(facts.nativeSessionId, UUID);
-    assert.equal(facts.cwd, "/tmp/beta");
-    assert.equal(facts.firstUserMessage, "ship it");
+  it("falls back to the project when the session said nothing quotable", () => {
+    assert.deepEqual(
+      resolveSessionTitle({ aiTitle: null, firstUserMessage: null, projectLabel: "agent-hub" }),
+      { title: "agent-hub", source: "project" },
+    );
   });
 
-  it("falls back to session_id on a rollout that predates the `id` field", () => {
-    const facts = foldLines("codex", [
-      JSON.stringify({ type: "session_meta", payload: { session_id: UUID, cwd: "/tmp/beta" } }),
-    ]);
-
-    assert.equal(facts.nativeSessionId, UUID);
+  it("reports no title at all rather than inventing one", () => {
+    assert.deepEqual(
+      resolveSessionTitle({ aiTitle: null, firstUserMessage: null, projectLabel: null }),
+      { title: null, source: null },
+    );
   });
 
-  it("does not treat a tool result carrier as the first human turn", () => {
-    const facts = foldLines("claude", [
-      claudeRecord({
-        type: "user",
-        cwd: "/tmp/alpha",
-        message: { role: "user", content: [{ type: "tool_result", content: "ok" }] },
-      }),
-      claudeRecord({
-        type: "user",
-        cwd: "/tmp/alpha",
-        message: { role: "user", content: "the real prompt" },
-      }),
-    ]);
-
-    assert.equal(facts.firstUserMessage, "the real prompt");
-  });
-
-  it("survives a malformed line without losing what it already read", () => {
-    const facts = foldLines("claude", [
-      claudeRecord({ type: "user", cwd: "/tmp/alpha", message: { role: "user", content: "hi" } }),
-      "{ this is not json",
-    ]);
-
-    assert.equal(facts.cwd, "/tmp/alpha");
-    assert.equal(facts.firstUserMessage, "hi");
+  it("clips a long first message to the title budget", () => {
+    const resolved = resolveSessionTitle({
+      aiTitle: null,
+      firstUserMessage: "x".repeat(500),
+      projectLabel: null,
+    });
+    assert.equal(resolved.title?.length, IMPORT_TITLE_MAX_CHARS + 1);
+    assert.isTrue(resolved.title?.endsWith("…"));
   });
 });
 
 describe("thread title", () => {
-  it("uses the first user message when there is no summary", () => {
-    const facts = {
-      nativeSessionId: null,
-      cwd: "/tmp/alpha",
-      summary: null,
-      firstUserMessage: "add a health endpoint",
-    };
-    assert.equal(importThreadTitle({ facts, provider: "claude" }), "add a health endpoint");
-  });
-
-  it("clips a long first message to the title budget", () => {
-    const facts = {
-      nativeSessionId: null,
-      cwd: "/tmp/alpha",
-      summary: null,
-      firstUserMessage: "x".repeat(500),
-    };
-    const title = importThreadTitle({ facts, provider: "claude" });
-    assert.equal(title.length, IMPORT_TITLE_MAX_CHARS + 1);
-    assert.isTrue(title.endsWith("…"));
+  it("takes the name the picker showed, so importing never renames a session", () => {
+    assert.equal(
+      importThreadTitle({ provider: "claude", sessionTitle: "check cmux licensing" }),
+      "check cmux licensing",
+    );
   });
 
   it("names the provider when the session yielded nothing to name it after", () => {
-    const facts = { nativeSessionId: null, cwd: null, summary: null, firstUserMessage: null };
-    assert.equal(importThreadTitle({ facts, provider: "codex" }), "Imported Codex session");
+    assert.equal(
+      importThreadTitle({ provider: "codex", sessionTitle: null }),
+      "Imported Codex session",
+    );
   });
 
   it("lets the caller override everything", () => {
-    const facts = {
-      nativeSessionId: null,
-      cwd: null,
-      summary: "a summary",
-      firstUserMessage: "a message",
-    };
-    assert.equal(importThreadTitle({ facts, provider: "claude", requested: " chosen " }), "chosen");
+    assert.equal(
+      importThreadTitle({ provider: "claude", sessionTitle: "derived", requested: " chosen " }),
+      "chosen",
+    );
   });
 });
 

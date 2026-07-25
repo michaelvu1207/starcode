@@ -32,6 +32,8 @@ const record = (overrides?: Partial<HistoryImportRecord>): HistoryImportRecord =
   projectId: ProjectId.make("project-1"),
   cwd: "/tmp/alpha",
   importedAt: "2026-07-24T00:00:00.000Z",
+  messageCount: 12,
+  startedAt: "2026-07-23T09:00:00.000Z",
   ...overrides,
 });
 

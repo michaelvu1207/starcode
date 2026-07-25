@@ -11,7 +11,6 @@
  * how deep you paged is not worth persisting, only whether the strip is open.
  */
 import type { EnvironmentId, HistorySessionSummary } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
@@ -133,7 +132,7 @@ function TerminalHistoryRows(props: { readonly environmentId: EnvironmentId }): 
   return (
     <>
       {state.sessions.map((session) => (
-        <HistoryRow key={session.id} environmentId={props.environmentId} session={session} />
+        <HistoryRow key={session.id} session={session} />
       ))}
       {moreLabel !== null ? (
         <li className="list-none px-1">
@@ -152,25 +151,27 @@ function TerminalHistoryRows(props: { readonly environmentId: EnvironmentId }): 
   );
 }
 
-function HistoryRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly session: HistorySessionSummary;
-}): ReactNode {
+/**
+ * A row that names a session and goes nowhere.
+ *
+ * It used to link to a full-transcript viewer. That viewer is gone — history
+ * is import-only now — and until the import picker replaces this strip
+ * outright, a row that navigated to a deleted route would be worse than one
+ * that simply reads.
+ */
+function HistoryRow(props: { readonly session: HistorySessionSummary }): ReactNode {
   const { session } = props;
   const hasSnippet = session.snippet !== null;
-  const label = session.snippet ?? session.projectLabel ?? "Untitled session";
+  const label = session.title ?? session.snippet ?? session.projectLabel ?? "Untitled session";
   // With no snippet the label already *is* the project, so repeating it in the
   // trailing column would spend the row's scarcest resource — width — saying
   // the same word twice.
   const projectLabel = hasSnippet ? session.projectLabel : null;
   return (
     <li data-thread-selection-safe className="list-none" data-testid="sidebar-v2-history-row">
-      <Link
-        to="/$environmentId/history/$sessionId"
-        params={{ environmentId: props.environmentId, sessionId: session.id }}
+      <div
         title={`${session.projectPath ?? "unknown project"}\n${label}`}
-        className="flex h-[30px] w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-sidebar-accent/60"
-        activeProps={{ className: "bg-sidebar-accent" }}
+        className="flex h-[30px] w-full items-center gap-2 rounded-md px-2.5 text-left"
       >
         <HistoryProviderIcon
           provider={session.provider}
@@ -192,7 +193,7 @@ function HistoryRow(props: {
         <span className="w-6 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground/40">
           {compactAge(session.lastActivityAt)}
         </span>
-      </Link>
+      </div>
     </li>
   );
 }

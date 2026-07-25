@@ -5,10 +5,14 @@
  * skip or repeat a session is testable without a filesystem.
  *
  * Every parser here clamps rather than rejects. These parameters come from a
- * sidebar strip, not a human typing a URL; a nonsense `limit` should produce
- * the default page, not an error the reader has no way to act on. The one
+ * picker, not a human typing a URL; a nonsense `limit` should produce the
+ * default page, not an error the reader has no way to act on. The one
  * exception is the session id, which is rejected outright — see
  * `HistoryIndex.resolve`.
+ *
+ * Only the *listing* has parameters. The preview that replaced the paginated
+ * transcript route is bounded and cursorless, so the byte-offset arithmetic
+ * that used to live here went with it.
  *
  * @module HistoryQuery
  */
@@ -16,8 +20,6 @@ import {
   HISTORY_SESSIONS_DEFAULT_LIMIT,
   HISTORY_SESSIONS_DEFAULT_WINDOW_DAYS,
   HISTORY_SESSIONS_MAX_LIMIT,
-  HISTORY_TRANSCRIPT_DEFAULT_LIMIT,
-  HISTORY_TRANSCRIPT_MAX_LIMIT,
 } from "@t3tools/contracts";
 
 import type { HistoryIndexEntry } from "./HistoryIndex.ts";
@@ -33,16 +35,6 @@ export const clampLimit = (raw: string | undefined, fallback: number, maximum: n
 
 export const clampSessionsLimit = (raw: string | undefined): number =>
   clampLimit(raw, HISTORY_SESSIONS_DEFAULT_LIMIT, HISTORY_SESSIONS_MAX_LIMIT);
-
-export const clampTranscriptLimit = (raw: string | undefined): number =>
-  clampLimit(raw, HISTORY_TRANSCRIPT_DEFAULT_LIMIT, HISTORY_TRANSCRIPT_MAX_LIMIT);
-
-/** A byte offset from the client. Negative and garbled values mean "the tail". */
-export const parseBefore = (raw: string | undefined): number | null => {
-  if (raw === undefined) return null;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-};
 
 /**
  * Resolves the time window.

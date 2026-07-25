@@ -21,6 +21,8 @@ const session = (id: string): HistorySessionSummary => ({
   projectPath: "/w/app",
   projectLabel: "app",
   snippet: `prompt ${id}`,
+  title: `prompt ${id}`,
+  titleSource: "message",
   lastActivityAt: "2026-07-24T10:00:00.000Z",
   sizeBytes: 1_000,
 });

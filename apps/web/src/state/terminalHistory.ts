@@ -3,17 +3,17 @@
  *
  * Instantiates the client-runtime atom families once against the connection
  * runtime, mirroring `state/usage.ts`. Deliberately no cross-environment
- * fan-out atom: the strip is lazy, and an atom that read every machine would
- * fetch from all four the moment the sidebar rendered.
+ * fan-out atom: the picker is lazy, and an atom that read every machine would
+ * fetch from all four the moment it opened.
  */
 import {
   createEnvironmentTerminalHistoryAtoms,
   historySessionsAtomKey,
-  historyTranscriptAtomKey,
+  historyPreviewAtomKey,
   type HistorySessionsKey,
-  type HistoryTranscriptKey,
+  type HistoryPreviewKey,
 } from "@t3tools/client-runtime/state/terminal-history";
-import type { HistorySessionsPage, HistoryTranscriptPage } from "@t3tools/contracts";
+import type { HistoryPreview, HistorySessionsPage } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -36,8 +36,8 @@ const sessionsViewAtom = Atom.family((serializedKey: string) =>
   unwrap(environmentTerminalHistory.sessionsAtom(serializedKey)),
 );
 
-const transcriptViewAtom = Atom.family((serializedKey: string) =>
-  unwrap(environmentTerminalHistory.transcriptAtom(serializedKey)),
+const previewViewAtom = Atom.family((serializedKey: string) =>
+  unwrap(environmentTerminalHistory.previewAtom(serializedKey)),
 );
 
 /**
@@ -54,10 +54,14 @@ export function useHistorySessionsPage(
   return useEnvironmentQuery(key === null ? null : sessionsViewAtom(historySessionsAtomKey(key)));
 }
 
-export function useHistoryTranscriptPage(
-  key: HistoryTranscriptKey | null,
-): EnvironmentQueryView<HistoryTranscriptPage | null> {
-  return useEnvironmentQuery(
-    key === null ? null : transcriptViewAtom(historyTranscriptAtomKey(key)),
-  );
+/**
+ * Enough of one session to tell it apart from the one next to it.
+ *
+ * One bounded read with no follow-up: history is import-only, so there is no
+ * "load earlier" for this to page.
+ */
+export function useHistoryPreview(
+  key: HistoryPreviewKey | null,
+): EnvironmentQueryView<HistoryPreview | null> {
+  return useEnvironmentQuery(key === null ? null : previewViewAtom(historyPreviewAtomKey(key)));
 }

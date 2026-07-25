@@ -257,6 +257,60 @@ export const toTranscriptEntry = (
 });
 
 /**
+ * The title Claude wrote for the session, if this record is one.
+ *
+ * Claude appends `{"type":"ai-title","aiTitle":"…"}` as it revises its idea of
+ * what the session is about — one live 11 MB session carries 136 of them — so
+ * the **last** one is the current title and the first is a stale guess. They
+ * are dense enough that the last always lands near the end of the file (2.5 KB
+ * to 27 KB from EOF across the sessions on this machine), which is why a
+ * bounded tail read finds it without scanning megabytes.
+ *
+ * Codex has no equivalent: its record types are `session_meta`, `event_msg`,
+ * `response_item`, `world_state`, `turn_context`,
+ * `inter_agent_communication_metadata` and `compacted` — nothing title-shaped.
+ */
+export const readRecordAiTitle = (record: Record<string, unknown>): string | null => {
+  if (record["type"] !== "ai-title") return null;
+  return asString(record["aiTitle"]);
+};
+
+/**
+ * The first human message inside a Codex `compacted` record.
+ *
+ * Compaction replaces a run of history with a summary and preserves the
+ * original messages under `payload.replacement_history`, in the response-item
+ * shape (`content: [{type: "input_text", text}]`) rather than the `event_msg`
+ * shape the rest of the reader speaks. Without this, a compacted rollout whose
+ * early records were folded away has no opening message to show, and the
+ * preview starts mid-conversation with nothing to correct the impression.
+ */
+export const readCompactedFirstUserMessage = (record: Record<string, unknown>): string | null => {
+  if (record["type"] !== "compacted") return null;
+  const payload = record["payload"];
+  if (!isRecord(payload)) return null;
+  const history = payload["replacement_history"];
+  if (!Array.isArray(history)) return null;
+  for (const item of history) {
+    if (!isRecord(item) || item["role"] !== "user") continue;
+    const content = item["content"];
+    if (!Array.isArray(content)) {
+      const direct = asString(content);
+      if (direct !== null) return direct;
+      continue;
+    }
+    const texts: string[] = [];
+    for (const block of content) {
+      if (!isRecord(block)) continue;
+      const text = asString(block["text"]);
+      if (text !== null) texts.push(text);
+    }
+    if (texts.length > 0) return texts.join("\n\n");
+  }
+  return null;
+};
+
+/**
  * The working directory a record reports, if it reports one.
  *
  * Both CLIs record where they ran — Claude on every conversation record, Codex
@@ -287,6 +341,7 @@ export const readRecordProjectPath = (
 export class SessionHeadFold {
   private projectPath: string | null = null;
   private snippet: string | null = null;
+  private aiTitle: string | null = null;
   private readonly provider: HistoryProvider;
 
   constructor(provider: HistoryProvider) {
@@ -301,21 +356,44 @@ export class SessionHeadFold {
     if (this.projectPath === null) {
       this.projectPath = readRecordProjectPath(this.provider, record);
     }
+    // Head-side only. The authoritative title is the *last* one in the file,
+    // which a tail read finds; this catches the case where a session is short
+    // enough that head and tail are the same bytes.
+    const aiTitle = readRecordAiTitle(record);
+    if (aiTitle !== null) this.aiTitle = aiTitle;
+
     if (this.snippet === null) {
       const rendered = renderRecord(this.provider, record);
       if (rendered !== null && rendered.isHumanTurn) {
         const collapsed = collapseWhitespace(rendered.text);
         if (collapsed.length > 0) this.snippet = clip(collapsed, HISTORY_SNIPPET_MAX_CHARS);
+      } else {
+        // A compacted rollout may have folded the opening message away; the
+        // originals survive inside the compaction record.
+        const compacted = readCompactedFirstUserMessage(record);
+        if (compacted !== null) {
+          const collapsed = collapseWhitespace(compacted);
+          if (collapsed.length > 0) this.snippet = clip(collapsed, HISTORY_SNIPPET_MAX_CHARS);
+        }
       }
     }
     return this.complete;
   }
 
   get complete(): boolean {
+    // The title is never waited for: most sessions have none, and blocking on
+    // one would read the whole head budget of every row for nothing.
     return this.projectPath !== null && this.snippet !== null;
   }
 
-  get result(): { readonly projectPath: string | null; readonly snippet: string | null } {
-    return { projectPath: this.projectPath, snippet: this.snippet };
+  get result(): SessionHeadFacts {
+    return { projectPath: this.projectPath, snippet: this.snippet, aiTitle: this.aiTitle };
   }
+}
+
+export interface SessionHeadFacts {
+  readonly projectPath: string | null;
+  readonly snippet: string | null;
+  /** The title as of the head of the file; a tail read supersedes it. */
+  readonly aiTitle: string | null;
 }

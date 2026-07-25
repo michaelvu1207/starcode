@@ -33,7 +33,7 @@ import {
   HistoryImportsPage,
   HistorySessionId,
   HistorySessionsPage,
-  HistoryTranscriptPage,
+  HistoryPreview,
 } from "./history.ts";
 import {
   ClientOrchestrationCommand,
@@ -112,7 +112,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "mailbox_read_failed",
   "feature_flow_failed",
   "history_sessions_failed",
-  "history_transcript_failed",
+  "history_preview_failed",
   "history_import_failed",
   "history_imports_failed",
   "internal_error",
@@ -193,9 +193,9 @@ export const EnvironmentResourceNotFoundReason = Schema.Literals([
   "thread_not_found",
   /**
    * The id did not resolve against the server's terminal-history index. This
-   * is the only answer the transcript route ever gives for an id it does not
-   * recognise, forged or merely stale, so a caller cannot distinguish a file
-   * that is absent from one it is not allowed to name.
+   * is the only answer the preview and import routes ever give for an id they
+   * do not recognise, forged or merely stale, so a caller cannot distinguish a
+   * file that is absent from one it is not allowed to name.
    */
   "history_session_not_found",
 ]);
@@ -629,19 +629,24 @@ export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage").add(
 ) {}
 
 /**
- * Read-only terminal history: the CLI session logs sitting on this machine's
- * disk, outside t3 entirely.
+ * Terminal history: the CLI session logs sitting on this machine's disk,
+ * outside t3 entirely.
+ *
+ * Import-only. There is no route here that returns a conversation — the
+ * listing names sessions, the preview shows enough to tell two apart, and
+ * import turns one into a thread that resumes it. Reading old history in
+ * starcode is not a feature this fork has.
  *
  * Scoped on `orchestration:read` for the same reason usage is, and the same
  * reason matters more here: a remotely-paired hub client holds a pairing
  * credential, not an administrative one, and reading another machine's history
  * is the entire point of the feature.
  *
- * Both endpoints take their filters as query parameters rather than a POST
- * body — they are reads, they are cacheable, and the listing's cursor belongs
- * in a URL the client can hold onto. `sessionId` is a *path* parameter on the
- * transcript route so that a relay client's DPoP proof, which binds to the
- * fully interpolated URL, covers which session was asked for.
+ * The listing takes its filters as query parameters rather than a POST body —
+ * it is a read, it is cacheable, and its cursor belongs in a URL the client
+ * can hold onto. `sessionId` is a *path* parameter everywhere else so that a
+ * relay client's DPoP proof, which binds to the fully interpolated URL, covers
+ * which session was asked about.
  */
 export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
   .add(
@@ -661,15 +666,21 @@ export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  /**
+   * Enough of a session to tell it apart from the one next to it: the opening
+   * message and the last few exchanges.
+   *
+   * Deliberately has no query parameters. This replaced a paginated transcript
+   * route, and the pagination went with it — history is import-only now, so
+   * the only question left is "which conversation is this?", which a bounded
+   * answer settles. Constraining the old route instead would have left a byte
+   * cursor and a load-more loop behind with nothing to drive them.
+   */
   .add(
-    HttpApiEndpoint.get("transcript", "/api/history/sessions/:sessionId/transcript", {
+    HttpApiEndpoint.get("preview", "/api/history/sessions/:sessionId/preview", {
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ sessionId: HistorySessionId }),
-      query: Schema.Struct({
-        before: Schema.optionalKey(Schema.String),
-        limit: Schema.optionalKey(Schema.String),
-      }),
-      success: HistoryTranscriptPage,
+      success: HistoryPreview,
       error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
