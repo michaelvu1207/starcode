@@ -10,14 +10,17 @@
  *
  * The status dot reads the live client-runtime connection phase, the same
  * source (and colours) as the dots on Settings → Connections, so a machine
- * that drops out is visibly down here without opening settings.
+ * that drops out is visibly down here without opening settings. It is only a
+ * signal, not an explanation: what phase the connection is in, what it is
+ * retrying, what it is spending and how fast it answers all live in the
+ * connections dropdown in the header's icon strip, which is one place instead
+ * of a tooltip per group.
  *
  * Group names are renameable in place: the pencil swaps the header for an
  * input, and the alias it writes is the same one Settings → Connections edits.
  * The header is a button, so the pencil is its sibling rather than its child.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useMemo, useState } from "react";
@@ -37,7 +40,7 @@ import {
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
-import { SidebarTerminalHistoryStrip } from "./SidebarTerminalHistoryStrip";
+import { SidebarImportConversationRow } from "./SidebarImportConversationRow";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 
 export function SidebarConnectionsView(props: {
@@ -154,11 +157,6 @@ export function SidebarConnectionsView(props: {
                       className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
                     >
                       <ConnectionStatusDot
-                        tooltipText={
-                          group.connection === null
-                            ? "Not connected. This machine is no longer one of your connections."
-                            : connectionStatusText(group.connection)
-                        }
                         dotClassName={sidebarConnectionDotClassName(group.connection)}
                         pingClassName={
                           group.connection?.phase === "connecting" ||
@@ -217,13 +215,14 @@ export function SidebarConnectionsView(props: {
                 </button>
               </li>
             ) : null}
-            {/* Below the machine's t3 threads: this is the other history, the
-                one the CLIs kept on their own. */}
-            {expanded ? (
-              <SidebarTerminalHistoryStrip
-                environmentId={group.environmentId}
-                groupExpanded={expanded}
-              />
+            {/* Below the machine's starcode threads: the other history, the
+                one the CLIs kept on their own. It used to be a strip you could
+                browse and read; now it is one door into the import picker,
+                because a conversation you cannot resume is not worth the
+                sidebar space. Only for machines still in the catalog — a group
+                left behind by a removed connection has nothing to import from. */}
+            {expanded && group.connection !== null ? (
+              <SidebarImportConversationRow environmentId={group.environmentId} />
             ) : null}
           </Fragment>
         );
