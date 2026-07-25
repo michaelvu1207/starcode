@@ -11,7 +11,6 @@ import {
   type ConnectionCatalogDocument as RuntimeConnectionCatalogDocumentType,
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -25,20 +24,8 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as ForkConnectionCatalogFile from "./forkConnectionCatalogFile.ts";
 
-const EncryptedConnectionCatalogDocument = Schema.Struct({
-  version: Schema.Literal(1),
-  encryptedCatalog: Schema.String,
-});
-type EncryptedConnectionCatalogDocument = typeof EncryptedConnectionCatalogDocument.Type;
-
-const EncryptedConnectionCatalogDocumentJson = fromLenientJson(EncryptedConnectionCatalogDocument);
-const decodeEncryptedConnectionCatalogDocumentJson = Schema.decodeEffect(
-  EncryptedConnectionCatalogDocumentJson,
-);
-const encodeEncryptedConnectionCatalogDocumentJson = Schema.encodeEffect(
-  EncryptedConnectionCatalogDocumentJson,
-);
 const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
   RuntimeConnectionCatalogDocument,
 );
@@ -187,99 +174,23 @@ const readDocument = (
   fileSystem: FileSystem.FileSystem,
   catalogPath: string,
 ): Effect.Effect<
-  Option.Option<EncryptedConnectionCatalogDocument>,
+  Option.Option<ForkConnectionCatalogFile.StoredConnectionCatalogDocument>,
   DesktopConnectionCatalogStoreReadError | DesktopConnectionCatalogStoreDocumentDecodeError
 > =>
-  fileSystem.readFileString(catalogPath).pipe(
-    Effect.catch((error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed<string | null>(null)
-        : Effect.fail(
-            new DesktopConnectionCatalogStoreReadError({
-              catalogPath,
-              cause: error,
-            }),
-          ),
-    ),
-    Effect.flatMap((raw) =>
-      raw === null
-        ? Effect.succeed(Option.none<EncryptedConnectionCatalogDocument>())
-        : decodeEncryptedConnectionCatalogDocumentJson(raw).pipe(
-            Effect.map(Option.some),
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreDocumentDecodeError({
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-    ),
-  );
-
-const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(function* (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly catalogPath: string;
-  readonly document: EncryptedConnectionCatalogDocument;
-  readonly suffix: string;
-}): Effect.fn.Return<void, DesktopConnectionCatalogStoreWriteError> {
-  const directory = input.path.dirname(input.catalogPath);
-  const tempPath = `${input.catalogPath}.${process.pid}.${input.suffix}.tmp`;
-  const encoded = yield* encodeEncryptedConnectionCatalogDocumentJson(input.document).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopConnectionCatalogStoreWriteError({
-          operation: "encode-document",
-          path: input.catalogPath,
-          cause,
-        }),
-    ),
-  );
-  yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopConnectionCatalogStoreWriteError({
-          operation: "create-directory",
-          path: directory,
-          cause,
-        }),
-    ),
-  );
-  yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreWriteError({
-            operation: "write-temporary-file",
-            path: tempPath,
-            cause,
-          }),
-      ),
-    );
-    yield* input.fileSystem.rename(tempPath, input.catalogPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreWriteError({
-            operation: "replace-catalog-file",
-            path: input.catalogPath,
-            cause,
-          }),
-      ),
-    );
-  }).pipe(
-    Effect.ensuring(
-      input.fileSystem.remove(tempPath, { force: true }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not remove a temporary connection catalog file.", {
-            tempPath,
-            error,
-          }),
-        ),
-      ),
-    ),
-  );
-});
+  ForkConnectionCatalogFile.readStoredDocument({
+    fileSystem,
+    catalogPath,
+    onReadError: (cause) =>
+      new DesktopConnectionCatalogStoreReadError({
+        catalogPath,
+        cause,
+      }),
+    onDecodeError: (cause) =>
+      new DesktopConnectionCatalogStoreDocumentDecodeError({
+        catalogPath,
+        cause,
+      }),
+  });
 
 function connectionId(prefix: "bearer" | "ssh", environmentId: string): string {
   return `${prefix}:${environmentId}`;
@@ -394,21 +305,12 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // Fork: writes are plaintext v2 (see forkConnectionCatalogFile.ts). Nothing
+  // here touches safeStorage any more, which is what keeps a rebuilt app from
+  // stalling on a keychain dialog at boot.
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
-    const encryptedCatalog = Encoding.encodeBase64(
-      yield* safeStorage.encryptString(catalog).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DesktopConnectionCatalogStoreProtectionError({
-              operation: "encrypt-catalog",
-              catalogPath,
-              cause,
-            }),
-        ),
-      ),
-    );
     const suffix = (yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -419,19 +321,44 @@ export const make = Effect.gen(function* () {
           }),
       ),
     )).replace(/-/g, "");
-    yield* writeDocument({
+    yield* ForkConnectionCatalogFile.writePlainDocument({
       fileSystem,
       path,
       catalogPath,
-      document: { version: 1, encryptedCatalog },
+      catalog,
       suffix,
+      onEncodeError: (cause) =>
+        new DesktopConnectionCatalogStoreWriteError({
+          operation: "encode-document",
+          path: catalogPath,
+          cause,
+        }),
+      onDirectoryError: (cause, directory) =>
+        new DesktopConnectionCatalogStoreWriteError({
+          operation: "create-directory",
+          path: directory,
+          cause,
+        }),
+      onTempWriteError: (cause, tempPath) =>
+        new DesktopConnectionCatalogStoreWriteError({
+          operation: "write-temporary-file",
+          path: tempPath,
+          cause,
+        }),
+      onRenameError: (cause) =>
+        new DesktopConnectionCatalogStoreWriteError({
+          operation: "replace-catalog-file",
+          path: catalogPath,
+          cause,
+        }),
     });
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
-    if (!(yield* encryptionAvailable)) {
-      return Option.none<string>();
-    }
+    // Fork: the registry read comes first on purpose. It is a plain file read,
+    // whereas `encryptionAvailable` initialises Electron's keychain-backed
+    // storage — asking it before we know there is anything to migrate would put
+    // a password dialog in front of every first boot, which is the whole bug.
     const records = yield* savedEnvironments.getRegistry.pipe(
       Effect.mapError(
         (cause) =>
@@ -443,6 +370,9 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (records.length === 0) {
+      return Option.none<string>();
+    }
+    if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
     }
     const catalog = yield* migrateSavedEnvironmentRecords(records, savedEnvironments, catalogPath);
@@ -475,6 +405,14 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
+      // Fork: the common path. A v2 document is plaintext, so a normal boot
+      // never reaches safeStorage and never raises a keychain prompt.
+      if (ForkConnectionCatalogFile.isPlainDocument(document.value)) {
+        return Option.some(document.value.catalog);
+      }
+      // Fork: one-time upgrade of an existing v1 document. This is the last
+      // keychain prompt a given profile will ever see — after the rewrite below
+      // the file is v2 and this branch is unreachable.
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
@@ -492,12 +430,20 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      // Rewrite failures are logged, not fatal: the catalog we just decrypted is
+      // still good, and failing the read would lock the user out of every paired
+      // machine over what is only an optimisation for the next boot.
+      yield* writeCatalog(decrypted).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not rewrite the connection catalog as plaintext.", {
+            catalogPath,
+            error,
+          }),
+        ),
+      );
       return Option.some(decrypted);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
-      if (!(yield* encryptionAvailable)) {
-        return false;
-      }
       yield* writeCatalog(catalog);
       return true;
     }),
