@@ -182,6 +182,7 @@ const listToolsFor = (threadId: ThreadId) =>
         ),
       });
       expect(listed.status).toBe(200);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Asserting on the raw wire body is the point of this test.
       return namesIn(JSON.parse(yield* listed.text));
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeServices.layer)));

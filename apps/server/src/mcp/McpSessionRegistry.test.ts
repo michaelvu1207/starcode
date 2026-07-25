@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -32,8 +33,7 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
       // No master designated: these tests are about token lifecycle, and the
       // capability set they assert on is the ordinary-session one.
-      Effect.provide(serverSettingsLayerTest()),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(serverSettingsLayerTest(), NodeServices.layer)),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>

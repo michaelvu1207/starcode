@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
-  type EnvironmentId,
+  EnvironmentId,
   type OrchestrationThreadShell,
   ThreadId,
   type ThreadMailboxOrigin,
@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import type { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { checkMailboxDelivery } from "./intake.ts";
 
-const here = "env-here" as EnvironmentId;
+const here = EnvironmentId.make("env-here");
 const target = ThreadId.make("thread-target");
 
 /** Only `getThreadShellById` is reachable from the intake check. */
@@ -59,7 +59,7 @@ describe("mailbox intake", () => {
     // are two different threads and must not trip the self-delivery guard.
     checkMailboxDelivery({
       threadId: target,
-      origin: origin({ environmentId: "env-elsewhere", threadId: target }),
+      origin: origin({ environmentId: EnvironmentId.make("env-elsewhere"), threadId: target }),
       environmentId: here,
       projectionSnapshotQuery: queryWith(true),
     }),

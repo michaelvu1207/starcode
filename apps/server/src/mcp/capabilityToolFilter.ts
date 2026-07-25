@@ -85,10 +85,24 @@ export const filterToolsListPayload = (
 const readableBody = (response: HttpServerResponse.HttpServerResponse): string | null => {
   const body = response.body;
   if (body._tag !== "Uint8Array" && body._tag !== "Raw") return null;
-  if (!body.contentType.includes("json")) return null;
+  if (body.contentType?.includes("json") !== true) return null;
   if (body._tag === "Uint8Array") return new TextDecoder().decode(body.body);
   return typeof body.body === "string" ? body.body : null;
 };
+
+/**
+ * A body we cannot parse is one we must not corrupt, so failure and the JSON
+ * value `null` collapse to the same thing: not a tool list, pass it through.
+ */
+const parseBody = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const jsonBody = (payload: unknown) => HttpBody.text(JSON.stringify(payload), "application/json");
 
 export const applyCapabilityToolFilter = (
   response: HttpServerResponse.HttpServerResponse,
@@ -97,18 +111,9 @@ export const applyCapabilityToolFilter = (
   Effect.sync(() => {
     const text = readableBody(response);
     if (text === null) return response;
-    let payload: unknown;
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      return response;
-    }
-    const filtered = filterToolsListPayload(payload, capabilities);
+    const filtered = filterToolsListPayload(parseBody(text), capabilities);
     if (filtered === null) return response;
     // `setBody` carries status and headers across, which matters: the MCP
     // session id rides on this response.
-    return HttpServerResponse.setBody(
-      response,
-      HttpBody.text(JSON.stringify(filtered), "application/json"),
-    );
+    return HttpServerResponse.setBody(response, jsonBody(filtered));
   });
