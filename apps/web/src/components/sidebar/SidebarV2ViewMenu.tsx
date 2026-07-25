@@ -49,7 +49,7 @@ export function SidebarV2ViewMenu() {
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="size-8 shrink-0 justify-center rounded-md bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                  className="size-7 shrink-0 justify-center rounded-md bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                   type="button"
                   aria-label="Thread list view"
                   data-testid="sidebar-v2-view-menu"
@@ -60,7 +60,7 @@ export function SidebarV2ViewMenu() {
         >
           <SlidersHorizontalIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
         </TooltipTrigger>
-        <TooltipPopup side="right">Thread list view</TooltipPopup>
+        <TooltipPopup side="bottom">Thread list view</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom" className="min-w-52">
         <MenuGroup>
