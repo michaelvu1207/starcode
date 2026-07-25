@@ -54,15 +54,24 @@ export function StarcodeWordmark({
   className?: string;
   markClassName?: string;
   wordClassName?: string;
-  size?: "compact" | "hero";
+  size?: "compact" | "masthead" | "hero";
   tone?: "default" | "on-backdrop";
 }) {
-  const hero = size === "hero";
+  const markSize = { compact: "size-3.5", masthead: "size-6", hero: "size-5" }[size];
+  const wordSize = { compact: "text-[0.9375rem]", masthead: "text-[1.75rem]", hero: "text-xl" }[
+    size
+  ];
   return (
-    <span className={cn("flex min-w-0 items-center", hero ? "gap-2" : "gap-1.5", className)}>
+    <span
+      className={cn(
+        "flex min-w-0 items-center",
+        size === "compact" ? "gap-1.5" : "gap-2",
+        className,
+      )}
+    >
       <StarcodeMark
         className={cn(
-          hero ? "size-5" : "size-3.5",
+          markSize,
           tone === "on-backdrop" ? "text-white" : "text-primary",
           markClassName,
         )}
@@ -70,7 +79,10 @@ export function StarcodeWordmark({
       <span
         className={cn(
           "starcode-wordmark-text truncate",
-          hero ? "text-xl" : "text-[0.9375rem]",
+          wordSize,
+          // The masthead is the brand at full voice: Baloo 2's heaviest weight,
+          // where the rounded terminals read as deliberate rather than soft.
+          size === "masthead" && "starcode-wordmark-masthead",
           tone === "on-backdrop" ? "text-white" : "text-foreground",
           wordClassName,
         )}

@@ -473,6 +473,15 @@
   letter-spacing: -0.005em;
 }
 
+.starcode-wordmark-masthead {
+  /* Must follow `.starcode-wordmark-text`: same specificity, and that rule
+     sets font-weight too, so order is what decides. Baloo 2 is variable;
+     800 is its top weight and where the rounded terminals stop reading as
+     soft and start reading as deliberate. */
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
 /* ---------------------------------------------------------------------------
  * 6. Scrollbars
  *
