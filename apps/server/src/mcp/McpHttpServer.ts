@@ -10,6 +10,7 @@ import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { applyCapabilityToolFilter } from "./capabilityToolFilter.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -80,6 +81,12 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
         return yield* httpEffect.pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),
+          // The first point in the request where the bearer has been resolved
+          // to a session, so the first point that can decide which tools this
+          // session is allowed to see. The handlers still refuse the calls.
+          Effect.flatMap((response) =>
+            applyCapabilityToolFilter(response, invocation.capabilities),
+          ),
         );
       }),
   ),

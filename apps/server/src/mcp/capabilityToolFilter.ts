@@ -1,0 +1,114 @@
+/**
+ * Hides capability-gated tools from `tools/list`.
+ *
+ * The call-path guard in each toolkit is the security boundary and stays where
+ * it is; this is purely about what a session is *shown*. Listing a tool an
+ * agent can never successfully call is not a neutral cost — the agent reads the
+ * list, believes it, tries the tool, and spends a turn discovering a refusal.
+ * Every worker session paying that once is exactly the structural noise the
+ * gating exists to avoid.
+ *
+ * Filtering happens on the response rather than at registration because
+ * `McpServer.toolkit(...)` registers globally and Effect's own per-client
+ * filter (`EnabledWhen`) only receives the MCP client's `initialize` payload —
+ * the adapter's name and version, identical for every session on the machine.
+ * It cannot see which t3 thread the bearer belongs to, which is the only thing
+ * that decides this. So the seam has to be somewhere the resolved invocation is
+ * in hand, and the auth middleware is the first such place.
+ *
+ * Fail-open by construction: anything this module does not positively
+ * recognise as a JSON `tools/list` result is passed through untouched. A body
+ * it cannot parse is a body it must not corrupt, and the guard behind the tool
+ * still refuses the call.
+ *
+ * @module McpCapabilityToolFilter
+ */
+import * as Effect from "effect/Effect";
+import { HttpBody, HttpServerResponse } from "effect/unstable/http";
+
+import type * as McpInvocationContext from "./McpInvocationContext.ts";
+
+/**
+ * Tools that require a capability beyond the universal set, and the capability
+ * each one needs. Declared here rather than inline so the list a session is
+ * shown and the list its handlers enforce cannot drift apart.
+ *
+ * Note what is deliberately absent: `peer_thread_send`. Leaving a message in
+ * another thread's mailbox is available to every session by design, so hiding
+ * it would remove the one federation write ordinary agents are meant to have.
+ * Only the two tools that spend another machine's turn are gated.
+ */
+export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.McpCapability> =
+  new Map([
+    ["peer_thread_create", "peers-operate"],
+    ["peer_thread_dispatch", "peers-operate"],
+  ]);
+
+interface ToolsListShape {
+  readonly result: { readonly tools: ReadonlyArray<{ readonly name?: unknown }> };
+}
+
+/** Narrow to a JSON-RPC response actually carrying a tool list. */
+const isToolsListPayload = (payload: unknown): payload is ToolsListShape => {
+  if (typeof payload !== "object" || payload === null) return false;
+  const result = (payload as { readonly result?: unknown }).result;
+  if (typeof result !== "object" || result === null) return false;
+  return Array.isArray((result as { readonly tools?: unknown }).tools);
+};
+
+export const isToolVisible = (
+  toolName: unknown,
+  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
+): boolean => {
+  if (typeof toolName !== "string") return true;
+  const required = CAPABILITY_GATED_TOOLS.get(toolName);
+  return required === undefined || capabilities.has(required);
+};
+
+/**
+ * Returns the payload with hidden tools removed, or `null` when nothing would
+ * change. `null` rather than an equal copy so the caller can leave the original
+ * response object — and its headers — completely alone in the common case.
+ */
+export const filterToolsListPayload = (
+  payload: unknown,
+  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
+): unknown | null => {
+  if (!isToolsListPayload(payload)) return null;
+  const tools = payload.result.tools;
+  const visible = tools.filter((tool) => isToolVisible(tool?.name, capabilities));
+  if (visible.length === tools.length) return null;
+  return { ...payload, result: { ...payload.result, tools: visible } };
+};
+
+/** Bodies we can safely read and rewrite. A stream is neither. */
+const readableBody = (response: HttpServerResponse.HttpServerResponse): string | null => {
+  const body = response.body;
+  if (body._tag !== "Uint8Array" && body._tag !== "Raw") return null;
+  if (!body.contentType.includes("json")) return null;
+  if (body._tag === "Uint8Array") return new TextDecoder().decode(body.body);
+  return typeof body.body === "string" ? body.body : null;
+};
+
+export const applyCapabilityToolFilter = (
+  response: HttpServerResponse.HttpServerResponse,
+  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
+): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  Effect.sync(() => {
+    const text = readableBody(response);
+    if (text === null) return response;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return response;
+    }
+    const filtered = filterToolsListPayload(payload, capabilities);
+    if (filtered === null) return response;
+    // `setBody` carries status and headers across, which matters: the MCP
+    // session id rides on this response.
+    return HttpServerResponse.setBody(
+      response,
+      HttpBody.text(JSON.stringify(filtered), "application/json"),
+    );
+  });
