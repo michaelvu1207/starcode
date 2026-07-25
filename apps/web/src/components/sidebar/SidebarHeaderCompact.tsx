@@ -17,7 +17,8 @@
  * `sidebarProjectScope.ts`.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { FolderPlusIcon, SearchIcon, SquarePenIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { FolderPlusIcon, LayoutGridIcon, SearchIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { isElectron } from "../../env";
@@ -120,6 +121,27 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
             <TooltipPopup side="bottom">
               {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
             </TooltipPopup>
+          </Tooltip>
+          {/* Outside the `showProjectActions` gate: the Workbench is how an
+              operator sees every machine at once, and it must not disappear
+              with the project buttons on a client that has no projects yet. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarMenuButton
+                  size="sm"
+                  type="button"
+                  className={HEADER_ACTION_BUTTON_CLASS}
+                  aria-label="Workbench"
+                  data-testid="sidebar-workbench"
+                  render={<Link to="/workbench" />}
+                />
+              }
+            >
+              <LayoutGridIcon className={HEADER_ACTION_ICON_CLASS} />
+              <TouchTarget />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Workbench</TooltipPopup>
           </Tooltip>
           {showProjectActions ? (
             <>
