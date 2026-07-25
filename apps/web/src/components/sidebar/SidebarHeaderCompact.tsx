@@ -88,12 +88,23 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
     <SidebarChromeHeader
       isElectron={isElectron}
       actions={
-        // Aligned to the wordmark's left edge rather than the panel's, so the
-        // two rows share one margin. That inset is the workspace titlebar
-        // control inset — on macOS it is what clears the traffic lights. The
-        // 0.375rem it gives back is the icon buttons' own internal padding:
-        // without it the glyphs optically hang right of the crescent above.
-        <div className="relative z-10 flex h-8 shrink-0 items-center gap-1 pb-1 pl-[calc(var(--workspace-titlebar-content-left)-0.375rem)] pr-2">
+        // Centred, with symmetric padding, so the strip stays balanced at any
+        // icon count — it has already gone from four to six.
+        //
+        // It used to be left-aligned to the wordmark's edge, which meant
+        // carrying the workspace titlebar-control inset (~46px). That inset
+        // exists to clear the macOS traffic lights, and the traffic lights only
+        // occupy the *first* row — this row sits below the titlebar region and
+        // never needed it. At four icons the dead space read as margin; at six
+        // it pushed the strip into the right edge, which is the imbalance
+        // Michael saw.
+        //
+        // `flex-wrap` is the overflow behaviour rather than a scroller or a
+        // squeeze: the sidebar is resizable down to 208px, where six 28px
+        // buttons plus their gaps come to 188px and fit with ~10px a side. A
+        // seventh icon, or a narrower sidebar, wraps to a second centred line
+        // instead of overflowing the panel.
+        <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1 px-2 pb-1">
           <Tooltip>
             <TooltipTrigger
               render={
