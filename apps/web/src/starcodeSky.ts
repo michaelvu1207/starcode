@@ -17,6 +17,18 @@
  * keyframes on opacity, so it stays on the compositor — there is no rAF loop and
  * no canvas. A chat app should not spend a GPU core on its wallpaper.
  *
+ * TUNING
+ * `SKY_STOPS` is the whole design. Each anchor is an hour and the four values
+ * that hour paints with; everything between anchors is interpolated, so moving
+ * dawn earlier is a matter of changing one number. After any colour change run
+ * `node scripts/check-starcode-contrast.mjs`, which holds every phase against
+ * every text token at AA in both themes and exits non-zero — it caught four real
+ * failures while these colours were being chosen.
+ *
+ * Force a phase without waiting for the clock: `?sky=night|dawn|day|dusk`, a raw
+ * hour (`?sky=17.5`), or `?sky=auto` to hand it back to the real time. The choice
+ * persists, and `<html data-sky-phase>` reports what actually rendered.
+ *
  * COLOUR RANGE
  * Every phase stays in the dark half of the ramp, including "day". This is a
  * night-sky product and a bright noon backdrop would both break the brand and

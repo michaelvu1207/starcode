@@ -459,6 +459,18 @@
  * which is opaque.) The inset already carries the `surface-grain` utility, so
  * its grain is restated rather than clobbered — the trap the sidebar sky hit.
  *
+ * KNOBS, for tuning this without reading the rest of the file:
+ *   - how far down the sky reaches: the last two stops of the dark gradient
+ *     below (currently 34% and 58%). Lower them to keep the sky nearer the top.
+ *   - how strong the light theme's tint is: the two `color-mix` percentages in
+ *     the `:root:not(.dark)` rule (55% and 18%).
+ *   - the colours themselves, and how many stars each phase carries: `SKY_STOPS`
+ *     in `starcodeSky.ts`. Change a colour there and re-run
+ *     `node scripts/check-starcode-contrast.mjs` — it holds every phase to AA and
+ *     exits non-zero, so a too-light phase fails loudly rather than shipping.
+ *   - how many specks survive into daylight: the `0.1 +` floor on
+ *     `.starcode-speck-field` in section 4b. Set it to 0 for a starless noon.
+ *
  * COLOUR ONLY. The backdrop here is a gradient and nothing else — no stars. A
  * star tile on this element repeats down the whole pane, and on a dense route it
  * puts specks on top of every settings row; the brand rule is that celestial
@@ -658,6 +670,18 @@
  * HOW IT IS TINTED. Each glyph is a mask, not an image, so the colour comes from
  * `background-color` and each theme sets its own. Baking the colour in would
  * need one asset per theme, which is how a vocabulary stops being one.
+ *
+ * KNOBS. All three are one line each:
+ *   - how visible the marks are: `--sc-glyph-ink`, set once per theme below.
+ *     This is the dial to reach for first — it is the whole difference between
+ *     "found on second look" and "noticed immediately".
+ *   - how big the plate corners are and how far in they sit: `--sc-glyph-size`
+ *     and `--sc-glyph-inset` on `[data-slot="sidebar-inset"]`.
+ *   - the shapes: the two `--sc-glyph-*` data URIs. They are hand-written SVG,
+ *     readable as-is, and share a stroke weight of 1 for the outer line and
+ *     0.7-0.9 for everything secondary.
+ * Removing either mark entirely is a matter of deleting its one rule; neither is
+ * referenced from any component.
  *
  * COST AND SAFETY. Absolutely positioned, `pointer-events: none`, no box model
  * of its own: neither mark can shift layout or intercept a click. Both are
