@@ -16,7 +16,15 @@ export const HOSTED_APP_CHANNEL =
   hostedAppChannel === "latest" || hostedAppChannel === "nightly" ? hostedAppChannel : null;
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
-export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Code";
+/**
+ * Fork brand name. User-visible only — the npm package, service labels, bundle
+ * ids, and URL schemes stay on the upstream identifier, because renaming those
+ * churns infrastructure for no daily value.
+ *
+ * The desktop shell still wins when it injects a name, so a desktop build
+ * carrying upstream branding is not silently relabelled by the web client.
+ */
+export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "starcode";
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??

@@ -99,7 +99,7 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
 
 /**
  * The update path the host process shape would support, ignoring the fork
- * switch. "desktop-managed" — the T3 Code desktop app spawned this
+ * switch. "desktop-managed" — the starcode desktop app spawned this
  * backend and owns its version; only updating the app updates it.
  * "boot-service" — this is the systemd-supervised process from
  * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
@@ -249,7 +249,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
   )(function* (input) {
     if (capability === "desktop-managed") {
       return yield* failWith(
-        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+        "This server is managed by the starcode desktop app on its machine; update the desktop app to update it.",
       );
     }
     if (capability === null) {

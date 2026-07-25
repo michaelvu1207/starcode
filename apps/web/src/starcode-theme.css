@@ -1,0 +1,494 @@
+/**
+ * starcode theme — fork-owned token override layer.
+ *
+ * WHAT THIS IS
+ * The app styles everything through the CSS custom properties declared in
+ * `index.css` (`--background`, `--foreground`, `--primary`, the `--sidebar-*`
+ * family, …) which `@theme inline` maps onto Tailwind's `--color-*` utilities.
+ * Because the mapping is `inline`, the utilities compile to `var(--background)`
+ * rather than to a baked value, so redefining the variables at runtime
+ * re-skins every component in the app — including components the fork has not
+ * touched, and components upstream has not written yet.
+ *
+ * So this file redefines variables. It does not restyle components.
+ * `index.css` is the repo's second-hottest file (26 touches / 500 upstream
+ * commits); the fork's diff there must stay at zero.
+ *
+ * WHY IT IS IMPORTED FROM `main.tsx` AND NOT FROM `index.css`
+ * CSS requires `@import` to precede all rules, so importing from `index.css`
+ * would place these declarations *above* the upstream `:root` block they need
+ * to override. Winning from that position would take specificity hacks
+ * (`:root:root`, doubled attribute selectors) that break silently whenever
+ * upstream restructures a selector. Importing from `main.tsx` after
+ * `./index.css` puts this file later in the cascade, so it can use the exact
+ * same selectors upstream uses and win on order alone. Each selector below is
+ * a character-for-character copy of the upstream rule it overrides — when a
+ * merge changes one upstream, the copy here is the thing to re-sync.
+ *
+ * This file is plain CSS. It is loaded through Vite's JS import graph rather
+ * than through the Tailwind entrypoint, so Tailwind-only syntax (`@theme`,
+ * `@variant`, `--alpha()`, `theme()`) is not available here and must not be
+ * used.
+ *
+ * PALETTE
+ * Deep ink-navy with a warm cast (never pure black), warm cream foreground,
+ * warm butter primary carrying dark text, starlight blue-grey secondary, and
+ * status hues softened to sit in the same room: sage, amber, dusty rose.
+ * Every fg/bg pair below is verified at WCAG AA (>= 4.5:1) in both themes.
+ *
+ * MOTIF RESTRAINT RULE
+ * Decoration appears on empty and idle surfaces only. Dense working UI —
+ * thread rows, transcripts, the composer — inherits the palette and nothing
+ * else. The one exception is the sidebar's night sky, which is the brand's
+ * signature and is held far below the contrast of any content drawn over it.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. Source palette
+ *
+ * Named scales, declared once on `:root` so both themes and the motif layer
+ * draw from the same values. Nothing outside this file should reference an
+ * `--sc-*` variable — the app reads the semantic tokens in section 2.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Ink — a single warm-navy hue family. Chroma is deliberate: a neutral gray
+     ramp under a cream foreground reads cold and clinical, which is the
+     opposite of the brief. */
+  --sc-ink-950: #0c0e16;
+  --sc-ink-900: #12141f;
+  --sc-ink-850: #171a27;
+  --sc-ink-800: #1d2130;
+  --sc-ink-750: #242938;
+  --sc-ink-700: #2c3143;
+
+  /* Cream — the warm foreground family, and the tint every dark-theme alpha
+     is mixed from, so hovers and borders warm up instead of graying out. */
+  --sc-cream-50: #f4efe3;
+  --sc-cream-100: #e9e3d6;
+  --sc-cream-400: #a09a8c;
+
+  /* Butter — the primary accent. Always carries ink-colored text. */
+  --sc-butter: #f0d9a0;
+  --sc-butter-deep: #a5822c;
+
+  /* Starlight — the secondary/informational blue-grey. */
+  --sc-starlight: #93b1de;
+  --sc-starlight-text: #a8c2e6;
+  --sc-starlight-deep: #3a5c8c;
+
+  /* Softened status hues. `*-dot` values paint fills and indicators; `*-text`
+     values paint text and are the ones held to AA. */
+  --sc-sage-dot: #8fb488;
+  --sc-sage-text: #a3c79a;
+  --sc-sage-deep: #41653c;
+  --sc-amber-dot: #dfae6b;
+  --sc-amber-text: #e5bb79;
+  --sc-amber-deep: #7d5a17;
+  --sc-rose-dot: #e08f88;
+  --sc-rose-text: #eda9a2;
+  --sc-rose-deep: #a13c36;
+
+  /* Linen — the light theme's paper. */
+  --sc-linen-50: #fffdf7;
+  --sc-linen-100: #faf6ec;
+  --sc-linen-200: #f5f0e2;
+  --sc-linen-300: #efe8d6;
+  --sc-linen-400: #e6dfcd;
+  --sc-linen-500: #cbc0a4;
+
+  --sc-font-display: "Baloo 2 Variable", "Baloo 2", ui-rounded, system-ui, sans-serif;
+
+  /* Two crops of one sky. `--sc-sky-tile` is exactly the height of the
+     sidebar's sky band and repeats on x only, so no speck can paint below the
+     band and land on a thread title. `--sc-speck-tile` covers a whole page for
+     the idle surfaces. */
+  --sc-sky-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='660' height='88' viewBox='0 0 660 88'%3E%3Cg fill='%23e9e3d6'%3E%3Ccircle cx='93.0' cy='33.4' r='1.34' opacity='0.43'/%3E%3Ccircle cx='219.9' cy='17.8' r='1.6' opacity='0.64'/%3E%3Ccircle cx='295.9' cy='34.8' r='1.01' opacity='0.72'/%3E%3Ccircle cx='364.1' cy='39.1' r='1.37' opacity='0.43'/%3E%3Ccircle cx='433.2' cy='20.7' r='0.92' opacity='0.83'/%3E%3Ccircle cx='505.1' cy='44.9' r='1.4' opacity='0.86'/%3E%3Ccircle cx='574.9' cy='26.7' r='1.55' opacity='0.84'/%3E%3C/g%3E%3Cg fill='%23f0d9a0'%3E%3Cpath d='M292 20c3.0 3.75 3.9 4.31 3.75 3.0-3.75 3.0-3.9 4.31-3.0 3.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0 3.9-4.31 3.0-3.75Z' opacity='0.6'/%3E%3C/g%3E%3C/svg%3E");
+  --sc-speck-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='660' height='540' viewBox='0 0 660 540'%3E%3Cg fill='%23e9e3d6'%3E%3Ccircle cx='51.4' cy='74.0' r='1.27' opacity='0.6'/%3E%3Ccircle cx='24.5' cy='135.8' r='1.4' opacity='0.75'/%3E%3Ccircle cx='17.8' cy='336.2' r='1.45' opacity='0.37'/%3E%3Ccircle cx='80.4' cy='415.5' r='1.39' opacity='0.43'/%3E%3Ccircle cx='109.9' cy='23.8' r='1.09' opacity='0.37'/%3E%3Ccircle cx='137.2' cy='158.4' r='1.32' opacity='0.67'/%3E%3Ccircle cx='153.1' cy='222.1' r='1.12' opacity='0.85'/%3E%3Ccircle cx='165.8' cy='329.2' r='1.15' opacity='0.46'/%3E%3Ccircle cx='110.6' cy='423.2' r='1.22' opacity='0.77'/%3E%3Ccircle cx='174.3' cy='518.8' r='0.9' opacity='0.45'/%3E%3Ccircle cx='233.6' cy='77.9' r='1.22' opacity='0.39'/%3E%3Ccircle cx='255.7' cy='119.3' r='0.97' opacity='0.52'/%3E%3Ccircle cx='254.2' cy='198.9' r='1.1' opacity='0.4'/%3E%3Ccircle cx='212.6' cy='409.1' r='1.26' opacity='0.45'/%3E%3Ccircle cx='209.3' cy='504.8' r='0.99' opacity='0.56'/%3E%3Ccircle cx='363.7' cy='155.8' r='1.14' opacity='0.79'/%3E%3Ccircle cx='355.4' cy='324.7' r='0.98' opacity='0.84'/%3E%3Ccircle cx='349.5' cy='483.3' r='1.14' opacity='0.39'/%3E%3Ccircle cx='405.9' cy='141.9' r='1.2' opacity='0.58'/%3E%3Ccircle cx='423.1' cy='230.1' r='1.59' opacity='0.44'/%3E%3Ccircle cx='447.1' cy='387.9' r='1.05' opacity='0.72'/%3E%3Ccircle cx='402.5' cy='525.8' r='1.61' opacity='0.65'/%3E%3Ccircle cx='490.2' cy='13.4' r='1.67' opacity='0.47'/%3E%3Ccircle cx='501.2' cy='157.1' r='1.38' opacity='0.5'/%3E%3Ccircle cx='487.7' cy='296.4' r='1.35' opacity='0.78'/%3E%3Ccircle cx='502.8' cy='433.5' r='1.06' opacity='0.36'/%3E%3Ccircle cx='514.7' cy='464.9' r='1.04' opacity='0.53'/%3E%3Ccircle cx='586.5' cy='35.6' r='1.61' opacity='0.84'/%3E%3Ccircle cx='626.6' cy='140.8' r='1.01' opacity='0.37'/%3E%3Ccircle cx='627.3' cy='346.7' r='0.92' opacity='0.67'/%3E%3Ccircle cx='629.4' cy='392.6' r='1.7' opacity='0.39'/%3E%3Ccircle cx='629.8' cy='522.4' r='1.49' opacity='0.7'/%3E%3C/g%3E%3Cg fill='%23f0d9a0'%3E%3Cpath d='M214 118c4.2 5.25 5.46 6.04 5.25 4.2-5.25 4.2-5.46 6.04-4.2 5.25-4.2-5.25-5.46-6.04-5.25-4.25.25-4.2 5.46-6.04 4.2-5.25Z' opacity='0.7'/%3E%3Cpath d='M508 376c3.4 4.25 4.42 4.89 4.25 3.4-4.25 3.4-4.42 4.89-3.4 4.25-3.4-4.25-4.42-4.89-4.25-3.44.25-3.4 4.42-4.89 3.4-4.25Z' opacity='0.5'/%3E%3Cpath d='M96 452c3.0 3.75 3.9 4.31 3.75 3.0-3.75 3.0-3.9 4.31-3.0 3.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0 3.9-4.31 3.0-3.75Z' opacity='0.44'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Semantic tokens
+ *
+ * Mirrors `index.css`'s `:root` block. Light theme first, then dark under the
+ * compiled form of upstream's `@variant dark`.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Generous radii, one step up from upstream's 0.625rem. Every `rounded-*`
+     utility derives from this, so panels soften without any component edit. */
+  --radius: 0.8rem;
+
+  --background: var(--sc-linen-100);
+  --app-chrome-background: var(--background);
+  --foreground: #22252f;
+  --card: var(--sc-linen-50);
+  --card-foreground: #22252f;
+  --surface-raised: color-mix(in srgb, var(--sc-linen-50) 55%, transparent);
+  --popover: var(--sc-linen-50);
+  --popover-foreground: #22252f;
+
+  /* Inverted from dark: there the accent is the warm thing against the ink,
+     here it is the ink against the warm. Butter survives in light as the focus
+     ring, selected-row tint, and every star. Butter-on-linen buttons would
+     vanish. */
+  --primary: #282c3c;
+  --primary-foreground: #f8f4e9;
+
+  --secondary: var(--sc-linen-200);
+  --secondary-foreground: #22252f;
+  --muted: var(--sc-linen-200);
+  --muted-foreground: #6a675d;
+  --accent: var(--sc-linen-300);
+  --accent-foreground: #161821;
+
+  --destructive: #b8524b;
+  --destructive-foreground: var(--sc-rose-deep);
+  --border: var(--sc-linen-400);
+  --input: var(--sc-linen-500);
+  --ring: var(--sc-butter-deep);
+
+  --info: #4c72a8;
+  --info-foreground: var(--sc-starlight-deep);
+  --success: #5c8354;
+  --success-foreground: var(--sc-sage-deep);
+  --warning: #a97c22;
+  --warning-foreground: var(--sc-amber-deep);
+
+  --sidebar: var(--sc-linen-200);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-linen-300);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-linen-50) 60%, transparent);
+  --sidebar-row-active: var(--sc-linen-50);
+  --sidebar-row-selected: var(--sc-linen-50);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+:root:is(.dark, .dark *) {
+  --background: var(--sc-ink-900);
+  --app-chrome-background: var(--background);
+  --foreground: var(--sc-cream-100);
+  --card: var(--sc-ink-850);
+  --card-foreground: var(--sc-cream-100);
+  --surface-raised: color-mix(in srgb, var(--sc-cream-100) 4%, transparent);
+  --popover: var(--sc-ink-800);
+  --popover-foreground: var(--sc-cream-100);
+
+  --primary: var(--sc-butter);
+  --primary-foreground: #181b26;
+
+  --secondary: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --secondary-foreground: var(--sc-cream-100);
+  --muted: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --muted-foreground: var(--sc-cream-400);
+  --accent: color-mix(in srgb, var(--sc-cream-100) 8%, transparent);
+  --accent-foreground: var(--sc-cream-50);
+
+  --destructive: var(--sc-rose-dot);
+  --destructive-foreground: var(--sc-rose-text);
+  --border: color-mix(in srgb, var(--sc-cream-100) 15%, transparent);
+  --input: color-mix(in srgb, var(--sc-cream-100) 30%, transparent);
+  --ring: var(--sc-butter);
+
+  --info: var(--sc-starlight);
+  --info-foreground: var(--sc-starlight-text);
+  --success: var(--sc-sage-dot);
+  --success-foreground: var(--sc-sage-text);
+  --warning: var(--sc-amber-dot);
+  --warning-foreground: var(--sc-amber-text);
+
+  --sidebar: var(--sc-ink-850);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-ink-750);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--sc-cream-100) 9%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--sc-cream-100) 7%, transparent);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Sidebar surface
+ *
+ * `index.css` re-declares the token set for the sidebar column so both sidebar
+ * generations share one hierarchy, and its dark block uses literal `#000` /
+ * `#f1f3f7` rather than variables. Those literals would punch a pure-black
+ * hole in the middle of the ink palette, so both blocks are restated here.
+ * Selectors copied verbatim from `index.css`.
+ * ------------------------------------------------------------------------ */
+
+[data-sidebar-version="v1"],
+[data-sidebar-version="v2"] {
+  --background: var(--sc-linen-100);
+  --foreground: #22252f;
+  --card: var(--sc-linen-50);
+  --card-foreground: #22252f;
+  --accent: var(--sc-linen-300);
+  --accent-foreground: #161821;
+  --muted: var(--sc-linen-200);
+  --muted-foreground: #6a675d;
+  --border: var(--sc-linen-400);
+  --input: var(--sc-linen-500);
+  --sidebar: var(--sc-linen-200);
+  --sidebar-foreground: #22252f;
+  --sidebar-muted-foreground: #6a675d;
+  --sidebar-control-surface: var(--sc-linen-300);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-linen-50) 60%, transparent);
+  --sidebar-row-active: var(--sc-linen-50);
+  --sidebar-row-selected: var(--sc-linen-50);
+  --sidebar-border: var(--sc-linen-400);
+  --sidebar-stage-fade: var(--sidebar);
+  background-color: var(--sidebar);
+}
+
+.dark [data-sidebar-version="v1"],
+.dark [data-sidebar-version="v2"] {
+  --background: var(--sc-ink-900);
+  --foreground: var(--sc-cream-100);
+  --card: var(--sc-ink-850);
+  --card-foreground: var(--foreground);
+  --accent: color-mix(in srgb, var(--sc-cream-100) 8%, transparent);
+  --accent-foreground: var(--sc-cream-50);
+  --muted: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --muted-foreground: var(--sc-cream-400);
+  --border: color-mix(in srgb, var(--sc-cream-100) 15%, transparent);
+  --input: color-mix(in srgb, var(--sc-cream-100) 30%, transparent);
+  --sidebar: var(--sc-ink-850);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-ink-750);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--sc-cream-100) 9%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--sc-cream-100) 7%, transparent);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3b. Dev / nightly channel art
+ *
+ * Upstream's blueprint band is a saturated electric blue. It paints the sidebar
+ * header on every dev build and — less obviously — is also the composer's send
+ * button background, so on a dev instance it puts two hard blue shapes into an
+ * ink-navy app. Retuned to the ink family: a dev build should read as "night
+ * shift", not "alert".
+ *
+ * These have to be set on `.stage-blueprint` itself, not inherited from
+ * `:root`: `index.css` declares them on that element, and a custom property
+ * set directly on an element always beats an inherited one no matter how
+ * specific the inherited rule is.
+ * ------------------------------------------------------------------------ */
+
+.stage-blueprint {
+  /* The gradient runs bottom-to-top, so the `bottom` stop is most of what you
+     see. In light it has to stay light, or the band lands as a dark slab on a
+     pale sidebar. */
+  --stage-bp-top: #dfe6f3;
+  --stage-bp-mid: #b9c6e2;
+  --stage-bp-bottom: #93a6cd;
+}
+
+.dark .stage-blueprint {
+  --stage-bp-top: #4a5a8c;
+  --stage-bp-mid: #2b3560;
+  --stage-bp-bottom: #161c38;
+}
+
+/* The three variables only drive the paper gradient. Layered over it are
+   hardcoded cyan and violet glows and a bright grid, which no token reaches, so
+   the band still arrives brighter than the palette it sits in. One filter on
+   the art's own root element pulls the whole composite down at once — no
+   component diff, and it catches both places the art renders: the sidebar
+   header and the composer's send button.
+
+   Muted, not removed: telling a dev build apart at a glance is the point of
+   this art, and it should still be obvious. Dial or delete this rule to taste. */
+.dark .stage-blueprint {
+  filter: saturate(0.5) brightness(0.78);
+}
+
+:root:not(.dark) .stage-blueprint {
+  filter: saturate(0.45) brightness(1.06);
+}
+
+/* The header switches the brand to white when it sits on channel art, which
+   assumes the art is dark. After the light-theme retune above it is a pale
+   wash, so white-on-white would make the wordmark unreadable — the one piece
+   of text on that band that has to be legible. */
+:root:not(.dark) .sidebar-brand .starcode-wordmark-text {
+  color: var(--foreground);
+}
+
+:root:not(.dark) .sidebar-brand svg {
+  color: var(--primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. The night sky — the brand's one signature
+ *
+ * The sidebar is a window at night: the surface deepens toward the top and
+ * carries a sparse star field, and the crescent in the wordmark is the moon in
+ * that sky. It is a background layer on the element that already paints the
+ * sidebar's background color, so no component knows it exists.
+ *
+ * Held deliberately faint. Thread rows scroll through this area constantly and
+ * the sky must never compete with a thread title. Light theme gets the warm
+ * dawn wash but no stars — specks on linen read as dust, not sky.
+ * ------------------------------------------------------------------------ */
+
+/* The sky has to be painted on `sidebar-inner`, not on the element carrying
+   `data-sidebar-version`. That element is `sidebar-container`, and its only
+   child is an opaque `bg-sidebar` panel that covers the container's own
+   background entirely — upstream never noticed because it only ever set a
+   background *color* there, and the two colors matched.
+   `sidebar-inner` already carries the `surface-grain` utility, so its grain
+   layer is restated here rather than clobbered. */
+[data-sidebar-version="v1"] [data-slot="sidebar-inner"],
+[data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
+  /* The sky is the header's backdrop, not the thread list's: 88px, which ends
+     above the first group row. Any taller and specks land on thread titles,
+     breaking the restraint rule with the one thing meant to embody it. The sky
+     tile is cut to exactly this height and repeats on x only, so nothing can
+     paint below the band. */
+  --sc-sky-height: 88px;
+  background-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--sc-butter) 10%, transparent) 0%,
+      transparent 100%
+    ),
+    var(--surface-grain);
+  background-repeat: no-repeat, repeat;
+  background-position:
+    top left,
+    top left;
+  background-size:
+    100% var(--sc-sky-height),
+    256px 256px;
+}
+
+.dark [data-sidebar-version="v1"] [data-slot="sidebar-inner"],
+.dark [data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
+  /* Three layers: the shared star tile, the sky gradient, then the grain the
+     panel already had. The gradient is what makes the specks readable — cream
+     at 0.35-0.85 alpha disappears against the sidebar surface but reads
+     clearly against the near-black at the top of the band, so the field fades
+     out on its own as it descends into the thread rows. */
+  background-image:
+    var(--sc-sky-tile),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--sc-ink-950) 82%, transparent) 0%,
+      color-mix(in srgb, var(--sc-ink-950) 46%, transparent) 45%,
+      transparent 100%
+    ),
+    var(--surface-grain);
+  background-repeat: repeat-x, no-repeat, repeat;
+  background-position:
+    top left,
+    top left,
+    top left;
+  background-size:
+    660px var(--sc-sky-height),
+    100% var(--sc-sky-height),
+    256px 256px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4b. Speck field
+ *
+ * The full-page counterpart to the sidebar sky, for the pairing screen and the
+ * empty heroes. A fixed-size repeating tile rather than a stretched SVG: an
+ * SVG scaled to fill a 1440px viewport blows a 1.4px speck up to a 4px blob,
+ * which stops reading as a star and starts reading as dust on the lens.
+ *
+ * `currentColor` cannot cross into a background image, so the tile carries the
+ * cream tint directly and opacity does the theme work.
+ * ------------------------------------------------------------------------ */
+
+.starcode-speck-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--sc-speck-tile);
+  background-repeat: repeat;
+  /* A 660x540 tile repeats about twice across a laptop viewport. The earlier
+     360px tile repeated four times and the eye found the grid. */
+  background-size: 660px 540px;
+  opacity: 0.42;
+}
+
+:root:not(.dark) .starcode-speck-field {
+  /* Cream specks vanish on linen, so the light theme darkens them instead of
+     tinting a second tile. */
+  filter: invert(1) saturate(0.4);
+  opacity: 0.16;
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. Display typography
+ *
+ * The rounded face is reserved for the wordmark and for the large titles that
+ * head an otherwise empty surface. Body, UI, and mono faces are untouched —
+ * they carry the app's density and its diff rendering, and swapping them would
+ * cost legibility for no brand gain.
+ *
+ * Targeted through the `data-slot` attributes the `ui/` primitives already
+ * emit, so no component file changes to pick the face up.
+ * ------------------------------------------------------------------------ */
+
+.starcode-wordmark-text,
+.draft-hero-headline,
+[data-slot="empty-title"],
+[data-slot="dialog-title"],
+[data-slot="alert-dialog-title"],
+[data-slot="sheet-title"] {
+  font-family: var(--sc-font-display);
+  letter-spacing: -0.005em;
+}
+
+/* Baloo 2 sets a tall line-height for its Devanagari companion; the app's
+   title slots position themselves against a normal Latin box. */
+.draft-hero-headline,
+[data-slot="empty-title"],
+[data-slot="dialog-title"],
+[data-slot="alert-dialog-title"],
+[data-slot="sheet-title"] {
+  line-height: 1.25;
+}
+
+/* The draft hero is the largest type in the app and the first thing on the
+   screen you open most often, so it earns the display face. It sets `font-normal`,
+   which is too light for Baloo 2's rounder shapes at this size. */
+.draft-hero-headline {
+  font-weight: 500;
+}
+
+.starcode-wordmark-text {
+  font-weight: 600;
+  line-height: 1;
+  /* Negative tracking is load-bearing, not taste: the sidebar header leaves
+     roughly 53px for the word, and Baloo 2 at 13px sets "starcode" at 51.2px
+     without it — close enough that the browser ellipsises to "starco…". */
+  letter-spacing: -0.015em;
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. Scrollbars
+ *
+ * `index.css` paints these with neutral white/black alphas, which read as a
+ * gray streak against warm ink. Same alphas, cream tint.
+ * ------------------------------------------------------------------------ */
+
+.dark ::-webkit-scrollbar-thumb,
+.dark .model-picker-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--sc-cream-100) 12%, transparent);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover,
+.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--sc-cream-100) 22%, transparent);
+}

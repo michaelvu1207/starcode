@@ -30,6 +30,7 @@ import {
   type HistoryStripPageRequest,
 } from "../Sidebar.history";
 import { HistoryProviderIcon } from "./HistoryProviderIcon";
+import { StarcodeMark } from "../brand/StarcodeWordmark";
 
 export function SidebarTerminalHistoryStrip(props: {
   readonly environmentId: EnvironmentId;
@@ -121,7 +122,8 @@ function TerminalHistoryRows(props: { readonly environmentId: EnvironmentId }): 
 
   if (state.sessions.length === 0) {
     return (
-      <li className="list-none px-2.5 pb-1 text-[11px] text-muted-foreground/40">
+      <li className="flex list-none items-center gap-1.5 px-2.5 pb-1 text-[11px] text-muted-foreground/40">
+        <StarcodeMark className="size-3 shrink-0 text-muted-foreground/40" />
         No terminal sessions in the last 7 days
       </li>
     );

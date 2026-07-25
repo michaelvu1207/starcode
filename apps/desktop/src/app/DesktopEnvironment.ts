@@ -76,7 +76,12 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+// Fork brand name, injected into the web client as `DesktopAppBranding`.
+// Only the display name moves: `userDataDirName`, `legacyUserDataDirName`,
+// `appUserModelId`, and the Linux desktop-entry/WM identifiers below stay on
+// the upstream identifier — they key existing on-disk state and OS
+// registrations, and renaming them orphans both.
+const APP_BASE_NAME = "starcode";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;

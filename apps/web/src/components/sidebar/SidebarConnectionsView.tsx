@@ -33,6 +33,7 @@ import {
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { SidebarTerminalHistoryStrip } from "./SidebarTerminalHistoryStrip";
+import { StarcodeMark } from "../brand/StarcodeWordmark";
 
 export function SidebarConnectionsView(props: {
   readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
@@ -154,7 +155,8 @@ export function SidebarConnectionsView(props: {
               </button>
             </li>
             {expanded && group.rows.length === 0 ? (
-              <li className="list-none px-2.5 pb-1 text-[11px] text-muted-foreground/50">
+              <li className="flex list-none items-center gap-1.5 px-2.5 pb-1 text-[11px] text-muted-foreground/50">
+                <StarcodeMark className="size-3 shrink-0 text-muted-foreground/45" />
                 No threads yet
               </li>
             ) : null}

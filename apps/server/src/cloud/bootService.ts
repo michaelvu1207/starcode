@@ -19,7 +19,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntime.ts";
 
 /**
- * Installs T3 Code as a per-user boot service. Linux-only for now: systemd
+ * Installs starcode as a per-user boot service. Linux-only for now: systemd
  * user unit + loginctl enable-linger. The service runs a stable or pinned
  * runtime — never an ephemeral `npx t3` cache whose eviction could break
  * startup.
@@ -145,7 +145,7 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not set up the T3 Code background service.";
+    return "Could not set up the starcode background service.";
   }
 }
 
