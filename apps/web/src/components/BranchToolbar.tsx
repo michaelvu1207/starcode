@@ -56,9 +56,9 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
-  // "composer" is the strip glued under the composer; "header" is a bare inline
-  // row for hosts that supply their own chrome and sit above the content.
-  layout?: "composer" | "header";
+  // "composer" is the strip glued under the composer; "inline" is a bare row
+  // for hosts that supply their own chrome, such as the composer's footer.
+  layout?: "composer" | "inline";
 }
 
 interface MobileRunContextSelectorProps {
@@ -305,14 +305,14 @@ export const BranchToolbar = memo(function BranchToolbar({
   });
   const isMobile = useIsMobile();
 
-  const isHeaderLayout = layout === "header";
+  const isInlineLayout = layout === "inline";
 
   if (!hasActiveThread || !activeProject) return null;
 
   return (
     <div
       className={
-        isHeaderLayout
+        isInlineLayout
           ? "flex min-w-0 items-center gap-1"
           : "chat-composer-context-strip -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 px-1 pt-5 pb-1"
       }
@@ -358,10 +358,9 @@ export const BranchToolbar = memo(function BranchToolbar({
 
       <BranchToolbarBranchSelector
         className={
-          isHeaderLayout ? "min-w-0" : "min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          isInlineLayout ? "min-w-0" : "min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
         }
-        popupSide={isHeaderLayout ? "bottom" : "top"}
-        popupAlign={isHeaderLayout ? "start" : "end"}
+        popupAlign={isInlineLayout ? "start" : "end"}
         environmentId={environmentId}
         threadId={threadId}
         {...(draftId ? { draftId } : {})}

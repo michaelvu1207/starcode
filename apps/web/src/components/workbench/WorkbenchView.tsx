@@ -1,10 +1,10 @@
 /**
  * Fork-owned: the Workbench.
  *
- * Three regions, in the order an operator reads them: the orchestrator they
- * talk to, the work it has going, and where that work has reached. The middle
- * and right regions are derived entirely from state the client already holds or
- * polls per machine — nothing here asks an agent how it is doing.
+ * Two regions, in the order an operator reads them: the orchestrator they talk
+ * to, and the sky holding everything it has going. The sky is derived entirely
+ * from state the client already holds or polls per machine — nothing here asks
+ * an agent how it is doing.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -19,19 +19,19 @@ import { useCallback, useMemo, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { useThreadActivities } from "../../state/entities";
+import { useThreadActivities, useThreadShell } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
-import { FeatureFlowPanel } from "./FeatureFlowPanel";
+import type { SkyMaster } from "./StarMap.model";
 import {
   collectMasterCreatedThreadIds,
   resolveWorkbenchMaster,
   type WorkbenchMasterDesignation,
 } from "./Workbench.master";
-import { WorkbenchBoard } from "./WorkbenchBoard";
 import { WorkbenchMasterPane } from "./WorkbenchMasterPane";
+import { WorkbenchStarMap } from "./WorkbenchStarMap";
 
 export function WorkbenchView() {
   const router = useRouter();
@@ -83,6 +83,21 @@ export function WorkbenchView() {
     () => collectMasterCreatedThreadIds(masterActivities),
     [masterActivities],
   );
+
+  // The orchestrator hangs in the sky as the moon rather than as one more star,
+  // so it needs its own name and machine — the map never sees it as a thread.
+  const masterShell = useThreadShell(masterThreadRef);
+  const starMapMaster = useMemo((): SkyMaster | null => {
+    if (designated === null || masterThreadKey === null) return null;
+    return {
+      key: masterThreadKey,
+      threadId: designated.threadId,
+      environmentId: designated.environmentId,
+      machineLabel: designated.label,
+      title: masterShell?.title ?? "Orchestrator",
+      alive: masterShell?.latestTurn?.completedAt === null,
+    };
+  }, [designated, masterShell, masterThreadKey]);
 
   const patchSettings = useCallback(
     (environmentId: EnvironmentId, patch: ServerSettingsPatch) => {
@@ -158,16 +173,12 @@ export function WorkbenchView() {
         />
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <WorkbenchBoard
-            masterThreadKey={masterThreadKey}
-            masterCreatedThreadIds={masterCreatedThreadIds}
-          />
-        </div>
-        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-t border-border/60 lg:w-[20rem] lg:shrink-0 lg:border-l lg:border-t-0">
-          <FeatureFlowPanel masterThreadKey={masterThreadKey} />
-        </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <WorkbenchStarMap
+          masterThreadKey={masterThreadKey}
+          master={starMapMaster}
+          masterCreatedThreadIds={masterCreatedThreadIds}
+        />
       </div>
     </div>
   );

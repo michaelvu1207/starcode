@@ -44,6 +44,7 @@ import {
 } from "./orchestration.ts";
 import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
 import { FeatureFlowSnapshot } from "./featureFlow.ts";
+import { FeatureMapSnapshot } from "./featureMap.ts";
 import {
   ProjectCatalogFileThreadRequest,
   ProjectCatalogLocationsPage,
@@ -619,13 +620,27 @@ export class EnvironmentMailboxHttpApi extends HttpApiGroup.make("mailbox")
  * from `git` queries against repositories this server already watches, and
  * nothing here mutates.
  */
-export class EnvironmentFeatureFlowHttpApi extends HttpApiGroup.make("featureFlow").add(
-  HttpApiEndpoint.get("snapshot", "/api/feature-flow", {
-    headers: OptionalBearerHeaders,
-    success: FeatureFlowSnapshot,
-    error: EnvironmentScopedOperationErrors,
-  }).middleware(EnvironmentAuthenticatedAuth),
-) {}
+export class EnvironmentFeatureFlowHttpApi extends HttpApiGroup.make("featureFlow")
+  .add(
+    HttpApiEndpoint.get("snapshot", "/api/feature-flow", {
+      headers: OptionalBearerHeaders,
+      success: FeatureFlowSnapshot,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * The orchestrator's own account of the same work, which the client overlays
+   * on the derived snapshot above. Read-only over HTTP by design: every write
+   * arrives through the master's MCP tools, so there is no route an ordinary
+   * paired client could use to rewrite the map.
+   */
+  .add(
+    HttpApiEndpoint.get("map", "/api/feature-map", {
+      headers: OptionalBearerHeaders,
+      success: FeatureMapSnapshot,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
 
 /**
  * Read-only usage. Gated on `orchestration:read` rather than `access:read`

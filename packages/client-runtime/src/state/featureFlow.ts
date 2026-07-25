@@ -17,7 +17,7 @@
  *
  * @module ClientRuntimeFeatureFlow
  */
-import type { EnvironmentId, FeatureFlowSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, FeatureFlowSnapshot, FeatureMapSnapshot } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -211,4 +211,151 @@ export function createEnvironmentFeatureFlowSnapshotsAtom(input: {
     previous = next;
     return previous;
   }).pipe(Atom.withLabel("environment-feature-flow-snapshots"));
+}
+
+// ── The orchestrator's map ──────────────────────────────────────────
+//
+// The other half of the same answer, read from the same machines on the same
+// poll and consumed by the same view, so it lives beside the derived flow
+// rather than in a module of its own. Every degradation rule above applies
+// unchanged: a server without the route answers the SPA catch-all with 200 and
+// HTML, so absence arrives as a decode failure and resolves to `none`.
+
+export const fetchEnvironmentFeatureMapSnapshot = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentFeatureMapSnapshot",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, "/api/feature-map");
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl,
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl,
+    // A file read, not a git walk: the flow timeout would be generous here.
+    input.timeoutMs ?? 5_000,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.featureFlow.map({ headers }),
+    ),
+  );
+});
+
+export class FeatureMapSnapshotLoader extends Context.Service<
+  FeatureMapSnapshotLoader,
+  {
+    readonly load: (
+      prepared: PreparedConnection,
+    ) => Effect.Effect<Option.Option<FeatureMapSnapshot>>;
+  }
+>()("@t3tools/client-runtime/state/featureFlow/FeatureMapSnapshotLoader") {}
+
+export const featureMapSnapshotLoaderLayer: Layer.Layer<
+  FeatureMapSnapshotLoader,
+  never,
+  HttpClient.HttpClient
+> = Layer.effect(
+  FeatureMapSnapshotLoader,
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    return FeatureMapSnapshotLoader.of({
+      load: (prepared: PreparedConnection) =>
+        fetchEnvironmentFeatureMapSnapshot({ prepared, signer }).pipe(
+          Effect.map(Option.some<FeatureMapSnapshot>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchCause((cause) =>
+            Effect.logDebug("Could not load the feature map over HTTP.").pipe(
+              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<FeatureMapSnapshot>()),
+            ),
+          ),
+        ),
+    });
+  }),
+);
+
+const loadFeatureMapSnapshot = Effect.gen(function* () {
+  const supervisor = yield* EnvironmentSupervisor;
+  const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: Effect.succeed,
+        onNone: () =>
+          SubscriptionRef.changes(supervisor.prepared).pipe(
+            Stream.filter(Option.isSome),
+            Stream.map((value) => value.value),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+      }),
+    ),
+  );
+  const loader = yield* FeatureMapSnapshotLoader;
+  return yield* loader.load(prepared);
+});
+
+/**
+ * Polled faster than the derived flow. The map changes when the orchestrator
+ * acts — a tool call inside a turn the operator is watching — so a 45-second
+ * lag would make its own writes look like they failed.
+ */
+export const FEATURE_MAP_REFRESH_INTERVAL_MS = 12_000;
+
+export function createEnvironmentFeatureMapAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | FeatureMapSnapshotLoader | R, E>,
+  options?: { readonly refreshIntervalMs?: number },
+) {
+  const refreshIntervalMs = options?.refreshIntervalMs ?? FEATURE_MAP_REFRESH_INTERVAL_MS;
+
+  const snapshotAtom = Atom.family((environmentId: EnvironmentId) =>
+    runtime
+      .atom(runInEnvironment(environmentId, loadFeatureMapSnapshot))
+      .pipe(
+        Atom.setIdleTTL(5 * 60_000),
+        Atom.withRefresh(refreshIntervalMs),
+        Atom.withLabel(`environment-feature-map:${environmentId}`),
+      ),
+  );
+
+  const snapshotValueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): FeatureMapSnapshot | null =>
+      Option.getOrNull(
+        Option.flatten(
+          Option.map(AsyncResult.value(get(snapshotAtom(environmentId))), (snapshot) => snapshot),
+        ),
+      ),
+    ).pipe(Atom.withLabel(`environment-feature-map-value:${environmentId}`)),
+  );
+
+  return { snapshotAtom, snapshotValueAtom };
+}
+
+const EMPTY_FEATURE_MAP_SNAPSHOTS: ReadonlyMap<EnvironmentId, FeatureMapSnapshot> = new Map();
+
+export function createEnvironmentFeatureMapSnapshotsAtom(input: {
+  readonly catalogValueAtom: Atom.Atom<{
+    readonly entries: ReadonlyMap<EnvironmentId, unknown>;
+  }>;
+  readonly snapshotValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<FeatureMapSnapshot | null>;
+}) {
+  let previous = EMPTY_FEATURE_MAP_SNAPSHOTS;
+  return Atom.make((get) => {
+    const next = new Map<EnvironmentId, FeatureMapSnapshot>();
+    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+      const snapshot = get(input.snapshotValueAtom(environmentId));
+      if (snapshot !== null) next.set(environmentId, snapshot);
+    }
+    if (mapsEqual(previous, next)) return previous;
+    previous = next;
+    return previous;
+  }).pipe(Atom.withLabel("environment-feature-map-snapshots"));
 }

@@ -53,11 +53,11 @@ const over = (fg, alpha, bg) => {
 };
 
 const DARK = {
-  background: "#12141f",
-  card: "#171a27",
-  popover: "#1d2130",
-  sidebar: "#171a27",
-  control: "#242938",
+  background: "#0e1117",
+  card: "#151a24",
+  popover: "#1b2130",
+  sidebar: "#151a24",
+  control: "#232a3a",
 };
 const LIGHT = {
   background: "#faf6ec",
@@ -68,14 +68,14 @@ const LIGHT = {
 };
 
 const darkText = {
-  foreground: "#e9e3d6",
-  "muted-foreground": "#a09a8c",
-  "card-foreground": "#e9e3d6",
-  "popover-foreground": "#e9e3d6",
-  "sidebar-foreground": "#e9e3d6",
-  "sidebar-muted-foreground": "#a09a8c",
-  "accent-foreground": "#f4efe3",
-  "secondary-foreground": "#e9e3d6",
+  foreground: "#eadcc6",
+  "muted-foreground": "#c7b8a1",
+  "card-foreground": "#eadcc6",
+  "popover-foreground": "#eadcc6",
+  "sidebar-foreground": "#eadcc6",
+  "sidebar-muted-foreground": "#c7b8a1",
+  "accent-foreground": "#f6f7f9",
+  "secondary-foreground": "#eadcc6",
   "destructive-foreground": "#eda9a2",
   "success-foreground": "#a3c79a",
   "warning-foreground": "#e5bb79",
@@ -100,7 +100,7 @@ const lightText = {
 const PAIRS_EXTRA = [
   ["dark", "primary-foreground on primary", "#181b26", "#f0d9a0"],
   ["light", "primary-foreground on primary", "#f8f4e9", "#282c3c"],
-  ["dark", "foreground on control surface", "#e9e3d6", DARK.control],
+  ["dark", "foreground on control surface", "#eadcc6", DARK.control],
   ["light", "foreground on control surface", "#22252f", LIGHT.control],
 ];
 
@@ -131,7 +131,7 @@ for (const [themeName, label, fg, bg] of PAIRS_EXTRA) {
 
 // Non-text tokens: 3:1 UI-component minimum (WCAG 1.4.11).
 const UI = [
-  ["dark", "border on background", over("#e9e3d6", 0.15, DARK.background), DARK.background, 1.3],
+  ["dark", "border on background", over("#eadcc6", 0.15, DARK.background), DARK.background, 1.3],
   ["dark", "ring on background", "#f0d9a0", DARK.background, 3],
   ["dark", "success dot on card", "#8fb488", DARK.card, 3],
   ["dark", "warning dot on card", "#dfae6b", DARK.card, 3],
@@ -141,7 +141,7 @@ const UI = [
   [
     "dark",
     "input border on background",
-    over("#e9e3d6", 0.3, DARK.background),
+    over("#eadcc6", 0.3, DARK.background),
     DARK.background,
     1.3,
   ],
@@ -151,6 +151,19 @@ const UI = [
   ["light", "destructive dot on card", "#b8524b", LIGHT.card, 3],
   ["light", "info dot on card", "#4c72a8", LIGHT.card, 3],
   ["light", "primary fill on background", "#282c3c", LIGHT.background, 3],
+  // Informational, and not ours to fix. The Workbench star map draws its lineage
+  // edges at `bg-muted-foreground/40`, which sits under the 3:1 component floor.
+  // Re-anchoring the palette moved it from 2.08 to 2.51 — better, but still
+  // short. Raising it means editing that component's own opacity, which belongs
+  // to whoever owns the star map. Tracked here so the number is visible rather
+  // than discovered.
+  [
+    "dark",
+    "starmap lineage edge on background",
+    over("#c7b8a1", 0.4, DARK.background),
+    DARK.background,
+    1.3,
+  ],
 ];
 for (const [themeName, label, fg, bg, min] of UI) {
   const r = ratio(fg, bg);
@@ -234,8 +247,8 @@ for (const [tName, tHex] of Object.entries(lightText)) {
 // is made lighter or the ceiling is raised past what the palette can carry, this
 // fails and says so — which is the only reason it is safe to put a starfield
 // behind working UI at all.
-const STAR_CHROME_MAX = 0.13;
-const STAR_TINT = "#e9e3d6";
+const STAR_CHROME_MAX = 0.26;
+const STAR_TINT = "#eadcc6";
 const BRIGHTEST_STAR_IN_TILE = 0.86;
 
 const STAR_SURFACES = { background: DARK.background, sidebar: DARK.sidebar, ...SKY_PHASES };
@@ -269,7 +282,46 @@ for (const [sName, sHex] of Object.entries(STAR_SURFACES)) {
   }
 }
 
-const w = [6, 34, 9, 12, 9, 7, 10];
+// ---------------------------------------------------------------------------
+// The glass floor.
+//
+// Dialogs, popovers and the composer paint at `--glass-opacity`, which the user
+// can drag down to MIN_GLASS_OPACITY (40) in settings. At that setting the
+// surface is mostly transparent, so its text is not sitting on `--popover` at
+// all — it is sitting on 40% of that colour over whatever is behind, which on an
+// idle route is the sky at its lightest.
+//
+// Every check above assumes an opaque surface, so none of them cover this. It is
+// the one place a user setting can move a contrast ratio, which is exactly why
+// it belongs in the gate rather than in a comment.
+const MIN_GLASS_OPACITY = 0.4;
+const GLASS_BEHIND = { ...SKY_PHASES, background: DARK.background };
+
+for (const [surfaceName, surfaceHex] of [
+  ["popover", DARK.popover],
+  ["card", DARK.card],
+]) {
+  for (const [behindName, behindHex] of Object.entries(GLASS_BEHIND)) {
+    const glass = over(surfaceHex, MIN_GLASS_OPACITY, behindHex);
+    for (const [tName, tHex] of Object.entries(darkText)) {
+      if (tName.startsWith("sidebar-")) continue;
+      const r = ratio(tHex, glass);
+      const pass = r >= 4.5;
+      if (!pass) fails++;
+      rows.push([
+        "glass",
+        tName,
+        tHex,
+        `${surfaceName}@40%/${behindName}`,
+        glass,
+        r.toFixed(2),
+        pass ? "AA" : "FAIL",
+      ]);
+    }
+  }
+}
+
+const w = [6, 34, 9, 26, 9, 7, 10];
 const line = (r) => r.map((c, i) => String(c).padEnd(w[i])).join(" ");
 console.log(line(["theme", "token", "fg", "surface", "bg", "ratio", "verdict"]));
 console.log("-".repeat(w.reduce((a, b) => a + b + 1, 0)));

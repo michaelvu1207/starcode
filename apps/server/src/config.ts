@@ -35,6 +35,7 @@ export interface ServerDerivedPaths {
   readonly historyImportsPath: string;
   /** This machine's half of the cross-machine project categories. See `projectCatalog/ProjectCatalogRegistry.ts`. */
   readonly projectCatalogPath: string;
+  readonly featureMapPath: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
@@ -120,6 +121,7 @@ export const deriveServerPaths = Effect.fn(function* (
     peersPath: join(stateDir, "peers.json"),
     historyImportsPath: join(stateDir, "history-imports.json"),
     projectCatalogPath: join(stateDir, "project-catalog.json"),
+    featureMapPath: join(stateDir, "feature-map.json"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,

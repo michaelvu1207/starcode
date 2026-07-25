@@ -392,6 +392,14 @@ export interface ChatComposerProps {
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
 
+  // Fork: the thread header is gone, so its survivors live in the footer row.
+  // Nodes rather than prop bundles, so all the wiring stays at the ChatView
+  // call site; memoise them there or this composer re-renders with the chat.
+  /** "Where this runs" cluster, beside the Build/Plan controls. */
+  runContext?: ReactNode;
+  /** Workspace actions and panel toggles, beside the options popover. */
+  paneMenu?: ReactNode;
+
   // Misc
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
@@ -483,6 +491,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
+    runContext,
+    paneMenu,
     resolvedTheme,
     settings,
     keybindings,
@@ -2510,6 +2520,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onToggleInteractionMode={toggleInteractionMode}
                   onTogglePlanSidebar={togglePlanSidebar}
                 />
+                {runContext}
               </div>
 
               {/* Right side: options popover, then send / stop button */}
@@ -2520,6 +2531,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-1.5"
               >
+                {paneMenu}
                 <ComposerOptionsPopover
                   open={isComposerOptionsPopoverOpen}
                   onOpenChange={setIsComposerOptionsPopoverOpen}
