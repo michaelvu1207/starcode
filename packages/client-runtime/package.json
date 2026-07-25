@@ -119,6 +119,10 @@
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"
     },
+    "./state/feature-flow": {
+      "types": "./src/state/featureFlow.ts",
+      "default": "./src/state/featureFlow.ts"
+    },
     "./state/terminal-history": {
       "types": "./src/state/terminalHistory.ts",
       "default": "./src/state/terminalHistory.ts"
