@@ -44,11 +44,19 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
-      {/* Row 1 keeps the topbar's exact height so the wordmark still sits on
-          the same baseline as the main pane's header across the divider. */}
-      <div className="flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center">
-        <SidebarBrand onBackdrop={backdropVariant !== null} />
-      </div>
+      {/* The titlebar band. Deliberately empty: on macOS the window's traffic
+          lights physically occupy its left 90px, and keeping it at the topbar's
+          exact height also holds the sidebar's divider in line with the main
+          pane's header.
+
+          The wordmark used to live here, inset past those 90px. That inset
+          resolves to 130px on macOS, so at the sidebar's 208px minimum the
+          brand had 78px for a wordmark needing ~79px and collapsed to nothing —
+          invisible on the desktop app only, which is why it survived a browser
+          review. The brand now gets its own full-width row below the band,
+          where no OS chrome can crowd it and it can be as large as it likes. */}
+      <div className="h-[var(--workspace-topbar-height)] shrink-0" aria-hidden="true" />
+      <SidebarBrand onBackdrop={backdropVariant !== null} />
       {actions}
     </SidebarHeader>
   );
@@ -59,12 +67,12 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        "sidebar-brand relative z-10 flex min-w-0 shrink-0 items-center justify-center rounded-md px-3 pb-1 outline-hidden ring-ring focus-visible:ring-2",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
     >
-      <StarcodeWordmark tone={onBackdrop ? "on-backdrop" : "default"} />
+      <StarcodeWordmark size="masthead" tone={onBackdrop ? "on-backdrop" : "default"} />
     </Link>
   );
 }
