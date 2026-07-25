@@ -71,6 +71,16 @@ function SidebarControl() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
+  // The sidebar header now carries its own collapse button, so this fixed one
+  // would be a duplicate while the sidebar is open. It still has to exist while
+  // the sidebar is closed — a button inside the sidebar cannot be the way back
+  // into it — and the component stays mounted either way, because the effect
+  // above is what binds the toggle shortcut. Unmounting it to hide the button
+  // would silently take the keyboard escape hatch with it.
+  if (isSidebarVisible) {
+    return null;
+  }
+
   return (
     <div
       className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center"
