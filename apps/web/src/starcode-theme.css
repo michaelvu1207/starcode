@@ -114,6 +114,18 @@
      with its reasoning rather than inline at the three places it is used. */
   --sc-star-chrome-max: 0.13;
 
+  /* The speck tile dealt into three layers, so the field can drift at three
+     speeds instead of one. Generated — do not hand-edit:
+
+       node scripts/derive-starcode-star-layers.mjs
+
+     Every star appears in exactly one layer, so the three superimposed are the
+     original field; nothing was duplicated to fake depth. `--check` on that
+     script fails if these drift out of sync with `--sc-speck-tile`. */
+  --sc-star-layer-1: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23e9e3d6'%3E%3Ccircle%20cx%3D'51.4'%20cy%3D'74.0'%20r%3D'1.27'%20opacity%3D'0.6'%2F%3E%3Ccircle%20cx%3D'80.4'%20cy%3D'415.5'%20r%3D'1.39'%20opacity%3D'0.43'%2F%3E%3Ccircle%20cx%3D'153.1'%20cy%3D'222.1'%20r%3D'1.12'%20opacity%3D'0.85'%2F%3E%3Ccircle%20cx%3D'174.3'%20cy%3D'518.8'%20r%3D'0.9'%20opacity%3D'0.45'%2F%3E%3Ccircle%20cx%3D'254.2'%20cy%3D'198.9'%20r%3D'1.1'%20opacity%3D'0.4'%2F%3E%3Ccircle%20cx%3D'363.7'%20cy%3D'155.8'%20r%3D'1.14'%20opacity%3D'0.79'%2F%3E%3Ccircle%20cx%3D'405.9'%20cy%3D'141.9'%20r%3D'1.2'%20opacity%3D'0.58'%2F%3E%3Ccircle%20cx%3D'402.5'%20cy%3D'525.8'%20r%3D'1.61'%20opacity%3D'0.65'%2F%3E%3Ccircle%20cx%3D'487.7'%20cy%3D'296.4'%20r%3D'1.35'%20opacity%3D'0.78'%2F%3E%3Ccircle%20cx%3D'586.5'%20cy%3D'35.6'%20r%3D'1.61'%20opacity%3D'0.84'%2F%3E%3Ccircle%20cx%3D'629.4'%20cy%3D'392.6'%20r%3D'1.7'%20opacity%3D'0.39'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M214%20118c4.2%205.25%205.46%206.04%205.25%204.2-5.25%204.2-5.46%206.04-4.2%205.25-4.2-5.25-5.46-6.04-5.25-4.25.25-4.2%205.46-6.04%204.2-5.25Z'%20opacity%3D'0.7'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  --sc-star-layer-2: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23e9e3d6'%3E%3Ccircle%20cx%3D'24.5'%20cy%3D'135.8'%20r%3D'1.4'%20opacity%3D'0.75'%2F%3E%3Ccircle%20cx%3D'109.9'%20cy%3D'23.8'%20r%3D'1.09'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'165.8'%20cy%3D'329.2'%20r%3D'1.15'%20opacity%3D'0.46'%2F%3E%3Ccircle%20cx%3D'233.6'%20cy%3D'77.9'%20r%3D'1.22'%20opacity%3D'0.39'%2F%3E%3Ccircle%20cx%3D'212.6'%20cy%3D'409.1'%20r%3D'1.26'%20opacity%3D'0.45'%2F%3E%3Ccircle%20cx%3D'355.4'%20cy%3D'324.7'%20r%3D'0.98'%20opacity%3D'0.84'%2F%3E%3Ccircle%20cx%3D'423.1'%20cy%3D'230.1'%20r%3D'1.59'%20opacity%3D'0.44'%2F%3E%3Ccircle%20cx%3D'490.2'%20cy%3D'13.4'%20r%3D'1.67'%20opacity%3D'0.47'%2F%3E%3Ccircle%20cx%3D'502.8'%20cy%3D'433.5'%20r%3D'1.06'%20opacity%3D'0.36'%2F%3E%3Ccircle%20cx%3D'626.6'%20cy%3D'140.8'%20r%3D'1.01'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'629.8'%20cy%3D'522.4'%20r%3D'1.49'%20opacity%3D'0.7'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M508%20376c3.4%204.25%204.42%204.89%204.25%203.4-4.25%203.4-4.42%204.89-3.4%204.25-3.4-4.25-4.42-4.89-4.25-3.44.25-3.4%204.42-4.89%203.4-4.25Z'%20opacity%3D'0.5'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  --sc-star-layer-3: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23e9e3d6'%3E%3Ccircle%20cx%3D'17.8'%20cy%3D'336.2'%20r%3D'1.45'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'137.2'%20cy%3D'158.4'%20r%3D'1.32'%20opacity%3D'0.67'%2F%3E%3Ccircle%20cx%3D'110.6'%20cy%3D'423.2'%20r%3D'1.22'%20opacity%3D'0.77'%2F%3E%3Ccircle%20cx%3D'255.7'%20cy%3D'119.3'%20r%3D'0.97'%20opacity%3D'0.52'%2F%3E%3Ccircle%20cx%3D'209.3'%20cy%3D'504.8'%20r%3D'0.99'%20opacity%3D'0.56'%2F%3E%3Ccircle%20cx%3D'349.5'%20cy%3D'483.3'%20r%3D'1.14'%20opacity%3D'0.39'%2F%3E%3Ccircle%20cx%3D'447.1'%20cy%3D'387.9'%20r%3D'1.05'%20opacity%3D'0.72'%2F%3E%3Ccircle%20cx%3D'501.2'%20cy%3D'157.1'%20r%3D'1.38'%20opacity%3D'0.5'%2F%3E%3Ccircle%20cx%3D'514.7'%20cy%3D'464.9'%20r%3D'1.04'%20opacity%3D'0.53'%2F%3E%3Ccircle%20cx%3D'627.3'%20cy%3D'346.7'%20r%3D'0.92'%20opacity%3D'0.67'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M96%20452c3.0%203.75%203.9%204.31%203.75%203.0-3.75%203.0-3.9%204.31-3.0%203.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0%203.9-4.31%203.0-3.75Z'%20opacity%3D'0.44'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+
   --sc-font-display: "Baloo 2 Variable", "Baloo 2", ui-rounded, system-ui, sans-serif;
 
   /* Two crops of one sky. `--sc-sky-tile` is exactly the height of the
@@ -460,6 +472,12 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Clips the drift layers, which are deliberately larger than the field so a
+     rotated, translating tile never shows its edge. */
+  overflow: hidden;
+  /* In dark mode the three drift layers paint the stars — see section 9. The
+     tile stays here as the light-theme and no-motion fallback, and as the thing
+     those layers are derived from. */
   background-image: var(--sc-speck-tile);
   background-repeat: repeat;
   /* A 660x540 tile repeats about twice across a laptop viewport. The earlier
@@ -591,45 +609,6 @@
   background-size:
     100% 100%,
     256px 256px;
-}
-
-/* Twinkle. A second copy of the tile, offset so it lands between the stars of
-   the static field rather than on top of them, pulsing on opacity alone — one
-   compositor property, no layout, no paint. Offsetting matters: animating the
-   field itself would blink every star in unison, which reads as a screen fault
-   rather than as a sky.
-
-   Dark only, and only where the field is mounted, so no dense surface can
-   acquire a moving background. */
-.dark .starcode-speck-field::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: var(--sc-speck-tile);
-  background-repeat: repeat;
-  background-position: 180px 90px;
-  background-size: 660px 540px;
-  opacity: calc(var(--sc-sky-stars) * 0.5);
-  animation: starcode-twinkle 9s ease-in-out infinite;
-}
-
-@keyframes starcode-twinkle {
-  0%,
-  100% {
-    opacity: calc(var(--sc-sky-stars) * 0.16);
-  }
-  50% {
-    opacity: calc(var(--sc-sky-stars) * 0.5);
-  }
-}
-
-/* Reduced motion keeps the sky, drops the movement. */
-@media (prefers-reduced-motion: reduce) {
-  .dark .starcode-speck-field::after {
-    animation: none;
-    opacity: calc(var(--sc-sky-stars) * 0.32);
-  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -942,5 +921,146 @@
 @media (prefers-reduced-motion: reduce) {
   .dark .starcode-speck-field .starcode-shooting-star {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 9. Motion — the sky drifts
+ *
+ * THE DOCTRINE. Five rules; an effect that breaks one is cut rather than tuned.
+ *   1. Slow. Nothing here cycles under 11 seconds, and the drift is in minutes.
+ *   2. Sparse. Three layers and two properties. That is the whole system.
+ *   3. Physically plausible. The celestial sphere rotates east to west, so the
+ *      field drifts near-horizontally. Stars sliding straight down read as snow.
+ *   4. Low contrast. Motion should be perceptible in peripheral vision and
+ *      invisible to direct attention. The test: stare at the field for five
+ *      seconds — if you can track one star, it is too fast.
+ *   5. Never under body text in a dense surface at full strength. The sidebar,
+ *      which is narrow and full of rows you scan all day, stays completely
+ *      static; see the note on the pane below.
+ *
+ * HOW THE DRIFT WRAPS. Each layer is one tile wider than its host, painted with
+ * a repeating tile, and translated by exactly one tile width per cycle. Because
+ * the tile is periodic, the end of the cycle is pixel-identical to its start and
+ * the reset is invisible. The layer is painted once and the compositor moves it;
+ * `background-position` would do the same thing visually and repaint the layer
+ * every single frame, which is the trap this technique exists to avoid.
+ *
+ * WHY THE CANT IS A ROTATION. A seamless wrap needs the translation to be a
+ * whole number of tiles on both axes, so a diagonal drift is stuck at the tile's
+ * own aspect ratio — 39 degrees, far too steep. Rotating the layer and then
+ * translating along its own x keeps the wrap exact at any angle.
+ *
+ * BUDGET. Four composited layers, `transform` and `opacity` only, zero
+ * JavaScript, zero timers, zero new dependencies. Browsers suspend CSS
+ * animations on hidden documents, so a backgrounded window costs nothing.
+ * ------------------------------------------------------------------------ */
+
+.dark .starcode-speck-field {
+  /* The layers paint the stars now, so the field's own copy would double them. */
+  background-image: none;
+  /* Each layer sits at `--sc-twinkle-mid` on average rather than at full
+     strength, so the field is scaled up to compensate and the composite
+     brightness is unchanged from before the motion existed. */
+  opacity: calc((0.1 + var(--sc-sky-stars) * 0.32) / var(--sc-twinkle-mid));
+}
+
+:root {
+  /* The opacity each layer averages, and how far it swings either side —
+     roughly a fifth, which reads as depth rather than as a pulse. The retired
+     unison twinkle swung 0.16 to 0.5, and catching it mid-cycle read as the
+     whole field blinking. */
+  --sc-twinkle-mid: 0.83;
+  --sc-twinkle-swing: 0.17;
+}
+
+.dark .starcode-star-layer {
+  position: absolute;
+  /* One tile of slack on the right for the wrap, and vertical slack so the
+     rotation cannot lift a corner into view. */
+  inset: -18% -660px -18% 0;
+  pointer-events: none;
+  background-repeat: repeat;
+  background-size: 660px 540px;
+  opacity: var(--sc-twinkle-mid);
+  animation:
+    starcode-star-drift var(--sc-drift-period) linear infinite,
+    starcode-star-twinkle var(--sc-twinkle-period) ease-in-out infinite;
+  /* Negative delays start each layer mid-cycle, so the three are already out of
+     phase on the first frame instead of blinking together once at load. */
+  animation-delay: 0s, var(--sc-twinkle-offset);
+}
+
+/* Slowest and faintest reads as furthest away; the periods share no small
+   common multiple, so the three never visibly resynchronise. */
+.dark .starcode-star-layer-1 {
+  background-image: var(--sc-star-layer-1);
+  --sc-drift-cant: -5deg;
+  --sc-drift-period: 540s;
+  --sc-twinkle-period: 23s;
+  --sc-twinkle-offset: -3s;
+}
+
+.dark .starcode-star-layer-2 {
+  background-image: var(--sc-star-layer-2);
+  --sc-drift-cant: -3deg;
+  --sc-drift-period: 400s;
+  --sc-twinkle-period: 17s;
+  --sc-twinkle-offset: -11s;
+}
+
+.dark .starcode-star-layer-3 {
+  background-image: var(--sc-star-layer-3);
+  --sc-drift-cant: 0deg;
+  --sc-drift-period: 280s;
+  --sc-twinkle-period: 11s;
+  --sc-twinkle-offset: -7s;
+}
+
+@keyframes starcode-star-drift {
+  from {
+    transform: rotate(var(--sc-drift-cant)) translate3d(0, 0, 0);
+  }
+  to {
+    transform: rotate(var(--sc-drift-cant)) translate3d(-660px, 0, 0);
+  }
+}
+
+@keyframes starcode-star-twinkle {
+  0%,
+  100% {
+    opacity: calc(var(--sc-twinkle-mid) - var(--sc-twinkle-swing));
+  }
+  50% {
+    opacity: calc(var(--sc-twinkle-mid) + var(--sc-twinkle-swing));
+  }
+}
+
+/* The pane's chrome starfield drifts too, at half the slowest layer's speed and
+   with no twinkle. This is the only motion in permanently-visible UI, and it is
+   here because a sky that only moves on the two screens you rarely see is not a
+   living sky. It is bounded by the same `--sc-star-chrome-max` ceiling as the
+   static field, so the moving stars are the faint ones that provably cannot
+   push text below AA.
+   The sidebar deliberately does not get this: it is a quarter the width, so the
+   same speed wraps four times as often, and it is the surface whose rows you
+   scan all day. */
+.dark [data-slot="sidebar-inset"]::before {
+  right: -660px;
+  animation: starcode-star-drift 900s linear infinite;
+  --sc-drift-cant: 0deg;
+}
+
+/* Reduced motion holds every layer still at its average, so the field is
+   identical to the static one it replaced — nothing is lost but the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .dark .starcode-star-layer,
+  .dark [data-slot="sidebar-inset"]::before {
+    animation: none;
+    opacity: var(--sc-twinkle-mid);
+  }
+
+  .dark [data-slot="sidebar-inset"]::before {
+    opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
   }
 }

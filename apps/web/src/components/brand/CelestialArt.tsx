@@ -81,6 +81,14 @@ export function MoonPhase({ phase, className }: { phase: LunarPhase; className?:
 export function SkySpecks({ className }: { className?: string }) {
   return (
     <div aria-hidden="true" className={cn("starcode-speck-field", className)}>
+      {/* The drift layers are CHILDREN of the field, never a wrapper around it.
+          The engraving rule matches on exact grandchild depth
+          (`[data-slot="sidebar-inset"]:has(> * > .starcode-speck-field)`), so
+          nesting the field one level deeper silently deletes the plate corners
+          from every idle pane. Section 9 of the theme owns their motion. */}
+      <div className="starcode-star-layer starcode-star-layer-1" />
+      <div className="starcode-star-layer starcode-star-layer-2" />
+      <div className="starcode-star-layer starcode-star-layer-3" />
       {/* Crosses about once every forty seconds; see section 8 of the theme. */}
       <div className="starcode-shooting-star" />
     </div>
