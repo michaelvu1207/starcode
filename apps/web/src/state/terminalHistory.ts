@@ -3,17 +3,20 @@
  *
  * Instantiates the client-runtime atom families once against the connection
  * runtime, mirroring `state/usage.ts`. Deliberately no cross-environment
- * fan-out atom: the strip is lazy, and an atom that read every machine would
- * fetch from all four the moment the sidebar rendered.
+ * fan-out atom: reading history is lazy, and an atom that read every machine
+ * would fetch from all four the moment the sidebar rendered.
+ *
+ * Only the session *listing* is exposed. The paginated transcript hook went
+ * with the history viewer it existed to feed — starcode does not read old
+ * conversations, it resumes them — and what is left here is the picker's data
+ * source: which sessions a machine has, and enough of each to tell them apart.
  */
 import {
   createEnvironmentTerminalHistoryAtoms,
   historySessionsAtomKey,
-  historyTranscriptAtomKey,
   type HistorySessionsKey,
-  type HistoryTranscriptKey,
 } from "@t3tools/client-runtime/state/terminal-history";
-import type { HistorySessionsPage, HistoryTranscriptPage } from "@t3tools/contracts";
+import type { HistorySessionsPage } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -36,10 +39,6 @@ const sessionsViewAtom = Atom.family((serializedKey: string) =>
   unwrap(environmentTerminalHistory.sessionsAtom(serializedKey)),
 );
 
-const transcriptViewAtom = Atom.family((serializedKey: string) =>
-  unwrap(environmentTerminalHistory.transcriptAtom(serializedKey)),
-);
-
 /**
  * One page of a machine's session listing.
  *
@@ -52,12 +51,4 @@ export function useHistorySessionsPage(
   key: HistorySessionsKey | null,
 ): EnvironmentQueryView<HistorySessionsPage | null> {
   return useEnvironmentQuery(key === null ? null : sessionsViewAtom(historySessionsAtomKey(key)));
-}
-
-export function useHistoryTranscriptPage(
-  key: HistoryTranscriptKey | null,
-): EnvironmentQueryView<HistoryTranscriptPage | null> {
-  return useEnvironmentQuery(
-    key === null ? null : transcriptViewAtom(historyTranscriptAtomKey(key)),
-  );
 }
