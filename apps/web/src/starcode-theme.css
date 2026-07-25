@@ -626,3 +626,110 @@
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--sc-cream-100) 22%, transparent);
 }
+
+/* ---------------------------------------------------------------------------
+ * 7. Astro-glyphic engravings
+ *
+ * Two shapes, used everywhere: a hairline and the brand's four-point star. They
+ * are arranged two ways, and there is no third arrangement.
+ *
+ * THE PLATE CORNER — a double hairline bracket, the outer line solid and the
+ * inner one finer and fainter, the way an engraved plate reads, with the star
+ * set in the elbow. Used at two opposite corners, top-left and bottom-right:
+ * a mark on all four corners is a picture frame, a mark on the diagonal is a
+ * registration mark, and the registration mark is what a star chart does.
+ *
+ * THE RAIL — the same hairline broken around the same star, laid along a line
+ * and centred.
+ *
+ * WHICH GOES WHERE IS DECIDED BY THE CORNERS. The plate corner needs corners
+ * that are empty, which in this app means the idle pane and nothing else. Every
+ * dialog here has a title in one corner, a close button in another and a
+ * full-width action across the bottom, and a bracket dropped into any of them
+ * reads as debris — this was built, rendered, and cut, and the render is in the
+ * round's evidence. Dialogs get the rail instead: centred, so there is nothing
+ * at either end for it to collide with, and it sits in the header's own top
+ * padding.
+ *
+ * NOT ON POPOVERS. The same primitive backs every tooltip and dropdown menu in
+ * the app; a flourish that fires on hover a hundred times an hour has stopped
+ * being a flourish. Never on rows, list items, or anything that repeats.
+ *
+ * HOW IT IS TINTED. Each glyph is a mask, not an image, so the colour comes from
+ * `background-color` and each theme sets its own. Baking the colour in would
+ * need one asset per theme, which is how a vocabulary stops being one.
+ *
+ * COST AND SAFETY. Absolutely positioned, `pointer-events: none`, no box model
+ * of its own: neither mark can shift layout or intercept a click. Both are
+ * purely decorative and carry no information, so they have no contrast floor to
+ * meet — they are held *below* the border they sit beside rather than above any
+ * minimum.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --sc-glyph-corner-tl: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2736%27%20height%3D%2736%27%20viewBox%3D%270%200%2036%2036%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M1%2018%20L1%204%20A3%203%200%200%201%204%201%20L18%201%27%20stroke-width%3D%271%27%2F%3E%3Cpath%20d%3D%27M5%2015%20L5%206.5%20A1.5%201.5%200%200%201%206.5%205%20L15%205%27%20stroke-width%3D%27.7%27%20stroke-opacity%3D%27.55%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M11.5%208.3%20Q11.5%2011.5%2014.7%2011.5%20Q11.5%2011.5%2011.5%2014.7%20Q11.5%2011.5%208.3%2011.5%20Q11.5%2011.5%2011.5%208.3%20Z%27%2F%3E%3C%2Fsvg%3E");
+  --sc-glyph-rail: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2780%27%20height%3D%2712%27%20viewBox%3D%270%200%2080%2012%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-width%3D%27.9%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M2%206%20L26%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M54%206%20L78%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M31%206%20L34%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3Cpath%20d%3D%27M46%206%20L49%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M40%201.6%20Q40%206%2044.4%206%20Q40%206%2040%2010.4%20Q40%206%2035.6%206%20Q40%206%2040%201.6%20Z%27%2F%3E%3C%2Fsvg%3E");
+  --sc-glyph-corner-br: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2736%27%20height%3D%2736%27%20viewBox%3D%270%200%2036%2036%27%3E%3Cg%20transform%3D%27rotate%28180%2018%2018%29%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M1%2018%20L1%204%20A3%203%200%200%201%204%201%20L18%201%27%20stroke-width%3D%271%27%2F%3E%3Cpath%20d%3D%27M5%2015%20L5%206.5%20A1.5%201.5%200%200%201%206.5%205%20L15%205%27%20stroke-width%3D%27.7%27%20stroke-opacity%3D%27.55%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M11.5%208.3%20Q11.5%2011.5%2014.7%2011.5%20Q11.5%2011.5%2011.5%2014.7%20Q11.5%2011.5%208.3%2011.5%20Q11.5%2011.5%2011.5%208.3%20Z%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  /* Faint enough to be found rather than noticed. Butter on ink, ink on linen. */
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-ink-900) 26%, transparent);
+}
+
+.dark {
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-butter) 40%, transparent);
+}
+
+/* The plate corners, for idle surfaces whose corners are genuinely empty.
+   Hung off the pane rather than off the speck field itself: the light theme
+   inverts that field to darken its specks, and a filter applies to an element's
+   pseudo-elements too, so an engraving drawn there came out inverted and
+   vanished into the paper. `:has()` keeps the condition unchanged — the mark
+   appears exactly where the field is mounted, and nowhere else. */
+[data-slot="sidebar-inset"]:has(> * > .starcode-speck-field)::after {
+  content: "";
+  position: absolute;
+  inset: var(--sc-glyph-inset, 11px);
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-position:
+    top left,
+    bottom right;
+  mask-position:
+    top left,
+    bottom right;
+  -webkit-mask-size: var(--sc-glyph-size, 34px) var(--sc-glyph-size, 34px);
+  mask-size: var(--sc-glyph-size, 34px) var(--sc-glyph-size, 34px);
+}
+
+[data-slot="sidebar-inset"] {
+  --sc-glyph-inset: 22px;
+  --sc-glyph-size: 52px;
+}
+
+/* Dialogs get the rail rather than the corners. Their corners are taken — a
+   title at the top left, a close button at the top right, a full-width action at
+   the bottom — and a bracket dropped into any of them reads as debris rather
+   than as ornament; the version that tried it is in the round's evidence. The
+   rail is centred, so it sits in the header's own top padding and has nothing to
+   collide with. Same two shapes, laid out along a line instead of around a
+   corner. */
+.dialog-glass::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 80px;
+  height: 12px;
+  translate: -50% 0;
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-rail);
+  mask-image: var(--sc-glyph-rail);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 80px 12px;
+  mask-size: 80px 12px;
+}
