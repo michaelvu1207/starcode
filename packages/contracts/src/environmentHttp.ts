@@ -34,6 +34,7 @@ import {
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
+import { EnvironmentUsageSnapshot } from "./usage.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
@@ -86,6 +87,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "usage_snapshot_failed",
   "peers_load_failed",
   "peer_registration_failed",
   "peer_remove_failed",
@@ -530,6 +532,21 @@ export class EnvironmentPeersHttpApi extends HttpApiGroup.make("peers")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/**
+ * Read-only usage. Gated on `orchestration:read` rather than `access:read`
+ * because that is the scope a normal pairing link grants — the hub must be
+ * able to read usage from every machine it is paired with, not only from the
+ * one it was bootstrapped on. The cost is that an F2 peer credential can read
+ * spend as well as transcripts.
+ */
+export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage").add(
+  HttpApiEndpoint.get("snapshot", "/api/usage/snapshot", {
+    headers: OptionalBearerHeaders,
+    success: EnvironmentUsageSnapshot,
+    error: EnvironmentScopedOperationErrors,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -596,4 +613,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPeersHttpApi)
+  .add(EnvironmentUsageHttpApi)
   .add(EnvironmentConnectHttpApi) {}
