@@ -1,83 +1,96 @@
 /**
- * Fork-owned: where every star sits.
+ * Fork-owned: the shape of the sky.
  *
- * The map encodes two things in two axes, and nothing else:
+ * The sky is one constellation growing from one point. At the bottom, on the
+ * horizon, sits **the origin** — the latest shared state everybody starts from.
+ * Every feature branches off it: directly, or off another feature when it is
+ * waiting on that work. Altitude is how far a feature has got, so a branch that
+ * matures climbs, and the whole picture reads as growth from a common root
+ * rather than as rows of unrelated dots.
  *
- *   - **altitude is stage.** Work rises. In progress sits at the horizon, then
- *     dev, staging, and production toward the zenith. A viewer reads how far a
- *     piece of work has got by how high it is, before reading a single word.
- *   - **azimuth is machine.** Each paired machine owns a vertical region of the
- *     sky, named on the horizon beneath it, its stars joined by figure lines
- *     into one constellation.
+ * Two encodings and no others:
  *
- * Positions are computed here rather than left to flex for the same reason the
- * lanes that preceded this file computed theirs: the constellation lines are
- * drawn over the same coordinate space the stars occupy, and a line that guesses
- * where a star ended up is a line that misses it on somebody else's font
- * metrics.
+ *   - **altitude is stage** — in flight, landed, ready, shipped, from the
+ *     horizon toward the zenith;
+ *   - **lineage is the branch** — what a feature grew out of.
  *
- * **Positions are stable across reloads.** Every offset comes from a hash of the
- * star's own key, never from `Math.random`, never from render order, and never
- * from how recently the work moved. Two visits to a sky holding the same work
- * are pixel-identical; a sky whose stars wander between visits is a sky you
- * cannot learn. What a position *does* depend on is which other stars share its
- * cell — adding work to a crowded stage nudges its neighbours apart, which is
- * the one rearrangement that cannot be designed away without letting stars
- * overlap.
+ * There is deliberately nothing here about machines. Which server runs a piece
+ * of work is not a property of the work, and the version of this file that made
+ * it geography answered a question nobody asks.
+ *
+ * **Positions are stable across reloads.** Horizontal placement is a tidy-tree
+ * allocation over a deterministic ordering, nudged by a hash of each feature's
+ * own key. Nothing consults `Math.random`, render order, or recency, so two
+ * visits to the same sky are pixel-identical. What a position does depend on is
+ * the shape of the tree around it: a new sibling divides the span its parent
+ * owns, which is the one rearrangement that cannot be avoided without letting
+ * branches overlap.
  */
 import type { FeatureFlowStage } from "@t3tools/contracts";
 
 import { FEATURE_FLOW_STAGES, FEATURE_FLOW_STAGE_LABELS } from "./FeatureFlow.model";
-import type { StarMapModel, StarMapStar } from "./StarMap.model";
+import type { SkyFeature, SkyModel } from "./StarMap.model";
 
-export interface StarMapLayoutOptions {
-  /** Left axis holding the stage names. */
+export interface SkyLayoutOptions {
+  /** Left axis holding the tier names. */
   readonly gutterWidth: number;
   readonly paddingRight: number;
-  /** Least clear sky kept above the top band, where the moon hangs. */
+  /** Least clear sky kept above the top tier, where the moon hangs. */
   readonly zenithHeight: number;
   /**
-   * Ceiling on how tall one stage band grows.
-   *
-   * Without it a tall pane spreads four bands over eight hundred pixels, which
-   * scatters every constellation into isolated dots joined by lines long enough
-   * to read as wiring. The stack is anchored to the horizon instead and the
-   * surplus becomes open sky above it — which is also where the moon wants to
-   * be, and what a star chart looks like.
+   * Ceiling on how tall one tier grows. Without it a tall pane spreads four
+   * tiers over eight hundred pixels and every branch becomes a wire; the stack
+   * is anchored to the origin instead and the surplus becomes open sky.
    */
-  readonly maxBandHeight: number;
-  /** The strip below the lowest band carrying the machine names. */
+  readonly maxTierHeight: number;
+  /** The strip below the origin carrying its name. */
   readonly horizonHeight: number;
-  /** Kept clear inside each region so stars never touch a region divider. */
-  readonly regionInset: number;
+  /** Gap between the origin and the first tier, so the root reads as a root. */
+  readonly originGap: number;
+  readonly originRadius: number;
   readonly starRadius: number;
-  /** Smallest horizontal gap between two stars before they wrap to a new row. */
-  readonly starSpacingX: number;
-  /** Vertical distance between wrapped rows inside one band. */
-  readonly rowGap: number;
+  /** Smallest horizontal span a feature is allotted before siblings crowd. */
+  readonly minSlotWidth: number;
   readonly moonRadius: number;
 }
 
-export const STAR_MAP_LAYOUT: StarMapLayoutOptions = {
-  // Wide enough for "PRODUCTION" at the axis type size without the label
-  // running off the left edge of the pane.
-  gutterWidth: 96,
+export const SKY_LAYOUT: SkyLayoutOptions = {
+  // Wide enough for the longest tier name at the axis type size.
+  gutterWidth: 88,
   paddingRight: 18,
   zenithHeight: 52,
-  maxBandHeight: 170,
-  horizonHeight: 30,
-  regionInset: 16,
+  maxTierHeight: 150,
+  horizonHeight: 34,
+  originGap: 34,
+  originRadius: 9,
   starRadius: 7,
-  starSpacingX: 34,
-  rowGap: 26,
+  minSlotWidth: 44,
   moonRadius: 13,
 };
 
 /** Below this the sky is too cramped to read; the pane scrolls instead. */
-export const STAR_MAP_MIN_HEIGHT = 320;
-export const STAR_MAP_MIN_WIDTH = 320;
+export const SKY_MIN_HEIGHT = 340;
+export const SKY_MIN_WIDTH = 320;
 
-export interface StarMapBandLayout {
+/**
+ * What each tier is called on screen.
+ *
+ * Not the contract's own names, and not git's. "in-dev" is an implementation
+ * detail of where containment was tested; what an operator wants to read is
+ * whether the work has landed in what everyone else is building on. One
+ * constant, so the vocabulary is one edit away from being different.
+ */
+export const SKY_TIER_LABELS: Readonly<Record<FeatureFlowStage, string>> = {
+  "in-progress": "in flight",
+  "in-dev": "landed",
+  "in-staging": "ready",
+  "in-production": "shipped",
+};
+
+/** The root everything grows from. */
+export const SKY_ORIGIN_LABEL = "latest";
+
+export interface SkyTierLayout {
   readonly stage: FeatureFlowStage;
   readonly label: string;
   readonly top: number;
@@ -85,68 +98,57 @@ export interface StarMapBandLayout {
   readonly centerY: number;
 }
 
-export interface StarMapRegionLayout {
-  readonly environmentId: string;
-  readonly label: string;
-  readonly isLocal: boolean;
-  readonly x: number;
-  readonly width: number;
-  readonly centerX: number;
-  /** Divider drawn on this region's left edge; null for the leftmost. */
-  readonly dividerX: number | null;
-}
-
-export interface StarMapPlacedStar {
-  readonly star: StarMapStar;
+export interface SkyPlacedFeature {
+  readonly feature: SkyFeature;
   readonly x: number;
   readonly y: number;
   readonly radius: number;
-  /** Seconds, so the value can go straight into a CSS custom property. */
+  /** Depth in the lineage tree; 0 branches straight off the origin. */
+  readonly depth: number;
   readonly twinklePeriodSeconds: number;
-  /** Negative seconds: the star is already mid-cycle when it first paints. */
   readonly twinkleDelaySeconds: number;
 }
 
-export type StarMapEdgeKind = "figure" | "dependency";
-
-export interface StarMapEdgeLayout {
+export interface SkyBranchLayout {
   readonly key: string;
-  readonly kind: StarMapEdgeKind;
-  readonly fromKey: string;
+  /** Null when the branch grows straight out of the origin. */
+  readonly fromKey: string | null;
   readonly toKey: string;
   readonly d: string;
-  /** Draw-in order, so the constellations trace out rather than blink on. */
+  /** True when either end is intent rather than work. */
+  readonly planned: boolean;
+  /** Draw-in order, so the constellation traces outward from the root. */
   readonly order: number;
 }
 
-export interface StarMapMoonLayout {
+export interface SkyOriginLayout {
   readonly x: number;
   readonly y: number;
   readonly radius: number;
+  readonly label: string;
 }
 
-export interface StarMapLayout {
+export interface SkyLayout {
   readonly width: number;
   readonly height: number;
-  readonly bands: ReadonlyArray<StarMapBandLayout>;
-  readonly regions: ReadonlyArray<StarMapRegionLayout>;
-  readonly stars: ReadonlyArray<StarMapPlacedStar>;
-  readonly edges: ReadonlyArray<StarMapEdgeLayout>;
-  readonly moon: StarMapMoonLayout | null;
-  /** Top of the band stack. Everything above it is open sky. */
+  readonly tiers: ReadonlyArray<SkyTierLayout>;
+  readonly features: ReadonlyArray<SkyPlacedFeature>;
+  readonly branches: ReadonlyArray<SkyBranchLayout>;
+  readonly origin: SkyOriginLayout;
+  readonly moon: { readonly x: number; readonly y: number; readonly radius: number } | null;
+  /** Top of the tier stack. Everything above it is open sky. */
   readonly skyTop: number;
-  /** The rule the machine names sit under. */
   readonly horizonY: number;
-  readonly options: StarMapLayoutOptions;
+  readonly options: SkyLayoutOptions;
 }
 
 /**
- * FNV-1a over the star key.
+ * FNV-1a over the feature key.
  *
  * Any stable hash would do; what matters is that it is *this* function forever,
  * because changing it moves every star in the sky at once.
  */
-export function starSeed(key: string): number {
+export function skySeed(key: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= key.charCodeAt(index);
@@ -164,226 +166,272 @@ function jitter(seed: number, slice: number): number {
 /**
  * Twinkle periods with no common multiple inside a working session, so the
  * field never falls into step with itself and starts reading as a beat. All at
- * or above twenty seconds: a star you can watch blink is a star that is
- * competing with the work.
+ * or above twenty seconds: a star you can watch blink competes with the work.
  */
 const TWINKLE_PERIODS_SECONDS = [19, 23, 29] as const;
 
-/**
- * Chains a region's stars into one constellation figure.
- *
- * Nearest neighbour from the lowest star upward: the eye follows a wandering
- * line better than a star it has to find on its own, and starting at the
- * horizon means the figure is traced in the direction the work flows. The line
- * carries one claim — these stars are the same machine — which is exactly the
- * grouping the region already asserts, so it can never say anything the rest of
- * the map does not.
- */
-function figureChain(
-  placed: ReadonlyArray<StarMapPlacedStar>,
-): ReadonlyArray<readonly [StarMapPlacedStar, StarMapPlacedStar]> {
-  if (placed.length < 2) return [];
-  const remaining = [...placed].sort(
-    (left, right) => right.y - left.y || left.star.key.localeCompare(right.star.key),
-  );
-  const pairs: Array<readonly [StarMapPlacedStar, StarMapPlacedStar]> = [];
-  let current = remaining.shift()!;
-  while (remaining.length > 0) {
-    let bestIndex = 0;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    remaining.forEach((candidate, index) => {
-      const dx = candidate.x - current.x;
-      const dy = candidate.y - current.y;
-      const distance = dx * dx + dy * dy;
-      // Ties resolve on key so the figure is the same on every machine that
-      // renders it.
-      if (
-        distance < bestDistance ||
-        (distance === bestDistance &&
-          candidate.star.key.localeCompare(remaining[bestIndex]!.star.key) < 0)
-      ) {
-        bestDistance = distance;
-        bestIndex = index;
-      }
-    });
-    const next = remaining.splice(bestIndex, 1)[0]!;
-    pairs.push([current, next]);
-    current = next;
-  }
-  return pairs;
-}
-
-/**
- * A dependency connector, bowed sideways.
- *
- * Straight would be ambiguous the moment two dependencies span the same pair of
- * altitudes; the bow grows with the distance covered, which is what keeps a
- * short hop from looking like a long one.
- */
-function dependencyPath(from: StarMapPlacedStar, to: StarMapPlacedStar, seed: number): string {
-  const midX = (from.x + to.x) / 2;
-  const midY = (from.y + to.y) / 2;
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const span = Math.hypot(dx, dy);
-  if (span < 1) return `M ${round(from.x)} ${round(from.y)} L ${round(to.x)} ${round(to.y)}`;
-  const depth = Math.min(26, 5 + span / 7) * (jitter(seed, 3) < 0 ? -1 : 1);
-  // Perpendicular offset from the midpoint: a quadratic whose control point
-  // sits off the chord by `depth`.
-  const controlX = midX + (-dy / span) * depth;
-  const controlY = midY + (dx / span) * depth;
-  return `M ${round(from.x)} ${round(from.y)} Q ${round(controlX)} ${round(controlY)} ${round(to.x)} ${round(to.y)}`;
-}
-
 const round = (value: number): number => Math.round(value * 100) / 100;
 
-export function layoutStarMap(
-  model: StarMapModel,
+export interface SkyForest {
+  /** Features branching straight off the origin, in draw order. */
+  readonly roots: ReadonlyArray<string>;
+  readonly childrenOf: ReadonlyMap<string, ReadonlyArray<string>>;
+  readonly parentOf: ReadonlyMap<string, string>;
+  readonly depthOf: ReadonlyMap<string, number>;
+}
+
+/**
+ * Resolves every feature to exactly one parent.
+ *
+ * A feature may record several things it waits on; the tree can only draw one
+ * lineage, so the first surviving link wins and the rest are simply not drawn.
+ * Showing them all would turn the constellation into a mesh, which is the thing
+ * a lineage picture exists to avoid — and the extra links are still visible on
+ * the card.
+ *
+ * Cycles cannot be laid out at all, so any feature whose ancestry loops is
+ * re-rooted at the origin. The server refuses to write a cycle, which makes
+ * this the defence against a map written by an older build rather than an
+ * expected state.
+ */
+export function buildSkyForest(features: ReadonlyArray<SkyFeature>): SkyForest {
+  const byKey = new Map(features.map((feature) => [feature.key, feature]));
+  const parentOf = new Map<string, string>();
+
+  for (const feature of features) {
+    const parent = feature.dependsOnKeys.find((key) => byKey.has(key));
+    if (parent !== undefined) parentOf.set(feature.key, parent);
+  }
+
+  // Re-root anything whose ancestry loops or runs deeper than the sky can show.
+  const depthOf = new Map<string, number>();
+  for (const feature of features) {
+    const seen = new Set<string>([feature.key]);
+    let depth = 0;
+    let cursor = parentOf.get(feature.key);
+    while (cursor !== undefined) {
+      if (seen.has(cursor)) {
+        parentOf.delete(feature.key);
+        depth = 0;
+        break;
+      }
+      seen.add(cursor);
+      depth += 1;
+      cursor = parentOf.get(cursor);
+    }
+    depthOf.set(feature.key, depth);
+  }
+
+  const childrenOf = new Map<string, string[]>();
+  const roots: string[] = [];
+  // Deterministic order: the tree must be the same picture on every render.
+  for (const feature of [...features].toSorted((left, right) =>
+    left.key.localeCompare(right.key),
+  )) {
+    const parent = parentOf.get(feature.key);
+    if (parent === undefined) roots.push(feature.key);
+    else childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), feature.key]);
+  }
+
+  return { roots, childrenOf, parentOf, depthOf };
+}
+
+/** Leaves under a key, which is the width its subtree needs. */
+function leafCount(key: string, forest: SkyForest, cache: Map<string, number>): number {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const children = forest.childrenOf.get(key) ?? [];
+  const total =
+    children.length === 0
+      ? 1
+      : children.reduce((sum, child) => sum + leafCount(child, forest, cache), 0);
+  cache.set(key, total);
+  return total;
+}
+
+/**
+ * A branch, drawn as a curve that leaves its parent going up and arrives at its
+ * child going up.
+ *
+ * Control points offset along the vertical span rather than a fixed distance,
+ * so a short hop between adjacent tiers stays gentle and a long one still
+ * leaves the parent cleanly instead of shooting sideways.
+ */
+function branchPath(fromX: number, fromY: number, toX: number, toY: number): string {
+  const span = (toY - fromY) * 0.55;
+  return `M ${round(fromX)} ${round(fromY)} C ${round(fromX)} ${round(fromY + span)} ${round(toX)} ${round(toY - span)} ${round(toX)} ${round(toY)}`;
+}
+
+/**
+ * Pushes apart stars that ended up on top of each other in the same tier.
+ *
+ * The tidy allocation centres a node over the span its subtree owns, which is
+ * exactly right until a feature's only child sits in the *same* tier as its
+ * parent: both centre on the same span and land on the same point, and one of
+ * them becomes unhoverable. A single-parent chain that has not yet climbed is a
+ * completely ordinary state — the plan describes it constantly — so this is a
+ * correctness pass, not a cosmetic one.
+ *
+ * One sweep right, one sweep back, both clamped to the field. Ordering is by x
+ * with the key as the tie-break, so the result stays deterministic.
+ */
+function separateWithinTiers(
+  placed: ReadonlyArray<SkyPlacedFeature>,
+  byKey: Map<string, SkyPlacedFeature>,
+  fieldLeft: number,
+  fieldRight: number,
+  options: SkyLayoutOptions,
+): void {
+  const minGap = options.starRadius * 2 + 12;
+  const rows = new Map<number, SkyPlacedFeature[]>();
+  for (const entry of placed) {
+    const key = FEATURE_FLOW_STAGES.indexOf(entry.feature.stage);
+    rows.set(key, [...(rows.get(key) ?? []), entry]);
+  }
+
+  for (const row of rows.values()) {
+    if (row.length < 2) continue;
+    const sorted = [...row].toSorted(
+      (left, right) => left.x - right.x || left.feature.key.localeCompare(right.feature.key),
+    );
+    let cursor = fieldLeft;
+    for (const entry of sorted) {
+      const x = Math.max(entry.x, cursor);
+      byKey.set(entry.feature.key, { ...entry, x: round(x) });
+      cursor = x + minGap;
+    }
+    // The forward sweep can run a crowded tier off the right edge; the reverse
+    // sweep pulls it back without re-introducing an overlap.
+    let limit = fieldRight;
+    for (const entry of sorted.toReversed()) {
+      const current = byKey.get(entry.feature.key)!;
+      const x = Math.min(current.x, limit);
+      byKey.set(entry.feature.key, { ...current, x: round(x) });
+      limit = x - minGap;
+    }
+  }
+}
+
+export function layoutSky(
+  model: SkyModel,
   size: { readonly width: number; readonly height: number },
-  options: StarMapLayoutOptions = STAR_MAP_LAYOUT,
-): StarMapLayout {
-  const width = Math.max(STAR_MAP_MIN_WIDTH, Math.floor(size.width));
-  const height = Math.max(STAR_MAP_MIN_HEIGHT, Math.floor(size.height));
+  options: SkyLayoutOptions = SKY_LAYOUT,
+): SkyLayout {
+  const width = Math.max(SKY_MIN_WIDTH, Math.floor(size.width));
+  const height = Math.max(SKY_MIN_HEIGHT, Math.floor(size.height));
 
   const horizonY = height - options.horizonHeight;
-  const available = Math.max(80, horizonY - options.zenithHeight);
-  const bandHeight = Math.min(available / FEATURE_FLOW_STAGES.length, options.maxBandHeight);
-  // Anchored to the horizon: work always starts from the same line, whatever
-  // the pane's height, and the leftover becomes sky rather than lane padding.
-  const skyTop = horizonY - bandHeight * FEATURE_FLOW_STAGES.length;
+  const originY = horizonY - options.originRadius;
+  const tiersBottom = originY - options.originGap;
+  const available = Math.max(80, tiersBottom - options.zenithHeight);
+  const tierHeight = Math.min(available / FEATURE_FLOW_STAGES.length, options.maxTierHeight);
+  const skyTop = tiersBottom - tierHeight * FEATURE_FLOW_STAGES.length;
 
-  const bands = FEATURE_FLOW_STAGES.map((stage, index): StarMapBandLayout => {
-    // Index 0 is in-progress and belongs at the bottom, so the sky is read
-    // upward the way the work flows.
+  const tiers = FEATURE_FLOW_STAGES.map((stage, index): SkyTierLayout => {
+    // Index 0 is the first tier and belongs nearest the origin, so the sky is
+    // read upward the way the work grows.
     const rowFromTop = FEATURE_FLOW_STAGES.length - 1 - index;
-    const top = skyTop + rowFromTop * bandHeight;
+    const top = skyTop + rowFromTop * tierHeight;
     return {
       stage,
-      label: FEATURE_FLOW_STAGE_LABELS[stage],
+      label: SKY_TIER_LABELS[stage] ?? FEATURE_FLOW_STAGE_LABELS[stage],
       top: round(top),
-      height: round(bandHeight),
-      centerY: round(top + bandHeight / 2),
+      height: round(tierHeight),
+      centerY: round(top + tierHeight / 2),
     };
   });
-  const bandByStage = new Map(bands.map((band) => [band.stage, band]));
+  const tierByStage = new Map(tiers.map((tier) => [tier.stage, tier]));
 
   const fieldLeft = options.gutterWidth;
   const fieldWidth = Math.max(120, width - options.gutterWidth - options.paddingRight);
-  const regionCount = Math.max(1, model.regions.length);
-  const regionWidth = fieldWidth / regionCount;
+  const originX = fieldLeft + fieldWidth / 2;
 
-  const regions = model.regions.map((region, index): StarMapRegionLayout => {
-    const x = fieldLeft + index * regionWidth;
-    return {
-      environmentId: region.environmentId,
-      label: region.label,
-      isLocal: region.isLocal,
-      x: round(x),
-      width: round(regionWidth),
-      centerX: round(x + regionWidth / 2),
-      dividerX: index === 0 ? null : round(x),
+  const forest = buildSkyForest(model.features);
+  const byKey = new Map(model.features.map((feature) => [feature.key, feature]));
+  const cache = new Map<string, number>();
+
+  const placed: SkyPlacedFeature[] = [];
+  const placedByKey = new Map<string, SkyPlacedFeature>();
+
+  /**
+   * Allocates a horizontal span to a subtree and centres the node in it, then
+   * divides the remainder among its children in proportion to their own width.
+   */
+  const place = (key: string, left: number, span: number) => {
+    const feature = byKey.get(key);
+    if (feature === undefined) return;
+    const tier = tierByStage.get(feature.stage) ?? tiers[tiers.length - 1]!;
+    const seed = skySeed(key);
+    // Jitter is bounded by the slot so a nudge can never push a star into a
+    // sibling's column, and by a constant so a wide slot does not scatter it.
+    const nudgeX = jitter(seed, 0) * Math.min(span * 0.16, 16);
+    const nudgeY = jitter(seed, 1) * Math.min(tier.height * 0.2, 20);
+    const period = TWINKLE_PERIODS_SECONDS[seed % TWINKLE_PERIODS_SECONDS.length]!;
+    const entry: SkyPlacedFeature = {
+      feature,
+      x: round(left + span / 2 + nudgeX),
+      y: round(tier.centerY + nudgeY),
+      radius: options.starRadius,
+      depth: forest.depthOf.get(key) ?? 0,
+      twinklePeriodSeconds: period,
+      twinkleDelaySeconds: -round((((seed >>> 11) & 0xff) / 0xff) * period),
     };
-  });
+    placed.push(entry);
+    placedByKey.set(key, entry);
 
-  const stars: StarMapPlacedStar[] = [];
-  const placedByKey = new Map<string, StarMapPlacedStar>();
-  const placedByRegion = new Map<string, StarMapPlacedStar[]>();
-
-  model.regions.forEach((region, regionIndex) => {
-    const regionLayout = regions[regionIndex]!;
-    const cellLeft = regionLayout.x + options.regionInset;
-    const cellWidth = Math.max(40, regionLayout.width - options.regionInset * 2);
-    const regionPlaced: StarMapPlacedStar[] = [];
-
-    for (const stage of FEATURE_FLOW_STAGES) {
-      const band = bandByStage.get(stage)!;
-      const cell = region.stars.filter((star) => star.stage === stage);
-      if (cell.length === 0) continue;
-
-      // Wrap into rows before stars start colliding, rather than letting a busy
-      // stage squeeze its stars into a line of touching dots.
-      const perRow = Math.max(1, Math.floor(cellWidth / options.starSpacingX));
-      const rowCount = Math.ceil(cell.length / perRow);
-      const stackHeight = (rowCount - 1) * options.rowGap;
-      const firstRowY = band.centerY - stackHeight / 2;
-      // Room left for jitter after the rows have taken their share.
-      const slack = Math.max(0, band.height / 2 - stackHeight / 2 - options.starRadius * 3);
-
-      cell.forEach((star, index) => {
-        const row = Math.floor(index / perRow);
-        const rowStart = row * perRow;
-        const rowSize = Math.min(perRow, cell.length - rowStart);
-        const column = index - rowStart;
-        const seed = starSeed(star.key);
-        const slotWidth = cellWidth / rowSize;
-        const x = cellLeft + slotWidth * (column + 0.5) + jitter(seed, 0) * slotWidth * 0.24;
-        // Stars use most of the slack the band leaves them. A tighter bound
-        // lines them up on the band's centre, and a row of evenly spaced dots
-        // at one altitude reads as a chart axis rather than as a sky.
-        const y = firstRowY + row * options.rowGap + jitter(seed, 1) * Math.min(slack, 26);
-        const placed: StarMapPlacedStar = {
-          star,
-          x: round(x),
-          y: round(y),
-          radius: options.starRadius,
-          twinklePeriodSeconds: TWINKLE_PERIODS_SECONDS[seed % TWINKLE_PERIODS_SECONDS.length]!,
-          twinkleDelaySeconds: -round(
-            (((seed >>> 11) & 0xff) / 0xff) *
-              TWINKLE_PERIODS_SECONDS[seed % TWINKLE_PERIODS_SECONDS.length]!,
-          ),
-        };
-        stars.push(placed);
-        regionPlaced.push(placed);
-        placedByKey.set(star.key, placed);
-      });
+    const children = forest.childrenOf.get(key) ?? [];
+    if (children.length === 0) return;
+    const total = children.reduce((sum, child) => sum + leafCount(child, forest, cache), 0);
+    let cursor = left;
+    for (const child of children) {
+      const childSpan = (leafCount(child, forest, cache) / total) * span;
+      place(child, cursor, childSpan);
+      cursor += childSpan;
     }
-    placedByRegion.set(region.environmentId, regionPlaced);
-  });
+  };
 
-  const edges: StarMapEdgeLayout[] = [];
-  for (const region of model.regions) {
-    for (const [from, to] of figureChain(placedByRegion.get(region.environmentId) ?? [])) {
-      edges.push({
-        key: `figure:${from.star.key}->${to.star.key}`,
-        kind: "figure",
-        fromKey: from.star.key,
-        toKey: to.star.key,
-        d: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
-        order: 0,
-      });
-    }
+  const rootTotal = forest.roots.reduce((sum, key) => sum + leafCount(key, forest, cache), 0);
+  let cursor = fieldLeft;
+  for (const key of forest.roots) {
+    const span =
+      rootTotal === 0 ? fieldWidth : (leafCount(key, forest, cache) / rootTotal) * fieldWidth;
+    place(key, cursor, span);
+    cursor += span;
   }
-  for (const placed of stars) {
-    for (const dependsOnKey of placed.star.dependsOnKeys) {
-      const target = placedByKey.get(dependsOnKey);
-      if (target === undefined) continue;
-      edges.push({
-        key: `depends:${placed.star.key}->${dependsOnKey}`,
-        kind: "dependency",
-        fromKey: placed.star.key,
-        toKey: dependsOnKey,
-        d: dependencyPath(placed, target, starSeed(placed.star.key)),
-        order: 0,
-      });
-    }
-  }
-  // Figure lines trace out first and dependencies land over them, so the sky
-  // reads as constellations that then reveal what waits on what.
-  const ordered = edges
-    .toSorted(
-      (left, right) =>
-        (left.kind === "figure" ? 0 : 1) - (right.kind === "figure" ? 0 : 1) ||
-        left.key.localeCompare(right.key),
-    )
-    .map((edge, index) => ({ ...edge, order: index }));
+
+  separateWithinTiers(placed, placedByKey, fieldLeft, fieldLeft + fieldWidth, options);
+  // The pass writes replacements into the lookup, so the ordered list has to be
+  // re-read from it before the branches are routed against those positions.
+  const separated = placed.map((entry) => placedByKey.get(entry.feature.key) ?? entry);
+
+  // Branches, outward from the root: the order the sky traces itself in.
+  const branches: SkyBranchLayout[] = [];
+  const walk = (key: string, order: { value: number }) => {
+    const child = placedByKey.get(key);
+    if (child === undefined) return;
+    const parentKey = forest.parentOf.get(key);
+    const parent = parentKey === undefined ? null : placedByKey.get(parentKey);
+    const fromX = parent?.x ?? originX;
+    const fromY = parent?.y ?? originY;
+    branches.push({
+      key: `${parentKey ?? "origin"}->${key}`,
+      fromKey: parentKey ?? null,
+      toKey: key,
+      d: branchPath(fromX, fromY, child.x, child.y),
+      planned: child.feature.planned || (parent?.feature.planned ?? false),
+      order: order.value,
+    });
+    order.value += 1;
+    for (const next of forest.childrenOf.get(key) ?? []) walk(next, order);
+  };
+  const order = { value: 0 };
+  for (const key of forest.roots) walk(key, order);
 
   const moon =
     model.master === null
       ? null
       : {
           x: round(width - options.paddingRight - options.moonRadius - 14),
-          // Centred in whatever open sky sits above the top band, so a tall
-          // pane hangs the moon high rather than pinning it to the pane's edge.
           y: round(Math.max(options.moonRadius + 12, skyTop / 2)),
           radius: options.moonRadius,
         };
@@ -391,10 +439,15 @@ export function layoutStarMap(
   return {
     width,
     height,
-    bands,
-    regions,
-    stars,
-    edges: ordered,
+    tiers,
+    features: separated,
+    branches,
+    origin: {
+      x: round(originX),
+      y: round(originY),
+      radius: options.originRadius,
+      label: SKY_ORIGIN_LABEL,
+    },
     moon,
     skyTop: round(skyTop),
     horizonY: round(horizonY),

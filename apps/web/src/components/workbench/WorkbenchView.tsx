@@ -24,7 +24,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
-import type { StarMapMaster } from "./StarMap.model";
+import type { SkyMaster } from "./StarMap.model";
 import {
   collectMasterCreatedThreadIds,
   resolveWorkbenchMaster,
@@ -87,7 +87,7 @@ export function WorkbenchView() {
   // The orchestrator hangs in the sky as the moon rather than as one more star,
   // so it needs its own name and machine — the map never sees it as a thread.
   const masterShell = useThreadShell(masterThreadRef);
-  const starMapMaster = useMemo((): StarMapMaster | null => {
+  const starMapMaster = useMemo((): SkyMaster | null => {
     if (designated === null || masterThreadKey === null) return null;
     return {
       key: masterThreadKey,

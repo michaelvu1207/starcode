@@ -1,68 +1,75 @@
 /**
  * Fork-owned: what the sky contains.
  *
- * One star is one piece of work. Two sources feed it and they answer different
- * questions, which is why both are needed:
+ * One star is one feature, and the sky is deliberately **independent of
+ * connections**. Which machine happens to be running a piece of work is a fact
+ * about today's fleet, not a fact about the work, and turning it into geography
+ * made the map answer a question nobody was asking. The machine survives as a
+ * line on the hover card and nowhere else.
  *
- *   - the thread shells every machine streams say what is *in flight* — the
- *     work that has a live status, a task list, someone waiting on it;
- *   - the feature-flow snapshot says where work has *reached* — the stage a
- *     piece of work has flowed into, and what it waits on.
+ * Three sources feed one list:
  *
- * A machine that cannot report stages still contributes its in-flight work, so
- * the sky is never empty because one server is a release behind; its stars park
- * at the horizon and the map says so by name. A machine that is not connected
- * contributes nothing and is not named — it has not been asked, and blaming it
- * for the network would be a lie told four times a day.
+ *   - **thread shells** say what is in flight — live status, task lists, who is
+ *     waiting on what right now;
+ *   - **the feature-flow snapshot** says where work has reached, computed from
+ *     the repository;
+ *   - **the feature map** is what the orchestrator says, written through its
+ *     tools: real names, descriptions, promotions it performed, links it drew,
+ *     and features that exist only as intent.
  *
- * Work that has settled is on the map only when the flow snapshot places it:
- * a finished piece of work that landed in dev is worth seeing sit there, while
- * a finished thread nobody can place has nowhere honest to sit and belongs in
- * the sidebar's history rather than in the sky.
+ * Where the map and the derived flow disagree, the map wins for the fields it
+ * authors. It was written by something that knows why the work exists; the
+ * repository only knows what landed, and it finds out later.
  */
-import type { FeatureFlowMergeabilityState, FeatureFlowStage } from "@t3tools/contracts";
-import type { OrchestrationThreadPlanSummary } from "@t3tools/contracts";
+import type {
+  FeatureFlowMergeabilityState,
+  FeatureFlowStage,
+  FeatureMapEntry,
+  OrchestrationThreadPlanSummary,
+} from "@t3tools/contracts";
 
 import type { FeatureFlowFeatureNode, FeatureFlowView } from "./FeatureFlow.model";
 import type { WorkbenchBoard, WorkbenchBoardCard } from "./Workbench.board";
 import { toneForPeerThreadStatus, toneForThreadStatus, type WorkbenchTone } from "./Workbench.tone";
 
-export interface StarMapStar {
-  /** `environmentId:threadId` — unique across machines. */
-  readonly key: string;
-  readonly threadId: string;
+export interface SkyThreadRef {
   readonly environmentId: string;
-  readonly machineLabel: string;
-  readonly title: string;
-  readonly projectTitle: string | null;
+  readonly threadId: string;
+}
+
+export interface SkyFeature {
+  /** Stable across reloads and across machines. Seeds the star's position. */
+  readonly key: string;
+  readonly name: string;
+  readonly description: string | null;
   readonly stage: FeatureFlowStage;
   /**
-   * False when no machine could say where this work has reached. The star still
-   * renders, at the horizon, and its card says the stage is unreported rather
-   * than claiming it is in progress.
+   * False when nothing could say where this has reached — no repository answer
+   * and no promotion. The star sits at the first tier and its card says so
+   * rather than claiming the work is under way.
    */
   readonly stageReported: boolean;
+  /** Null for a feature nobody has started yet. */
+  readonly threadRef: SkyThreadRef | null;
+  /** Hover-card detail only. Never geography. */
+  readonly machineLabel: string | null;
+  readonly projectTitle: string | null;
   readonly tone: WorkbenchTone;
-  /** A turn is running right now: the one thing on the map that pulses. */
+  /** A turn is running: the one thing on the map that pulses. */
   readonly alive: boolean;
-  /** Work that has come to rest. Dimmer, and never animated. */
   readonly settled: boolean;
+  /** Intent rather than work. Renders as a ghost beside the lit stars. */
+  readonly planned: boolean;
   readonly planSummary: OrchestrationThreadPlanSummary | null;
   readonly mergeability: FeatureFlowMergeabilityState;
-  /** Started by the orchestrator, per its own transcript. */
-  readonly masterCreated: boolean;
+  /** Features this one branches from. Empty means it branches off the origin. */
   readonly dependsOnKeys: ReadonlyArray<string>;
+  /** The orchestrator wrote this entry, rather than it being derived. */
+  readonly masterAuthored: boolean;
   readonly lastActivityAt: string;
 }
 
-export interface StarMapRegion {
-  readonly environmentId: string;
-  readonly label: string;
-  readonly isLocal: boolean;
-  readonly stars: ReadonlyArray<StarMapStar>;
-}
-
-export interface StarMapMaster {
+export interface SkyMaster {
   readonly key: string;
   readonly threadId: string;
   readonly environmentId: string;
@@ -71,87 +78,91 @@ export interface StarMapMaster {
   readonly alive: boolean;
 }
 
-export interface StarMapModel {
-  readonly regions: ReadonlyArray<StarMapRegion>;
-  readonly master: StarMapMaster | null;
-  readonly starCount: number;
+export interface SkyModel {
+  readonly features: ReadonlyArray<SkyFeature>;
+  readonly master: SkyMaster | null;
+  readonly realCount: number;
+  readonly plannedCount: number;
   /** Connected machines that cannot report stages, named once, plainly. */
   readonly stageUnsupportedLabels: ReadonlyArray<string>;
   readonly diagnostics: ReadonlyArray<string>;
 }
 
-export interface StarMapModelInput {
+export interface SkyMachineMap {
+  readonly label: string;
+  readonly entries: ReadonlyArray<FeatureMapEntry>;
+}
+
+export interface SkyModelInput {
   readonly board: WorkbenchBoard;
   readonly flow: FeatureFlowView;
-  readonly master: StarMapMaster | null;
+  /** Each machine's own registry, keyed by the machine that served it. */
+  readonly mapEntriesByEnvironment: ReadonlyMap<string, SkyMachineMap>;
+  readonly master: SkyMaster | null;
   /** `environmentId:projectId` → project title, for the hover card. */
   readonly projectTitleByKey: ReadonlyMap<string, string>;
 }
+
+const threadKey = (environmentId: string, threadId: string): string =>
+  `${environmentId}:${threadId}`;
+
+/**
+ * Registry keys are namespaced by machine as well as by entry id.
+ *
+ * A registry is per-server: the orchestrator writes to the machine it runs on,
+ * and every machine can hold one. Two of them minting the same twelve hex
+ * characters is unlikely and would be silent, which is the combination worth
+ * one prefix.
+ */
+const mapKey = (environmentId: string, entryId: string): string =>
+  `map:${environmentId}:${entryId}`;
 
 const activityMs = (value: string): number => {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-/**
- * Whether a thread has a turn running.
- *
- * Derived from the same live session state the sidebar reads, never from
- * anything an agent says about itself.
- */
-function isAlive(card: WorkbenchBoardCard): boolean {
-  return card.status === "working";
+interface ThreadFacts {
+  readonly threadRef: SkyThreadRef;
+  readonly machineLabel: string;
+  readonly projectTitle: string | null;
+  readonly title: string;
+  readonly tone: WorkbenchTone;
+  readonly alive: boolean;
+  readonly settled: boolean;
+  readonly planSummary: OrchestrationThreadPlanSummary | null;
+  readonly lastActivityAt: string;
 }
 
-function starFromCard(
+function factsFromCard(
   card: WorkbenchBoardCard,
   machineLabel: string,
-  feature: FeatureFlowFeatureNode | undefined,
   projectTitleByKey: ReadonlyMap<string, string>,
-): StarMapStar {
+): ThreadFacts {
   const thread = card.thread;
   return {
-    key: card.key,
-    threadId: thread.id,
-    environmentId: thread.environmentId,
+    threadRef: { environmentId: thread.environmentId, threadId: thread.id },
     machineLabel,
-    title: thread.title,
     projectTitle: projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
-    stage: feature?.stage ?? "in-progress",
-    stageReported: feature !== undefined,
+    title: thread.title,
     tone: toneForThreadStatus(card.status),
-    alive: isAlive(card),
+    alive: card.status === "working",
     settled: card.section === "settled",
-    planSummary: thread.planSummary ?? feature?.planSummary ?? null,
-    mergeability: feature?.mergeability.state ?? "unknown",
-    masterCreated: card.masterCreated,
-    dependsOnKeys: feature?.dependsOnKeys ?? [],
+    planSummary: thread.planSummary ?? null,
     lastActivityAt: thread.updatedAt,
   };
 }
 
-/**
- * A feature the shells did not carry — work that has landed and whose thread
- * has since settled out of the in-flight view. It keeps the stage the server
- * gave it, which is the entire reason it is worth drawing.
- */
-function starFromFeature(feature: FeatureFlowFeatureNode): StarMapStar {
+function factsFromFeature(feature: FeatureFlowFeatureNode): ThreadFacts {
   return {
-    key: feature.key,
-    threadId: feature.threadId,
-    environmentId: feature.environmentId,
+    threadRef: { environmentId: feature.environmentId, threadId: feature.threadId },
     machineLabel: feature.environmentLabel,
-    title: feature.title,
     projectTitle: null,
-    stage: feature.stage,
-    stageReported: true,
+    title: feature.title,
     tone: toneForPeerThreadStatus(feature.status),
     alive: feature.status === "working",
     settled: feature.status === "settled",
     planSummary: feature.planSummary,
-    mergeability: feature.mergeability.state,
-    masterCreated: false,
-    dependsOnKeys: feature.dependsOnKeys,
     lastActivityAt: feature.lastActivityAt,
   };
 }
@@ -159,64 +170,130 @@ function starFromFeature(feature: FeatureFlowFeatureNode): StarMapStar {
 /**
  * Composes the sky.
  *
- * Regions keep the board's machine order (local first, then by label) so the
- * sky does not rearrange itself when a machine reconnects — a map whose regions
- * swap places between visits is a map you have to re-read every time.
+ * The output is one flat list. Ordering is by key rather than by activity, for
+ * the same reason positions are seeded rather than random: the shape of the
+ * tree must not change because a turn finished somewhere.
  */
-export function buildStarMapModel(input: StarMapModelInput): StarMapModel {
+export function buildSkyModel(input: SkyModelInput): SkyModel {
   const featuresByKey = new Map(input.flow.features.map((feature) => [feature.key, feature]));
-  const claimed = new Set<string>();
 
-  const regions: StarMapRegion[] = [];
-  let starCount = 0;
+  // 1. Everything with a thread behind it, from either source, keyed by thread.
+  const threadFacts = new Map<string, ThreadFacts>();
+  const derivedStage = new Map<string, FeatureFlowStage>();
+  const derivedDependsOn = new Map<string, ReadonlyArray<string>>();
+  const derivedMergeability = new Map<string, FeatureFlowMergeabilityState>();
 
   for (const group of input.board.groups) {
-    const stars: StarMapStar[] = [];
     for (const card of group.cards) {
       const feature = featuresByKey.get(card.key);
-      // A settled thread the flow snapshot cannot place has no stage to sit in.
+      // A settled thread nothing can place has no honest tier to sit in.
       if (card.section === "settled" && feature === undefined) continue;
-      if (feature !== undefined) claimed.add(card.key);
-      stars.push(starFromCard(card, group.label, feature, input.projectTitleByKey));
+      threadFacts.set(card.key, factsFromCard(card, group.label, input.projectTitleByKey));
     }
-    for (const feature of input.flow.features) {
-      if (feature.environmentId !== group.environmentId) continue;
-      if (claimed.has(feature.key)) continue;
-      claimed.add(feature.key);
-      stars.push(starFromFeature(feature));
-    }
-    if (stars.length === 0) continue;
+  }
+  for (const feature of input.flow.features) {
+    if (!threadFacts.has(feature.key)) threadFacts.set(feature.key, factsFromFeature(feature));
+    derivedStage.set(feature.key, feature.stage);
+    derivedDependsOn.set(feature.key, feature.dependsOnKeys);
+    derivedMergeability.set(feature.key, feature.mergeability.state);
+  }
 
-    // Sorted by key rather than by activity: position must depend on which
-    // stars are in the sky, never on the order they last moved, or the field
-    // shuffles itself every time a turn completes.
-    stars.sort((left, right) => left.key.localeCompare(right.key));
-    starCount += stars.length;
-    regions.push({
-      environmentId: group.environmentId,
-      label: group.label,
-      isLocal: group.isLocal,
-      stars,
+  // 2. The orchestrator's entries, which claim threads and add features of
+  //    their own.
+  const claimedThreadKey = new Map<string, string>();
+  const built: SkyFeature[] = [];
+
+  for (const [environmentId, machine] of input.mapEntriesByEnvironment) {
+    for (const entry of machine.entries) {
+      const key = mapKey(environmentId, entry.id);
+      const boundKey = entry.threadId === null ? null : threadKey(environmentId, entry.threadId);
+      const facts = boundKey === null ? undefined : threadFacts.get(boundKey);
+      if (boundKey !== null) claimedThreadKey.set(boundKey, key);
+
+      built.push({
+        key,
+        name: entry.name,
+        description: entry.description,
+        // The promotion the orchestrator performed outranks what the
+        // repository has noticed so far.
+        stage: entry.stage,
+        stageReported: true,
+        threadRef: facts?.threadRef ?? null,
+        machineLabel: facts?.machineLabel ?? machine.label,
+        projectTitle: facts?.projectTitle ?? null,
+        tone: entry.planned ? "quiet" : (facts?.tone ?? "quiet"),
+        alive: facts?.alive ?? false,
+        settled: facts?.settled ?? false,
+        planned: entry.planned,
+        planSummary: facts?.planSummary ?? null,
+        mergeability:
+          boundKey === null ? "unknown" : (derivedMergeability.get(boundKey) ?? "unknown"),
+        dependsOnKeys: entry.dependsOn.map((id) => mapKey(environmentId, id)),
+        masterAuthored: true,
+        lastActivityAt: facts?.lastActivityAt ?? entry.updatedAt,
+      });
+    }
+  }
+
+  // 3. Work nobody has written down yet still belongs on the sky.
+  for (const [key, facts] of threadFacts) {
+    if (claimedThreadKey.has(key)) continue;
+    const stage = derivedStage.get(key);
+    built.push({
+      key,
+      name: facts.title,
+      description: null,
+      stage: stage ?? "in-progress",
+      stageReported: stage !== undefined,
+      threadRef: facts.threadRef,
+      machineLabel: facts.machineLabel,
+      projectTitle: facts.projectTitle,
+      tone: facts.tone,
+      alive: facts.alive,
+      settled: facts.settled,
+      planned: false,
+      planSummary: facts.planSummary,
+      mergeability: derivedMergeability.get(key) ?? "unknown",
+      dependsOnKeys: derivedDependsOn.get(key) ?? [],
+      masterAuthored: false,
+      lastActivityAt: facts.lastActivityAt,
     });
   }
 
+  // 4. Redirect derived links through whatever claimed their thread, then drop
+  //    anything pointing off the sky: a link to a feature that is not drawn is
+  //    a branch from nothing.
+  const present = new Set(built.map((feature) => feature.key));
+  const features = built
+    .map((feature): SkyFeature => {
+      const resolved = feature.dependsOnKeys
+        .map((key) => claimedThreadKey.get(key) ?? key)
+        .filter((key, index, all) => key !== feature.key && all.indexOf(key) === index)
+        .filter((key) => present.has(key));
+      const unchanged =
+        resolved.length === feature.dependsOnKeys.length &&
+        resolved.every((key, index) => key === feature.dependsOnKeys[index]);
+      return unchanged ? feature : { ...feature, dependsOnKeys: resolved };
+    })
+    .toSorted((left, right) => left.key.localeCompare(right.key));
+
   return {
-    regions,
+    features,
     master: input.master,
-    starCount,
+    realCount: features.filter((feature) => !feature.planned).length,
+    plannedCount: features.filter((feature) => feature.planned).length,
     stageUnsupportedLabels: input.flow.unsupportedLabels,
     diagnostics: input.flow.diagnostics,
   };
 }
 
-/** The most recently touched star, for describing an otherwise silent sky. */
-export function latestStar(model: StarMapModel): StarMapStar | null {
-  let latest: StarMapStar | null = null;
-  for (const region of model.regions) {
-    for (const star of region.stars) {
-      if (latest === null || activityMs(star.lastActivityAt) > activityMs(latest.lastActivityAt)) {
-        latest = star;
-      }
+/** The most recently touched feature, for describing an otherwise silent sky. */
+export function latestFeature(model: SkyModel): SkyFeature | null {
+  let latest: SkyFeature | null = null;
+  for (const feature of model.features) {
+    if (feature.planned) continue;
+    if (latest === null || activityMs(feature.lastActivityAt) > activityMs(latest.lastActivityAt)) {
+      latest = feature;
     }
   }
   return latest;

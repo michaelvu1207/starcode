@@ -6,207 +6,209 @@
  * production bundle at all — there is no runtime flag a user could find.
  *
  * It exists because the map cannot be judged empty. Every encoding it carries —
- * stage altitude, machine regions, status colour, task-progress arcs, the
- * dependency connectors, the settled dimming, the named degrade — needs work in
- * several states across several machines to be visible, and producing that for
- * real means paid turns on four machines and branches merged into three trunks.
- * A fixture makes the thing reviewable and screenshot-able; the same argument
- * the sky's own meteor-shower flag is built on.
+ * tier altitude, lineage branching, status colour, task-progress arcs, the
+ * ghosts of a plan, the named degrade — needs work in several states with real
+ * relationships between it, and producing that for real means paid turns on
+ * four machines and branches merged into three trunks.
  *
  * Delete this file and the guard in `WorkbenchStarMap` and nothing else moves.
  */
-import type { StarMapModel, StarMapRegion, StarMapStar } from "./StarMap.model";
+import type { SkyFeature, SkyModel } from "./StarMap.model";
 
-interface DemoStar {
+interface DemoFeature {
   readonly id: string;
-  readonly title: string;
-  readonly stage: StarMapStar["stage"];
-  readonly tone: StarMapStar["tone"];
+  readonly name: string;
+  readonly description?: string;
+  readonly stage: SkyFeature["stage"];
+  readonly tone?: SkyFeature["tone"];
   readonly alive?: boolean;
   readonly settled?: boolean;
+  readonly planned?: boolean;
   readonly stageReported?: boolean;
   readonly progress?: readonly [completed: number, total: number];
-  readonly dependsOn?: ReadonlyArray<string>;
-  readonly masterCreated?: boolean;
-  readonly mergeability?: StarMapStar["mergeability"];
+  readonly dependsOn?: string;
+  readonly machine?: string;
+  readonly project?: string;
+  readonly authored?: boolean;
+  readonly mergeability?: SkyFeature["mergeability"];
 }
 
-function region(
-  environmentId: string,
-  label: string,
-  isLocal: boolean,
-  project: string,
-  stars: ReadonlyArray<DemoStar>,
-): StarMapRegion {
-  return {
-    environmentId,
-    label,
-    isLocal,
-    stars: stars
-      .map(
-        (star): StarMapStar => ({
-          key: `${environmentId}:${star.id}`,
-          threadId: star.id,
-          environmentId,
-          machineLabel: label,
-          title: star.title,
-          projectTitle: project,
-          stage: star.stage,
-          stageReported: star.stageReported ?? true,
-          tone: star.tone,
-          alive: star.alive ?? false,
-          settled: star.settled ?? false,
-          planSummary:
-            star.progress === undefined
-              ? null
-              : { completed: star.progress[0], total: star.progress[1], activeStep: null },
-          mergeability: star.mergeability ?? "unknown",
-          masterCreated: star.masterCreated ?? false,
-          dependsOnKeys: (star.dependsOn ?? []).map((id) => `${environmentId}:${id}`),
-          lastActivityAt: "2026-07-25T10:00:00.000Z",
-        }),
-      )
-      .toSorted((left, right) => left.key.localeCompare(right.key)),
-  };
-}
+const feature = (input: DemoFeature): SkyFeature => ({
+  key: input.id,
+  name: input.name,
+  description: input.description ?? null,
+  stage: input.stage,
+  stageReported: input.stageReported ?? true,
+  threadRef:
+    input.planned === true ? null : { environmentId: "env-mac", threadId: input.id.slice(0, 12) },
+  machineLabel: input.planned === true ? null : (input.machine ?? "mac"),
+  projectTitle: input.planned === true ? null : (input.project ?? "starcode"),
+  tone: input.tone ?? "quiet",
+  alive: input.alive ?? false,
+  settled: input.settled ?? false,
+  planned: input.planned ?? false,
+  planSummary:
+    input.progress === undefined
+      ? null
+      : { completed: input.progress[0], total: input.progress[1], activeStep: null },
+  mergeability: input.mergeability ?? "unknown",
+  dependsOnKeys: input.dependsOn === undefined ? [] : [input.dependsOn],
+  masterAuthored: input.authored ?? false,
+  lastActivityAt: "2026-07-25T10:00:00.000Z",
+});
 
-export function buildStarMapDemoModel(): StarMapModel {
-  const regions = [
-    region("env-mac", "mac", true, "starcode", [
-      {
-        id: "t-sky",
-        title: "Workbench star map",
-        stage: "in-progress",
-        tone: "working",
-        alive: true,
-        progress: [4, 7],
-        masterCreated: true,
-      },
-      {
-        id: "t-import",
-        title: "Conversation import",
-        stage: "in-progress",
-        tone: "attention",
-        progress: [6, 8],
-        dependsOn: ["t-history"],
-        mergeability: "blocked",
-      },
-      {
-        id: "t-history",
-        title: "Terminal history reader",
-        stage: "in-dev",
-        tone: "done",
-        settled: true,
-        mergeability: "ready",
-      },
-      {
-        id: "t-connections",
-        title: "Connections dropdown",
-        stage: "in-progress",
-        tone: "input",
-        progress: [2, 5],
-        masterCreated: true,
-      },
-      {
-        id: "t-rows",
-        title: "Thread row cleanup",
-        stage: "in-staging",
-        tone: "done",
-        settled: true,
-      },
-      {
-        id: "t-brand",
-        title: "starcode restyle",
-        stage: "in-production",
-        tone: "done",
-        settled: true,
-      },
-      {
-        id: "t-sidebar",
-        title: "Sidebar header",
-        stage: "in-production",
-        tone: "done",
-        settled: true,
-      },
-    ]),
-    region("env-laptop", "simforgelaptop", false, "simcloud", [
-      {
-        id: "t-actor",
-        title: "Actor control overhaul",
-        stage: "in-progress",
-        tone: "working",
-        alive: true,
-        progress: [3, 11],
-      },
-      {
-        id: "t-timeline",
-        title: "Behaviour timeline dock",
-        stage: "in-progress",
-        tone: "failed",
-        dependsOn: ["t-actor"],
-      },
-      {
-        id: "t-editor",
-        title: "Scenario editor map load",
-        stage: "in-dev",
-        tone: "done",
-        settled: true,
-      },
-      {
-        id: "t-routes",
-        title: "Dead route cleanup",
-        stage: "in-staging",
-        tone: "done",
-        settled: true,
-      },
-    ]),
-    region("env-simforge1", "simforge1", false, "alpamayo", [
-      {
-        id: "t-trainer",
-        title: "Trainer smoke harness",
-        stage: "in-progress",
-        tone: "working",
-        alive: true,
-        progress: [9, 12],
-      },
-      {
-        id: "t-exporter",
-        title: "Export lane gating",
-        stage: "in-progress",
-        tone: "quiet",
-        // Reported by no machine: parked at the horizon and honest about it.
-        stageReported: false,
-      },
-      {
-        id: "t-eval",
-        title: "Eval harness protocol v1",
-        stage: "in-dev",
-        tone: "done",
-        settled: true,
-        mergeability: "ready",
-      },
-      {
-        id: "t-fleet",
-        title: "Render fleet sizing",
-        stage: "in-production",
-        tone: "done",
-        settled: true,
-      },
-    ]),
-    region("env-pathpc", "path-pc", false, "v2x", [
-      {
-        id: "t-bridge",
-        title: "Drive bridge tunnel",
-        stage: "in-progress",
-        tone: "attention",
-        progress: [1, 4],
-      },
-      { id: "t-sim", title: "Local simulator refresh", stage: "in-progress", tone: "quiet" },
-    ]),
+export function buildSkyDemoModel(): SkyModel {
+  const features: ReadonlyArray<SkyFeature> = [
+    // Shipped and settled work, high in the sky, still connected to the root it
+    // grew from.
+    feature({
+      id: "a-brand",
+      name: "starcode restyle",
+      description: "Ink-and-butter palette across every surface.",
+      stage: "in-production",
+      tone: "done",
+      settled: true,
+      authored: true,
+    }),
+    feature({
+      id: "b-sidebar",
+      name: "Sidebar header",
+      stage: "in-production",
+      tone: "done",
+      settled: true,
+      dependsOn: "a-brand",
+    }),
+    feature({
+      id: "c-rows",
+      name: "Thread rows and task progress",
+      stage: "in-staging",
+      tone: "done",
+      settled: true,
+      dependsOn: "a-brand",
+      mergeability: "ready",
+    }),
+    feature({
+      id: "d-sky",
+      name: "Living sky",
+      description: "Drift, twinkle, and an hourly shooting star.",
+      stage: "in-staging",
+      tone: "done",
+      settled: true,
+      dependsOn: "a-brand",
+      authored: true,
+    }),
+
+    // Landed work: in latest, not yet promoted further.
+    feature({
+      id: "e-history",
+      name: "Terminal history reader",
+      stage: "in-dev",
+      tone: "done",
+      settled: true,
+      mergeability: "ready",
+    }),
+    feature({
+      id: "f-connections",
+      name: "Connections dropdown",
+      description: "Health, ping, and spend per machine.",
+      stage: "in-dev",
+      tone: "done",
+      settled: true,
+      dependsOn: "e-history",
+      authored: true,
+      machine: "simforgelaptop",
+    }),
+
+    // In flight, branching off the root and off each other.
+    feature({
+      id: "g-starmap",
+      name: "Workbench star map",
+      description: "The sky itself: lineage, tiers, and the orchestrator's map.",
+      stage: "in-progress",
+      tone: "working",
+      alive: true,
+      progress: [5, 8],
+      dependsOn: "d-sky",
+      authored: true,
+    }),
+    feature({
+      id: "h-import",
+      name: "Conversation import",
+      description: "Resume a terminal session as a thread.",
+      stage: "in-progress",
+      tone: "attention",
+      progress: [6, 8],
+      dependsOn: "e-history",
+      mergeability: "blocked",
+      authored: true,
+    }),
+    feature({
+      id: "i-accounts",
+      name: "Accounts and usage rework",
+      stage: "in-progress",
+      tone: "input",
+      progress: [2, 5],
+      machine: "simforge1",
+      project: "starcode",
+    }),
+    feature({
+      id: "j-actor",
+      name: "Actor control overhaul",
+      stage: "in-progress",
+      tone: "working",
+      alive: true,
+      progress: [3, 11],
+      machine: "simforgelaptop",
+      project: "simcloud",
+    }),
+    feature({
+      id: "k-timeline",
+      name: "Behaviour timeline dock",
+      stage: "in-progress",
+      tone: "failed",
+      dependsOn: "j-actor",
+      machine: "simforgelaptop",
+      project: "simcloud",
+    }),
+    feature({
+      id: "l-exporter",
+      name: "Export lane gating",
+      stage: "in-progress",
+      tone: "quiet",
+      // Nothing could place this one, and the card says so.
+      stageReported: false,
+      machine: "path-pc",
+      project: "alpamayo",
+    }),
+
+    // The plan: what the orchestrator intends, branching from real work.
+    feature({
+      id: "p-desktop",
+      name: "Desktop rebuild pipeline",
+      description: "One command from a landed change to an installed app.",
+      stage: "in-progress",
+      planned: true,
+      dependsOn: "g-starmap",
+    }),
+    feature({
+      id: "p-mobile",
+      name: "Sky on mobile",
+      description: "The same tree, one branch at a time.",
+      stage: "in-progress",
+      planned: true,
+      dependsOn: "p-desktop",
+    }),
+    feature({
+      id: "p-projects",
+      name: "Projects as cross-machine categories",
+      stage: "in-dev",
+      planned: true,
+      dependsOn: "f-connections",
+    }),
   ];
 
   return {
-    regions,
+    features: [...features].toSorted((left, right) => left.key.localeCompare(right.key)),
     master: {
       key: "env-mac:t-master",
       threadId: "t-master",
@@ -215,7 +217,8 @@ export function buildStarMapDemoModel(): StarMapModel {
       title: "Orchestrator",
       alive: true,
     },
-    starCount: regions.reduce((total, entry) => total + entry.stars.length, 0),
+    realCount: features.filter((entry) => !entry.planned).length,
+    plannedCount: features.filter((entry) => entry.planned).length,
     stageUnsupportedLabels: ["path-pc"],
     diagnostics: [],
   };

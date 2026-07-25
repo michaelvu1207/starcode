@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
  * time rather than in the tool handlers alone — a session that is not the
  * master never holds a token that carries it.
  */
-export type McpCapability = "preview" | "peers" | "peers-operate";
+export type McpCapability = "preview" | "peers" | "peers-operate" | "features-operate";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

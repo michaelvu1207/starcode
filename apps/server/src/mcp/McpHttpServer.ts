@@ -23,6 +23,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { FeatureMapToolkitHandlersLive } from "./toolkits/featureMap/handlers.ts";
+import { FeatureMapToolkit } from "./toolkits/featureMap/tools.ts";
 import { PeerThreadsToolkitHandlersLive } from "./toolkits/peerThreads/handlers.ts";
 import { PeerThreadsToolkit } from "./toolkits/peerThreads/tools.ts";
 
@@ -221,6 +223,10 @@ export const PeerThreadsToolkitRegistrationLive = McpServer.toolkit(PeerThreadsT
   Layer.provide(PeerThreadsToolkitHandlersLive),
 );
 
+export const FeatureMapToolkitRegistrationLive = McpServer.toolkit(FeatureMapToolkit).pipe(
+  Layer.provide(FeatureMapToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -230,4 +236,5 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PeerThreadsToolkitRegistrationLive,
+  FeatureMapToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

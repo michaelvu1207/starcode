@@ -55,6 +55,14 @@
   }
 }
 
+/* Intent has no light of its own, so a ghost neither twinkles nor pulses. It
+   is the one thing on the sky that is deliberately inert — the difference
+   between a plan and the work is meant to be felt, not only seen. */
+.sc-starmap-star--planned {
+  animation: none;
+  opacity: 0.5;
+}
+
 /* Work that has come to rest does not twinkle. A settled star is a fixed
    point: it is finished, and the map should feel that. */
 .sc-starmap-star--settled {
@@ -144,6 +152,7 @@
 @media (prefers-reduced-motion: reduce) {
   .sc-starmap-star,
   .sc-starmap-star--igniting,
+  .sc-starmap-star--planned,
   .sc-starmap-star--alive .sc-starmap-halo,
   .sc-starmap-moon {
     animation: none;
