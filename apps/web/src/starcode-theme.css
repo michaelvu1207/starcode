@@ -470,10 +470,7 @@
 .starcode-wordmark-text {
   font-weight: 600;
   line-height: 1;
-  /* Negative tracking is load-bearing, not taste: the sidebar header leaves
-     roughly 53px for the word, and Baloo 2 at 13px sets "starcode" at 51.2px
-     without it — close enough that the browser ellipsises to "starco…". */
-  letter-spacing: -0.015em;
+  letter-spacing: -0.005em;
 }
 
 /* ---------------------------------------------------------------------------

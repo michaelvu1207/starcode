@@ -35,11 +35,10 @@ export function StarcodeMark({ className }: { className?: string }) {
 /**
  * Mark + word.
  *
- * `size` is two real lockups rather than one lockup with overridable classes:
- * the sidebar's is squeezed to fit a header that has ~51px left over after the
- * titlebar inset and four action buttons, and passing a bigger `text-*` class
- * into that lockup fights its deliberately small default. The hero lockup gets
- * the proportions the mark actually wants.
+ * `size` is two real lockups rather than one lockup with overridable classes,
+ * because passing a `text-*` class into a lockup fights its own default. The
+ * compact one rides the sidebar header's brand row; the hero one heads the
+ * pairing page.
  *
  * `tone` follows the sidebar header's own rule: the header can be drawn over
  * the dev/nightly channel backdrop, where everything must go white to stay
@@ -60,21 +59,18 @@ export function StarcodeWordmark({
 }) {
   const hero = size === "hero";
   return (
-    <span className={cn("flex min-w-0 items-center", hero ? "gap-2" : "gap-1", className)}>
+    <span className={cn("flex min-w-0 items-center", hero ? "gap-2" : "gap-1.5", className)}>
       <StarcodeMark
         className={cn(
-          hero ? "size-5" : "size-3",
+          hero ? "size-5" : "size-3.5",
           tone === "on-backdrop" ? "text-white" : "text-primary",
           markClassName,
         )}
       />
       <span
         className={cn(
-          // Compact is 13px, not the 15px a wordmark would normally take, for
-          // the header-space reason above. Baloo 2's tall x-height keeps it
-          // legible there.
           "starcode-wordmark-text truncate",
-          hero ? "text-xl" : "text-[0.8125rem]",
+          hero ? "text-xl" : "text-[0.9375rem]",
           tone === "on-backdrop" ? "text-white" : "text-foreground",
           wordClassName,
         )}

@@ -14,7 +14,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
 import { StarcodeWordmark } from "../brand/StarcodeWordmark";
@@ -27,10 +26,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
   /**
-   * Right-aligned controls rendered beside the brand. When present the brand
-   * gives way to them as the sidebar narrows — first dropping the word, then
-   * (upstream's own rule) the whole mark — instead of pushing them out of the
-   * header.
+   * The action row rendered beneath the brand. Upstream put its actions beside
+   * the brand and had the brand give way as the sidebar narrowed; giving them
+   * their own row means neither has to yield, so the wordmark is never
+   * truncated and the icons never crowd it.
    */
   actions?: ReactNode;
 }) {
@@ -40,44 +39,32 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative shrink-0 gap-0 px-3 py-0 md:px-0",
         isElectron && "drag-region",
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
-      <SidebarTrigger
-        className={cn(
-          "relative z-10 md:hidden",
-          backdropVariant &&
-            "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
-        )}
-      />
-      <SidebarBrand onBackdrop={backdropVariant !== null} shrinkable={actions != null} />
+      {/* Row 1 keeps the topbar's exact height so the wordmark still sits on
+          the same baseline as the main pane's header across the divider. */}
+      <div className="flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center">
+        <SidebarBrand onBackdrop={backdropVariant !== null} />
+      </div>
       {actions}
     </SidebarHeader>
   );
 });
 
-function SidebarBrand({ onBackdrop, shrinkable }: { onBackdrop: boolean; shrinkable: boolean }) {
+function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
-        shrinkable ? "shrink" : "shrink-0",
+        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
     >
-      <StarcodeWordmark
-        tone={onBackdrop ? "on-backdrop" : "default"}
-        // Upstream's threshold, kept: below it the word is dropped whole and
-        // the crescent stands alone. At the default 256px sidebar the header
-        // spends 52px on the titlebar-control inset and 126px on the four
-        // actions, which leaves ~51px for the word — see StarcodeWordmark for
-        // why it is set smaller than the "Code" it replaces.
-        wordClassName={cn(shrinkable && "@max-[15.5rem]/sidebar-header:hidden")}
-      />
+      <StarcodeWordmark tone={onBackdrop ? "on-backdrop" : "default"} />
     </Link>
   );
 }
