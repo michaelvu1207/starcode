@@ -24,7 +24,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { FolderPlusIcon, LayoutGridIcon, SearchIcon, SquarePenIcon } from "lucide-react";
+import { LayoutGridIcon, SearchIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { isElectron } from "../../env";
@@ -35,6 +35,7 @@ import { SidebarMenuButton, SidebarTrigger } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarChromeHeader } from "./SidebarChrome";
 import { SidebarConnectionsMenu } from "./SidebarConnectionsMenu";
+import { SidebarProjectsMenu } from "./SidebarProjectsMenu";
 import { SidebarV2ViewMenu } from "./SidebarV2ViewMenu";
 
 /**
@@ -190,24 +191,13 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
           <SidebarConnectionsMenu />
           {showProjectActions ? (
             <>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <SidebarMenuButton
-                      size="sm"
-                      type="button"
-                      className={HEADER_ACTION_BUTTON_CLASS}
-                      onClick={onNewProject}
-                      aria-label="New project"
-                      data-testid="sidebar-new-project"
-                    />
-                  }
-                >
-                  <FolderPlusIcon className={HEADER_ACTION_ICON_CLASS} />
-                  <TouchTarget />
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">New project</TooltipPopup>
-              </Tooltip>
+              {/* The projects popover replaces the old "New project" button
+                  rather than joining it: the strip is at seven icons and an
+                  eighth wraps at the sidebar's minimum width. Creating a folder
+                  on this machine is still here — it moved into the popover's
+                  foot, where it sits next to the projects it would be filed
+                  under. */}
+              <SidebarProjectsMenu onNewProject={onNewProject} />
               <SidebarV2ViewMenu />
             </>
           ) : null}

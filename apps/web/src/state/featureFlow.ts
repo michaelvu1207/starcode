@@ -40,7 +40,11 @@ export const environmentFeatureFlowSnapshotsAtom = createEnvironmentFeatureFlowS
  * routes. Silence about a machine you are connected to is the one answer this
  * panel must never give.
  */
-export function useFeatureFlowView(masterThreadKey: string | null): FeatureFlowView {
+export function useFeatureFlowView(
+  masterThreadKey: string | null,
+  /** Scopes the view to one project. Omit for the fleet-wide `/workbench` sky. */
+  includeThreadKey?: ((key: string) => boolean) | null,
+): FeatureFlowView {
   const { environments } = useEnvironments();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const snapshots = useAtomValue(environmentFeatureFlowSnapshotsAtom);
@@ -58,9 +62,9 @@ export function useFeatureFlowView(masterThreadKey: string | null): FeatureFlowV
             pending: environment.connection.phase !== "connected",
           };
         }),
-        { excludeThreadKey: masterThreadKey },
+        { excludeThreadKey: masterThreadKey, includeThreadKey: includeThreadKey ?? null },
       ),
-    [environments, masterThreadKey, serverConfigs, snapshots],
+    [environments, includeThreadKey, masterThreadKey, serverConfigs, snapshots],
   );
 }
 

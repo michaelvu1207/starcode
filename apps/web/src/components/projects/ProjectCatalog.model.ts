@@ -246,9 +246,14 @@ export interface ProjectMembership {
   readonly unfiledThreadKeys: ReadonlyArray<string>;
 }
 
+/**
+ * Takes plain strings rather than the branded ids on purpose: this is string
+ * concatenation, every caller already holds the two halves, and requiring the
+ * brands would make the rollup shapes carry them for no benefit.
+ */
 export function projectThreadKey(thread: {
-  readonly environmentId: EnvironmentId;
-  readonly id: ThreadId;
+  readonly environmentId: string;
+  readonly id: string;
 }): string {
   return `${thread.environmentId}:${thread.id}`;
 }

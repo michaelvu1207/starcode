@@ -141,6 +141,34 @@ describe("buildWorkbenchBoard", () => {
     expect(statuses.get("t-quiet")).toBe("ready");
   });
 
+  it("scopes the board to one project when the caller asks, and to the fleet when it does not", () => {
+    const threads = [thread("t-mine", LOCAL), thread("t-theirs", LOCAL)];
+
+    // Default is every thread: the Workbench predates projects and must not
+    // notice them.
+    expect(board({ activeThreads: threads }).cardCount).toBe(2);
+
+    const scoped = board({
+      activeThreads: threads,
+      includeThreadKey: (key) => key.endsWith(":t-mine"),
+    });
+    expect(scoped.groups.flatMap((group) => group.cards.map((card) => card.thread.id))).toEqual([
+      "t-mine",
+    ]);
+  });
+
+  it("does not count a filtered-out thread as settled work it is hiding", () => {
+    // "Hidden" means "settled, and you asked not to see settled". A thread that
+    // belongs to another project is not this board's work at all, so offering
+    // to reveal it would be offering the wrong thing.
+    const scoped = board({
+      settledThreads: [thread("t-elsewhere", LOCAL)],
+      includeThreadKey: () => false,
+      showSettled: false,
+    });
+    expect(scoped.groups.every((group) => group.settledHiddenCount === 0)).toBe(true);
+  });
+
   it("keeps threads whose machine is no longer a connection in a group of their own", () => {
     const orphaned = EnvironmentId.make("env-gone");
     const result = board({ activeThreads: [thread("t-orphan", orphaned)] });

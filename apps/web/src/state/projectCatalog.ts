@@ -33,16 +33,34 @@ import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+
 import {
   applyPendingProjectDisplays,
   buildProjectCatalogView,
   buildProjectSeedPlan,
+  resolveProjectMembership,
   type PendingProjectDisplay,
   type ProjectCatalogView,
+  type ProjectMembership,
   type ProjectSeedLocation,
   type ProjectSeedPlan,
 } from "../components/projects/ProjectCatalog.model";
+import {
+  buildProjectCards,
+  sortProjectCards,
+  type ProjectCard,
+  type ProjectRollupThread,
+} from "../components/projects/ProjectsIndex.model";
+import { resolveSidebarV2Status } from "../components/Sidebar.logic";
+import { partitionSidebarV2Threads } from "../components/Sidebar.partition";
+import { useClientSettings } from "../hooks/useSettings";
+import { useNowMinute } from "../hooks/useNowMinute";
+import { useUiStateStore } from "../uiStateStore";
+import { useThreadShells } from "./entities";
+import { useFeatureFlowView } from "./featureFlow";
 import { environmentCatalog } from "../connection/catalog";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments, usePrimaryEnvironmentId } from "./environments";
 import { environmentServerConfigsAtom } from "./server";
@@ -346,6 +364,22 @@ export function useFileThreadIntoProject(): (input: {
 }
 
 /**
+ * Re-reads the named machines' catalogs now, from outside React.
+ *
+ * The write helpers are callbacks, not components, so they cannot hold one
+ * `useAtomRefresh` per machine — and the machine list changes as connections
+ * come and go, which makes a hook-per-machine loop a rules-of-hooks bug waiting
+ * for a disconnect. Reaching the registry directly is the same escape hatch
+ * `state/queries.ts` and `desktopNetworkAccess.ts` already use.
+ */
+export function refreshProjectCatalogs(environmentIds: ReadonlyArray<EnvironmentId>): void {
+  for (const environmentId of environmentIds) {
+    appAtomRegistry.refresh(environmentProjectCatalog.snapshotAtom(environmentId));
+    appAtomRegistry.refresh(environmentProjectCatalog.locationsAtom(environmentId));
+  }
+}
+
+/**
  * Re-reads one machine's catalog now.
  *
  * A write is optimistic only in the sense that the poll is 45 seconds away —
@@ -366,3 +400,92 @@ const NOOP = () => {};
  * is never fetched — only ever refreshed into the void by the no-op above.
  */
 const PLACEHOLDER_ENVIRONMENT_ID = "project-catalog-no-environment" as EnvironmentId;
+
+/**
+ * Which project every thread on every machine belongs to.
+ *
+ * Runs over the same thread shells the sidebar and the sky do, so a thread's
+ * project is one answer the whole app shares. Archived projects keep their
+ * threads: archiving is a statement about the project, not a reason to spill
+ * its work into "unfiled".
+ */
+export function useProjectMembership(view: ProjectCatalogView): ProjectMembership {
+  const threads = useThreadShells();
+  return useMemo(
+    () =>
+      resolveProjectMembership({
+        projects: view.projects,
+        threads: threads.map((thread) => ({
+          environmentId: thread.environmentId,
+          id: thread.id,
+          projectId: thread.projectId,
+        })),
+      }),
+    [threads, view.projects],
+  );
+}
+
+/**
+ * The index's cards.
+ *
+ * The feature-flow view is read unfiltered here — one fetch for the whole
+ * index rather than one per card — and each card picks its own stages out of it
+ * by membership.
+ */
+export function useProjectCards(
+  view: ProjectCatalogView,
+  membership: ProjectMembership,
+): ReadonlyArray<ProjectCard> {
+  const threads = useThreadShells();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
+  const nowMinute = useNowMinute();
+  const flow = useFeatureFlowView(null);
+
+  return useMemo(() => {
+    const partition = partitionSidebarV2Threads({
+      threads,
+      scopedProjectKeys: null,
+      serverConfigs,
+      changeRequestStateByKey: NO_CHANGE_REQUESTS,
+      autoSettleAfterDays,
+      threadLastVisitedAtById,
+      threadSortOrder: "activity",
+      nowMinute,
+    });
+    // Snoozed work counts as active for a card: it is still this project's, it
+    // is coming back, and burying it under "settled" would make a project look
+    // finished because somebody hit snooze.
+    const rollupThreads = [
+      ...[...partition.activeThreads, ...partition.snoozedThreads].map((thread) =>
+        toRollupThread(thread, false),
+      ),
+      ...partition.settledThreads.map((thread) => toRollupThread(thread, true)),
+    ];
+    return sortProjectCards(
+      buildProjectCards({ projects: view.projects, membership, threads: rollupThreads, flow }),
+    );
+  }, [
+    autoSettleAfterDays,
+    flow,
+    membership,
+    nowMinute,
+    serverConfigs,
+    threadLastVisitedAtById,
+    threads,
+    view.projects,
+  ]);
+}
+
+const toRollupThread = (thread: EnvironmentThreadShell, settled: boolean): ProjectRollupThread => ({
+  environmentId: thread.environmentId,
+  id: thread.id,
+  title: thread.title,
+  status: resolveSidebarV2Status(thread),
+  updatedAt: thread.updatedAt,
+  settled,
+});
+
+/** The partition needs one, and no project view has change-request state. */
+const NO_CHANGE_REQUESTS: ReadonlyMap<string, "open" | "closed" | "merged"> = new Map();

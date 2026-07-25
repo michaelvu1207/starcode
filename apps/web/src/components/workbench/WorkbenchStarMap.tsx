@@ -522,7 +522,13 @@ function SkyFrame({ layout }: { readonly layout: SkyLayout }) {
   );
 }
 
-function EmptySky({ pending }: { readonly pending: boolean }) {
+function EmptySky({
+  pending,
+  emptyLabel,
+}: {
+  readonly pending: boolean;
+  readonly emptyLabel?: string;
+}) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
       <StarcodeMark className="size-7 text-muted-foreground/45" />
@@ -532,7 +538,11 @@ function EmptySky({ pending }: { readonly pending: boolean }) {
       <p className="max-w-sm text-xs text-muted-foreground/55">
         {pending
           ? "Waiting on your machines to say what they are carrying."
-          : "Every feature branches off the latest. Start a thread, or have the orchestrator lay out a plan, and the first branch appears here."}
+          : // A project's sky is empty for a different reason than the fleet's
+            // — usually "nothing is filed here yet" rather than "nothing is
+            // running anywhere" — so the caller supplies its own sentence.
+            (emptyLabel ??
+            "Every feature branches off the latest. Start a thread, or have the orchestrator lay out a plan, and the first branch appears here.")}
       </p>
     </div>
   );
@@ -542,10 +552,20 @@ export function WorkbenchStarMap({
   masterThreadKey,
   master,
   masterCreatedThreadIds,
+  includeThreadKey = null,
+  emptyLabel,
 }: {
   readonly masterThreadKey: string | null;
   readonly master: SkyMaster | null;
   readonly masterCreatedThreadIds: ReadonlySet<string>;
+  /**
+   * Scopes the sky to one project. Null — the default — is the fleet, which is
+   * what `/workbench` passes and what this component did before projects
+   * existed.
+   */
+  readonly includeThreadKey?: ((key: string) => boolean) | null;
+  /** What an empty sky says. A project's sky is empty for different reasons. */
+  readonly emptyLabel?: string;
 }) {
   const navigate = useNavigate();
   const threads = useThreadShells();
@@ -556,7 +576,7 @@ export function WorkbenchStarMap({
   const nowMinute = useNowMinute();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const flow = useFeatureFlowView(masterThreadKey);
+  const flow = useFeatureFlowView(masterThreadKey, includeThreadKey);
   const mapEntriesByEnvironment = useFeatureMapByEnvironment();
 
   const [containerRef, size] = useElementSize();
@@ -598,6 +618,7 @@ export function WorkbenchStarMap({
       primaryEnvironmentId,
       masterCreatedThreadIds,
       masterThreadKey,
+      includeThreadKey,
       // The sky wants every piece of work it can place. Which settled work is
       // worth a star is decided by whether anything can say where it landed,
       // not by a toggle.
@@ -608,6 +629,7 @@ export function WorkbenchStarMap({
     autoSettleAfterDays,
     environments,
     flow,
+    includeThreadKey,
     mapEntriesByEnvironment,
     master,
     masterCreatedThreadIds,
@@ -680,7 +702,10 @@ export function WorkbenchStarMap({
         </div>
 
         {empty ? (
-          <EmptySky pending={flow.pendingLabels.length > 0} />
+          <EmptySky
+            pending={flow.pendingLabels.length > 0}
+            {...(emptyLabel === undefined ? {} : { emptyLabel })}
+          />
         ) : measured ? (
           <>
             <svg

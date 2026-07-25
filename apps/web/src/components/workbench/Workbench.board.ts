@@ -52,6 +52,13 @@ export interface WorkbenchBoardInput {
   readonly masterCreatedThreadIds: ReadonlySet<string>;
   /** Scoped key of the designated master, excluded from the cards. */
   readonly masterThreadKey: string | null;
+  /**
+   * Membership test, for a board scoped to one project rather than to the
+   * fleet. Optional and defaulting to "everything", so the Workbench is
+   * unchanged. Cards that fail it are dropped outright rather than counted as
+   * hidden: they are not this board's work, so there is nothing to reveal.
+   */
+  readonly includeThreadKey?: ((key: string) => boolean) | null;
   readonly showSettled: boolean;
 }
 
@@ -79,6 +86,7 @@ export function buildWorkbenchBoard(input: WorkbenchBoardInput): WorkbenchBoard 
     for (const row of group.rows) {
       const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
       if (key === input.masterThreadKey) continue;
+      if (input.includeThreadKey != null && !input.includeThreadKey(key)) continue;
       if (row.section === "settled" && !input.showSettled) {
         settledHiddenCount += 1;
         continue;
