@@ -32,6 +32,7 @@ import {
   type SidebarConnectionSection,
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { SidebarTerminalHistoryStrip } from "./SidebarTerminalHistoryStrip";
 
 export function SidebarConnectionsView(props: {
   readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
@@ -169,6 +170,14 @@ export function SidebarConnectionsView(props: {
                   <span className="text-muted-foreground/50">({hiddenCount} hidden)</span>
                 </button>
               </li>
+            ) : null}
+            {/* Below the machine's t3 threads: this is the other history, the
+                one the CLIs kept on their own. */}
+            {expanded ? (
+              <SidebarTerminalHistoryStrip
+                environmentId={group.environmentId}
+                groupExpanded={expanded}
+              />
             ) : null}
           </Fragment>
         );

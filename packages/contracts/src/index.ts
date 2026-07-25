@@ -20,6 +20,7 @@ export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./peers.ts";
 export * from "./usage.ts";
+export * from "./history.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
