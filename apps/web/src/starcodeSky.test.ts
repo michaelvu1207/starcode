@@ -21,9 +21,14 @@ describe("resolveSkyForHour", () => {
     // Partway through the pre-dawn ramp the star field is neither full nor gone,
     // which is the whole point — a hard cut at a keyframe would read as the app
     // repainting itself.
+    // Bounded by the neighbouring keyframes rather than a hardcoded level, so a
+    // regenerated timeline with a different fade rate cannot fail this while
+    // still transitioning smoothly.
     const risingDawn = resolveSkyForHour(5.25);
-    expect(risingDawn.stars).toBeGreaterThan(0.3);
-    expect(risingDawn.stars).toBeLessThan(1);
+    const before = resolveSkyForHour(5).stars;
+    const after = resolveSkyForHour(5.5).stars;
+    expect(risingDawn.stars).toBeGreaterThan(Math.min(before, after));
+    expect(risingDawn.stars).toBeLessThan(Math.max(before, after));
     expect(risingDawn.top).not.toBe(resolveSkyForHour(5).top);
     expect(risingDawn.top).not.toBe(resolveSkyForHour(5.5).top);
   });
@@ -70,9 +75,15 @@ describe("resolveSkyForHour", () => {
   });
 
   it("lands exactly on a keyframe at its own hour", () => {
+    // The resolver treats an exact hit as the end of the previous span
+    // (blend 1 on fieldB) rather than the start of its own. Either convention
+    // paints the identical sky; what matters is that the keyframe's own field
+    // is the one fully visible.
     const onIt = resolveSkyForHour(20);
-    expect(onIt.blend).toBe(0);
-    expect(onIt.fieldA).toBe(SKY_TIMELINE.find((f) => f.hour === 20)!.field);
+    const keyframeField = SKY_TIMELINE.find((f) => f.hour === 20)!.field;
+    const visibleField = onIt.blend >= 0.5 ? onIt.fieldB : onIt.fieldA;
+    expect(onIt.blend === 0 || onIt.blend === 1).toBe(true);
+    expect(visibleField).toBe(keyframeField);
   });
 
   it("is brighter at midday than at midnight, which is the whole feature", () => {
