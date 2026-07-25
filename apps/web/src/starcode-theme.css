@@ -759,11 +759,12 @@
   --sc-glyph-rail: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2780%27%20height%3D%2712%27%20viewBox%3D%270%200%2080%2012%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-width%3D%27.9%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M2%206%20L26%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M54%206%20L78%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M31%206%20L34%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3Cpath%20d%3D%27M46%206%20L49%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M40%201.6%20Q40%206%2044.4%206%20Q40%206%2040%2010.4%20Q40%206%2035.6%206%20Q40%206%2040%201.6%20Z%27%2F%3E%3C%2Fsvg%3E");
   --sc-glyph-corner-br: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2736%27%20height%3D%2736%27%20viewBox%3D%270%200%2036%2036%27%3E%3Cg%20transform%3D%27rotate%28180%2018%2018%29%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M1%2018%20L1%204%20A3%203%200%200%201%204%201%20L18%201%27%20stroke-width%3D%271%27%2F%3E%3Cpath%20d%3D%27M5%2015%20L5%206.5%20A1.5%201.5%200%200%201%206.5%205%20L15%205%27%20stroke-width%3D%27.7%27%20stroke-opacity%3D%27.55%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M11.5%208.3%20Q11.5%2011.5%2014.7%2011.5%20Q11.5%2011.5%2011.5%2014.7%20Q11.5%2011.5%208.3%2011.5%20Q11.5%2011.5%2011.5%208.3%20Z%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
   /* Faint enough to be found rather than noticed. Butter on ink, ink on linen. */
-  --sc-glyph-ink: color-mix(in srgb, var(--sc-ink-900) 26%, transparent);
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-ink-900) 46%, transparent);
+  --sc-glyph-constellation: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2796%27%20height%3D%2716%27%20viewBox%3D%270%200%2096%2016%27%3E%3Cg%20stroke%3D%27%23000%27%20stroke-width%3D%27.85%27%20stroke-linecap%3D%27round%27%20fill%3D%27none%27%20stroke-opacity%3D%27.62%27%3E%3Cpath%20d%3D%27M9%2011%20L36%205%27%2F%3E%3Cpath%20d%3D%27M36%205%20L64%2012%27%2F%3E%3Cpath%20d%3D%27M64%2012%20L88%206%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M9%208.0%20Q9%2011%2012.0%2011%20Q9%2011%209%2014.0%20Q9%2011%206.0%2011%20Q9%2011%209%208.0%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M36%201.1%20Q36%205%2039.9%205%20Q36%205%2036%208.9%20Q36%205%2032.1%205%20Q36%205%2036%201.1%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M64%209.4%20Q64%2012%2066.6%2012%20Q64%2012%2064%2014.6%20Q64%2012%2061.4%2012%20Q64%2012%2064%209.4%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M88%202.8%20Q88%206%2091.2%206%20Q88%206%2088%209.2%20Q88%206%2084.8%206%20Q88%206%2088%202.8%20Z%27%2F%3E%3C%2Fsvg%3E");
 }
 
 .dark {
-  --sc-glyph-ink: color-mix(in srgb, var(--sc-butter) 40%, transparent);
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-butter) 72%, transparent);
 }
 
 /* The plate corners, for idle surfaces whose corners are genuinely empty.
@@ -820,4 +821,126 @@
   mask-repeat: no-repeat;
   -webkit-mask-size: 80px 12px;
   mask-size: 80px 12px;
+}
+
+/* The composer is the one piece of dense, always-present chrome that earns a
+   mark: it is a discrete framed object, its corners are empty, and it is the
+   thing you look at most. Corners rather than the rail, because the rail's slot
+   at the top centre is where the composer's own controls sit. */
+.chat-composer-glass-shell::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  pointer-events: none;
+  z-index: 1;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-position:
+    top left,
+    bottom right;
+  mask-position:
+    top left,
+    bottom right;
+  -webkit-mask-size: 26px 26px;
+  mask-size: 26px 26px;
+}
+
+/* The asterism: three or four stars joined by a hairline, set beside a section
+   title. It is the third and last arrangement of the vocabulary — same star,
+   same hairline, now reading as a constellation rather than as a frame — and it
+   exists because a section header is a line, not a box, so neither the corner
+   nor the centred rail fits it. */
+.starcode-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.starcode-section-head::after {
+  content: "";
+  /* Fixed rather than flexible: the header is sized by its own content, so a
+     `flex: 1` ornament had no room to grow into and collapsed to a stub. */
+  flex: 0 0 auto;
+  width: 96px;
+  height: 16px;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-constellation);
+  mask-image: var(--sc-glyph-constellation);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+  -webkit-mask-size: 96px 16px;
+  mask-size: 96px 16px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 8. The shooting star
+ *
+ * One streak, crossing an idle surface roughly every forty seconds. The whole
+ * design of it is restraint: rare enough that catching one feels like catching
+ * something, short enough (1.1s of a 40s cycle, so it is absent 97% of the time)
+ * that it never becomes the thing you are waiting for, and confined to the empty
+ * states, where there is nothing for it to distract from.
+ *
+ * It is a gradient on a rotated element moving by `translate` and fading by
+ * `opacity` — both compositor properties, so the cost is a layer and no layout.
+ * It rides the speck field, which only idle surfaces mount, and it is dark-theme
+ * only: a bright streak across linen reads as a rendering fault.
+ *
+ * Removed entirely under reduced motion rather than slowed. A single fast object
+ * crossing the screen is exactly what that preference is asking not to see, and
+ * there is no static version of a shooting star worth keeping.
+ * ------------------------------------------------------------------------ */
+
+.dark .starcode-speck-field .starcode-shooting-star {
+  position: absolute;
+  top: 14%;
+  left: 6%;
+  width: 128px;
+  height: 1.5px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  /* Bright at the head, gone at the tail — a streak, not a moving dash. */
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    color-mix(in srgb, var(--sc-cream-50) 12%, transparent) 35%,
+    color-mix(in srgb, var(--sc-cream-50) 78%, transparent) 92%,
+    var(--sc-cream-50) 100%
+  );
+  rotate: 14deg;
+  animation: starcode-shooting-star 40s linear infinite;
+}
+
+@keyframes starcode-shooting-star {
+  /* The visible 1.1 seconds, expressed as the first 2.75% of the cycle. */
+  0% {
+    opacity: 0;
+    translate: 0 0;
+  }
+  0.4% {
+    opacity: 0.85;
+  }
+  2.4% {
+    opacity: 0.7;
+  }
+  2.75% {
+    opacity: 0;
+    translate: 62vw 15vh;
+  }
+  100% {
+    opacity: 0;
+    translate: 62vw 15vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dark .starcode-speck-field .starcode-shooting-star {
+    display: none;
+  }
 }

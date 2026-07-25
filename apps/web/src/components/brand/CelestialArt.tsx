@@ -12,7 +12,9 @@
  * gets the helmet. Three unrelated illustrations would read as three brands.
  */
 import { cn } from "../../lib/utils";
-import { StarcodeMark } from "./StarcodeWordmark";
+import { useId } from "react";
+
+import { lunarPhaseAt, type LunarPhase } from "../../lunarPhase";
 
 /**
  * The crescent at empty-state scale with a speck or two beside it. Sized for
@@ -20,15 +22,52 @@ import { StarcodeMark } from "./StarcodeWordmark";
  * message out of view.
  */
 export function EmptyStateSky({ className }: { className?: string }) {
+  const moon = lunarPhaseAt(new Date());
   return (
     <span
       aria-hidden="true"
       className={cn("relative inline-flex size-6 items-center justify-center", className)}
     >
-      <StarcodeMark className="size-4 text-muted-foreground/55" />
+      {/* Warm rather than grey: a muted-foreground disc reads as a dot, and
+          most of the month the moon is too full to be saved by its outline. */}
+      <MoonPhase className="size-4 text-primary/70" phase={moon} />
       <span className="absolute -top-0.5 right-0 size-1 rounded-full bg-primary/50" />
       <span className="absolute bottom-0.5 -left-0.5 size-[3px] rounded-full bg-muted-foreground/35" />
     </span>
+  );
+}
+
+/**
+ * The wordmark's crescent, carved to tonight's actual moon.
+ *
+ * The disc is drawn once and a second disc is subtracted from it; sliding that
+ * second disc across is what makes a crescent widen into a gibbous. Offsetting a
+ * cutout is the whole trick, and it is why this is one path and a mask rather
+ * than eight hand-drawn shapes.
+ *
+ * At new moon nothing would be left to see, so a hairline ring stays behind —
+ * an empty sky with a hole in it reads as a missing icon, not as a new moon.
+ */
+export function MoonPhase({ phase, className }: { phase: LunarPhase; className?: string }) {
+  const id = useId();
+  // How far the cutout sits from centre: fully overlapping at new, fully clear
+  // at full. 2 is one diameter, which is where the disc stops being occluded.
+  const offset = 2 * Math.cos(Math.PI * phase.illumination) * (phase.waxing ? -1 : 1);
+  return (
+    <svg
+      aria-hidden="true"
+      className={cn("shrink-0", className)}
+      fill="none"
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <mask id={id}>
+        <circle cx="12" cy="12" fill="white" r="9" />
+        <circle cx={12 + offset * 9} cy="12" fill="black" r="9" />
+      </mask>
+      <circle cx="12" cy="12" fill="currentColor" mask={`url(#${id})`} r="9" />
+      <circle cx="12" cy="12" opacity="0.25" r="9" stroke="currentColor" strokeWidth="1" />
+    </svg>
   );
 }
 
@@ -40,7 +79,12 @@ export function EmptyStateSky({ className }: { className?: string }) {
  * turned 1.4px stars into 4px blobs on a wide screen.
  */
 export function SkySpecks({ className }: { className?: string }) {
-  return <div aria-hidden="true" className={cn("starcode-speck-field", className)} />;
+  return (
+    <div aria-hidden="true" className={cn("starcode-speck-field", className)}>
+      {/* Crosses about once every forty seconds; see section 8 of the theme. */}
+      <div className="starcode-shooting-star" />
+    </div>
+  );
 }
 
 /**
