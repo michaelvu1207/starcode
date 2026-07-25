@@ -32,8 +32,11 @@ export const DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER: SidebarV2ThreadSortOrder = "a
 
 // What the sidebar v2 list is a list OF: "inbox" is the flat cross-environment
 // stream, "connections" groups the same threads under the machine that runs
-// them. Defaults to "inbox" so the view only changes when a user asks for it.
-export const SidebarV2ViewMode = Schema.Literals(["inbox", "connections"]);
+// them, "projects" groups them under the category they were filed into — which
+// is cross-machine, so a project group mixes machines by design where a
+// connection group cannot. Defaults to "inbox" so the view only changes when a
+// user asks for it.
+export const SidebarV2ViewMode = Schema.Literals(["inbox", "connections", "projects"]);
 export type SidebarV2ViewMode = typeof SidebarV2ViewMode.Type;
 export const DEFAULT_SIDEBAR_V2_VIEW_MODE: SidebarV2ViewMode = "inbox";
 

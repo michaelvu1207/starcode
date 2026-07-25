@@ -1,13 +1,17 @@
 /**
  * View control for the sidebar v2 list: what the list is a list of (the flat
- * inbox or one group per connected machine) and, within it, what order the
- * threads take. Fork-owned so the toolbar diff inside SidebarV2.tsx stays a
- * single element, styled to match the sibling toolbar buttons and the sort
- * menu sidebar v1 already ships.
+ * inbox, one group per project, or one group per connected machine) and, within
+ * it, what order the threads take. Fork-owned so the toolbar diff inside
+ * SidebarV2.tsx stays a single element, styled to match the sibling toolbar
+ * buttons and the sort menu sidebar v1 already ships.
  *
  * Both radio groups live in one menu because they answer the same question —
- * "how do I want to read this list" — and grouping by machine does not change
- * what order threads take inside a machine.
+ * "how do I want to read this list" — and grouping does not change what order
+ * threads take inside a group.
+ *
+ * Projects sits between the two on purpose: it is the grouping most people want
+ * most days (a category you named), where connections is the one you reach for
+ * when you care where something is running.
  */
 import type { SidebarV2ThreadSortOrder, SidebarV2ViewMode } from "@t3tools/contracts";
 import { SlidersHorizontalIcon } from "lucide-react";
@@ -27,6 +31,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const VIEW_MODE_LABELS: Record<SidebarV2ViewMode, string> = {
   inbox: "Inbox",
+  projects: "Projects",
   connections: "Connections",
 };
 

@@ -134,6 +134,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
+import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
 import { useAllProjectsScopeGuard } from "./sidebar/sidebarProjectScope";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -2266,6 +2267,20 @@ export default function SidebarV2() {
                     />
                   );
                 }
+                // Projects view: the same rows again, grouped under the
+                // category they were filed into rather than the machine that
+                // runs them — so one group mixes machines by design.
+                if (viewMode === "projects") {
+                  return (
+                    <SidebarProjectsView
+                      activeThreads={activeThreads}
+                      snoozedThreads={snoozedThreads}
+                      settledThreads={settledThreads}
+                      routeThreadKey={routeThreadKey}
+                      renderThreadRow={renderThreadRow}
+                    />
+                  );
+                }
                 const items: ReactNode[] = activeThreads.map((thread) =>
                   renderThreadRow(thread, "active"),
                 );
@@ -2348,7 +2363,7 @@ export default function SidebarV2() {
               ) : null}
             </ul>
           </TooltipProvider>
-          {viewMode !== "connections" &&
+          {viewMode === "inbox" &&
           activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
