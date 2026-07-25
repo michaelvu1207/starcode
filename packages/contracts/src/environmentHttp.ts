@@ -26,7 +26,15 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { HistorySessionId, HistorySessionsPage, HistoryTranscriptPage } from "./history.ts";
+import {
+  HistoryImportRefusedError,
+  HistoryImportRequest,
+  HistoryImportResult,
+  HistoryImportsPage,
+  HistorySessionId,
+  HistorySessionsPage,
+  HistoryTranscriptPage,
+} from "./history.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -105,6 +113,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "feature_flow_failed",
   "history_sessions_failed",
   "history_transcript_failed",
+  "history_import_failed",
+  "history_imports_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -661,6 +671,47 @@ export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
       }),
       success: HistoryTranscriptPage,
       error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Import: the one write on this group, and the only route in the fork that
+   * reaches from a CLI's own store into t3's write model.
+   *
+   * `orchestration:operate` rather than `orchestration:read` because it
+   * creates a thread (and possibly a project). It is a POST on the session's
+   * path for the same reason the transcript route is a GET on it: a relay
+   * client's DPoP proof binds to the fully interpolated URL, so which session
+   * was imported is covered by the proof rather than buried in a body.
+   *
+   * `HistoryImportRefusedError` is separate from the generic invalid-request
+   * error because its reasons are the preconditions the import checked, and a
+   * dialog has to be able to say which one failed — "that session belongs to a
+   * different Claude home" and "that project is rooted somewhere else" call
+   * for different fixes.
+   */
+  .add(
+    HttpApiEndpoint.post("import", "/api/history/sessions/:sessionId/import", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ sessionId: HistorySessionId }),
+      payload: HistoryImportRequest,
+      success: HistoryImportResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentResourceNotFoundError,
+        HistoryImportRefusedError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * The import registry. Small enough to serve whole — one row per import
+   * ever performed on this machine — so the picker can badge already-imported
+   * sessions without asking per row.
+   */
+  .add(
+    HttpApiEndpoint.get("imports", "/api/history/imports", {
+      headers: OptionalBearerHeaders,
+      success: HistoryImportsPage,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

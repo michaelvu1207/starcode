@@ -7,5 +7,13 @@
  *
  * @module HistoryLayer
  */
-export { HistoryIndex, layer as HistoryServicesLive } from "./HistoryIndex.ts";
+import * as Layer from "effect/Layer";
+
+import { layer as historyIndexLayer } from "./HistoryIndex.ts";
+import { layer as historyImportRegistryLayer } from "./importRegistry.ts";
+
+export { HistoryIndex } from "./HistoryIndex.ts";
+export { HistoryImportRegistry } from "./importRegistry.ts";
 export { historyHttpApiLayer } from "./http.ts";
+
+export const HistoryServicesLive = Layer.mergeAll(historyIndexLayer, historyImportRegistryLayer);

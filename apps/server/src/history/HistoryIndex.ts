@@ -90,6 +90,16 @@ export interface HistoryIndexSnapshot {
 }
 
 export interface HistoryIndexShape {
+  /**
+   * The home directory this index scanned.
+   *
+   * Exposed because import's ownership check has to resolve a provider
+   * instance's configured home against the *same* home the index walked. Two
+   * independent calls to `os.homedir()` agree in production and disagree in
+   * any test that points the index at a fixture, which is exactly the case
+   * that check most needs to be exercised in.
+   */
+  readonly homeDir: string;
   /** The current index, rebuilt or revalidated if the debounce window has passed. */
   readonly snapshot: () => Effect.Effect<HistoryIndexSnapshot>;
   /**
@@ -327,6 +337,7 @@ export const makeHistoryIndex = (options?: {
   };
 
   return {
+    homeDir,
     snapshot,
     resolve: (sessionId: string) =>
       Effect.gen(function* () {

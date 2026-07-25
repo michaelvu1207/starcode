@@ -82,7 +82,9 @@ import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -544,19 +546,41 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.keybindings,
         }),
       ),
+      // Provider services, merged into one `provide` because `pipe` tops out at
+      // twenty arguments and this chain is at the ceiling.
+      //
+      // The instance registry and session directory are here for the history
+      // import route: it checks which instance's home owns a session before it
+      // will bind a thread to it, and it writes that binding itself. Neither is
+      // exercised by the route tests, so both are stubbed empty — an import
+      // against this harness refuses, which is the right answer for a server
+      // with no provider instances configured.
       Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([]),
-          refresh: () => Effect.succeed([]),
-          refreshInstance: () => Effect.succeed([]),
-          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
-            ),
-          setProviderMaintenanceActionState: () => Effect.succeed([]),
-          streamChanges: Stream.empty,
-          ...options?.layers?.providerRegistry,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            refresh: () => Effect.succeed([]),
+            refreshInstance: () => Effect.succeed([]),
+            getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+              ),
+            setProviderMaintenanceActionState: () => Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerRegistry,
+          }),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+          }),
+          Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+            getBinding: () => Effect.succeed(Option.none()),
+            listThreadIds: () => Effect.succeed([]),
+            listBindings: () => Effect.succeed([]),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ServerSettings.ServerSettingsService)({
@@ -7366,6 +7390,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assertFailure(result, terminalError);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  /**
+   * The route's own error mapping, which the importer's unit tests cannot
+   * reach. It is here because it has already been wrong once: a `catchTags`
+   * followed by a catch-all re-caught the 404 it had just produced and served
+   * it as a 500, and every unit test still passed.
+   */
+  it.effect("reports an unknown history session as 404, not as an internal error", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { host: "0.0.0.0" } });
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+
+      const response = yield* HttpClient.post(
+        "/api/history/sessions/00000000000000000000000000000000/import",
+        {
+          headers: { cookie: ownerCookie },
+          body: yield* HttpBody.json({}),
+        },
+      );
+      const body = (yield* response.json) as { readonly reason?: string };
+
+      assert.equal(response.status, 404);
+      assert.equal(body.reason, "history_session_not_found");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });
