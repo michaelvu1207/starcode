@@ -60,8 +60,8 @@ export type SkyPhaseName = "night" | "dawn" | "day" | "dusk";
 
 /* Night and day are each anchored twice — held flat through the small hours and
    through the working day — so they are named rather than repeated. */
-const NIGHT = { top: "#080a14", glow: "#0d1020", wash: "#dde1f0", stars: 1 } as const;
-const DAY = { top: "#1e2739", glow: "#26304a", wash: "#d5e3f5", stars: 0 } as const;
+const NIGHT = { top: "#0a0f24", glow: "#0f173d", wash: "#dde3f4", stars: 1 } as const;
+const DAY = { top: "#1b304b", glow: "#17314f", wash: "#d5e5f7", stars: 0 } as const;
 
 /**
  * Fixed hour mapping rather than a sunrise API: no geolocation prompt, no
@@ -71,10 +71,10 @@ const DAY = { top: "#1e2739", glow: "#26304a", wash: "#d5e3f5", stars: 0 } as co
 const SKY_STOPS: ReadonlyArray<SkyStop> = [
   { hour: 0, ...NIGHT, name: "night" },
   { hour: 5, ...NIGHT, name: "night" },
-  { hour: 7.5, top: "#33263a", glow: "#3c2739", wash: "#f7dcd5", stars: 0.3, name: "dawn" },
+  { hour: 7.5, top: "#49182d", glow: "#481921", wash: "#f9ddd4", stars: 0.35, name: "dawn" },
   { hour: 10, ...DAY, name: "day" },
   { hour: 16.5, ...DAY, name: "day" },
-  { hour: 19, top: "#2e2135", glow: "#43293c", wash: "#f9dfc3", stars: 0.35, name: "dusk" },
+  { hour: 19, top: "#3e183d", glow: "#45172e", wash: "#fae0be", stars: 0.4, name: "dusk" },
   { hour: 21.5, ...NIGHT, name: "night" },
   { hour: 24, ...NIGHT, name: "night" },
 ];

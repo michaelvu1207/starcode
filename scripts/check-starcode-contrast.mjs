@@ -170,13 +170,14 @@ for (const [themeName, label, fg, bg, min] of UI) {
 //
 // Values transcribed from SKY_STOPS in `apps/web/src/starcodeSky.ts`.
 const SKY_PHASES = {
-  "night-top": "#080a14",
-  "dawn-top": "#33263a",
-  "dawn-glow": "#3c2739",
-  "day-top": "#1e2739",
-  "day-glow": "#26304a",
-  "dusk-top": "#2e2135",
-  "dusk-glow": "#43293c",
+  "night-top": "#0a0f24",
+  "night-glow": "#0f173d",
+  "dawn-top": "#49182d",
+  "dawn-glow": "#481921",
+  "day-top": "#1b304b",
+  "day-glow": "#17314f",
+  "dusk-top": "#3e183d",
+  "dusk-glow": "#45172e",
 };
 
 for (const [tName, tHex] of Object.entries(darkText)) {
@@ -194,10 +195,10 @@ for (const [tName, tHex] of Object.entries(darkText)) {
 // the strongest stop of each gradient — 55% on the main pane, 42% on the sidebar
 // band — which is the darkest the paper ever gets.
 const SKY_WASHES = {
-  "night-wash": "#dde1f0",
-  "dawn-wash": "#f7dcd5",
-  "day-wash": "#d5e3f5",
-  "dusk-wash": "#f9dfc3",
+  "night-wash": "#dde3f4",
+  "dawn-wash": "#f9ddd4",
+  "day-wash": "#d5e5f7",
+  "dusk-wash": "#fae0be",
 };
 
 /** Composite `over` at `alpha` onto opaque `base`, both `#rrggbb`. */
@@ -213,11 +214,58 @@ for (const [tName, tHex] of Object.entries(lightText)) {
   for (const [sName, sHex] of Object.entries(SKY_WASHES)) {
     const surface = tName.startsWith("sidebar-")
       ? composite(sHex, LIGHT.sidebar, 0.42)
-      : composite(sHex, LIGHT.background, 0.55);
+      : composite(sHex, LIGHT.background, 0.72);
     const r = ratio(tHex, surface);
     const pass = r >= 4.5;
     if (!pass) fails++;
     rows.push(["sky-lt", tName, tHex, sName, surface, r.toFixed(2), pass ? "AA" : "FAIL"]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The chrome starfield ceiling.
+//
+// Stars are painted across the sidebar and the main pane, which means one can
+// land directly behind body text. `--sc-star-chrome-max` in starcode-theme.css
+// is the layer opacity that makes that safe: at this value the brightest star in
+// the tile composites to a colour that still clears AA against every text token.
+//
+// This block re-derives the guarantee rather than trusting it. If a phase colour
+// is made lighter or the ceiling is raised past what the palette can carry, this
+// fails and says so — which is the only reason it is safe to put a starfield
+// behind working UI at all.
+const STAR_CHROME_MAX = 0.13;
+const STAR_TINT = "#e9e3d6";
+const BRIGHTEST_STAR_IN_TILE = 0.86;
+
+const STAR_SURFACES = { background: DARK.background, sidebar: DARK.sidebar, ...SKY_PHASES };
+
+// Phase scales the layer on top of the ceiling, so each phase is checked at the
+// star count it actually renders with — night at full, dusk and dawn thinned,
+// midday not at all. Checking every phase at the night value would fail colours
+// that never carry a star.
+const PHASE_STARS = {
+  background: 1,
+  sidebar: 1,
+  "night-top": 1,
+  "night-glow": 1,
+  "dawn-top": 0.35,
+  "dawn-glow": 0.35,
+  "day-top": 0,
+  "day-glow": 0,
+  "dusk-top": 0.4,
+  "dusk-glow": 0.4,
+};
+
+for (const [sName, sHex] of Object.entries(STAR_SURFACES)) {
+  const phase = PHASE_STARS[sName] ?? 1;
+  if (phase === 0) continue;
+  const lit = over(STAR_TINT, phase * STAR_CHROME_MAX * BRIGHTEST_STAR_IN_TILE, sHex);
+  for (const [tName, tHex] of Object.entries(darkText)) {
+    const r = ratio(tHex, lit);
+    const pass = r >= 4.5;
+    if (!pass) fails++;
+    rows.push(["star", tName, tHex, `${sName}+star`, lit, r.toFixed(2), pass ? "AA" : "FAIL"]);
   }
 }
 
