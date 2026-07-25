@@ -11,6 +11,10 @@
  * The status dot reads the live client-runtime connection phase, the same
  * source (and colours) as the dots on Settings → Connections, so a machine
  * that drops out is visibly down here without opening settings.
+ *
+ * Group names are renameable in place: the pencil swaps the header for an
+ * input, and the alias it writes is the same one Settings → Connections edits.
+ * The header is a button, so the pencil is its sibling rather than its child.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
@@ -32,6 +36,7 @@ import {
   type SidebarConnectionSection,
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
 import { SidebarTerminalHistoryStrip } from "./SidebarTerminalHistoryStrip";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 
@@ -55,6 +60,18 @@ export function SidebarConnectionsView(props: {
   const [visibleCountByEnvironment, setVisibleCountByEnvironment] = useState<
     Readonly<Record<string, number>>
   >({});
+  // One group at a time is being renamed, and the edit dies with the view.
+  const [renamingEnvironmentId, setRenamingEnvironmentId] = useState<EnvironmentId | null>(null);
+  // Groups carry only their display name; the rename field also needs the name
+  // the machine announces for itself, to offer as the placeholder — that is
+  // what clearing the field returns to.
+  const serverLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.serverLabel]),
+      ),
+    [environments],
+  );
 
   const groups = useMemo(
     () =>
@@ -114,45 +131,72 @@ export function SidebarConnectionsView(props: {
               data-testid="sidebar-v2-connection-group"
               data-environment-id={group.environmentId}
             >
-              <button
-                type="button"
-                onClick={() => toggleGroup(group.environmentId, expanded)}
-                aria-expanded={expanded}
-                data-testid="sidebar-v2-connection-group-toggle"
-                className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
-              >
-                <ConnectionStatusDot
-                  tooltipText={
-                    group.connection === null
-                      ? "Not connected. This machine is no longer one of your connections."
-                      : connectionStatusText(group.connection)
-                  }
-                  dotClassName={sidebarConnectionDotClassName(group.connection)}
-                  pingClassName={
-                    group.connection?.phase === "connecting" ||
-                    group.connection?.phase === "reconnecting"
-                      ? "bg-warning/60 duration-2000"
-                      : null
-                  }
-                />
-                <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
-                  {group.label}
-                </span>
-                {group.isLocal ? (
-                  <span className="shrink-0 text-[10px] text-muted-foreground/60">Local</span>
-                ) : null}
-                <span className="h-px flex-1 bg-sidebar-border/60" />
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground/50">
-                  {group.rows.length}
-                </span>
-                <ChevronDownIcon
-                  aria-hidden
-                  className={cn(
-                    "size-3 text-muted-foreground/50 transition-transform",
-                    expanded && "rotate-180",
-                  )}
-                />
-              </button>
+              <div className="group/machine mb-1 mt-3 flex items-center gap-1.5 px-2.5">
+                {renamingEnvironmentId === group.environmentId ? (
+                  <>
+                    <ConnectionStatusDot
+                      dotClassName={sidebarConnectionDotClassName(group.connection)}
+                    />
+                    <ConnectionNameInput
+                      environmentId={group.environmentId}
+                      serverLabel={serverLabelById.get(group.environmentId) ?? group.label}
+                      className="h-6 text-xs"
+                      onDone={() => setRenamingEnvironmentId(null)}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.environmentId, expanded)}
+                      aria-expanded={expanded}
+                      data-testid="sidebar-v2-connection-group-toggle"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                    >
+                      <ConnectionStatusDot
+                        tooltipText={
+                          group.connection === null
+                            ? "Not connected. This machine is no longer one of your connections."
+                            : connectionStatusText(group.connection)
+                        }
+                        dotClassName={sidebarConnectionDotClassName(group.connection)}
+                        pingClassName={
+                          group.connection?.phase === "connecting" ||
+                          group.connection?.phase === "reconnecting"
+                            ? "bg-warning/60 duration-2000"
+                            : null
+                        }
+                      />
+                      <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
+                        {group.label}
+                      </span>
+                      {group.isLocal ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground/60">Local</span>
+                      ) : null}
+                      <span className="h-px flex-1 bg-sidebar-border/60" />
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground/50">
+                        {group.rows.length}
+                      </span>
+                      <ChevronDownIcon
+                        aria-hidden
+                        className={cn(
+                          "size-3 text-muted-foreground/50 transition-transform",
+                          expanded && "rotate-180",
+                        )}
+                      />
+                    </button>
+                    {/* Only for machines still in the catalog: a group left
+                        behind by a removed connection has nothing to alias. */}
+                    {group.connection === null ? null : (
+                      <ConnectionRenameTrigger
+                        displayName={group.label}
+                        className="opacity-0 focus-visible:opacity-100 group-hover/machine:opacity-100"
+                        onStart={() => setRenamingEnvironmentId(group.environmentId)}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </li>
             {expanded && group.rows.length === 0 ? (
               <li className="flex list-none items-center gap-1.5 px-2.5 pb-1 text-[11px] text-muted-foreground/50">
