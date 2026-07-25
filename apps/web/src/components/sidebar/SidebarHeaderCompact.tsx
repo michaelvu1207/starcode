@@ -34,6 +34,7 @@ import { CommandDialogTrigger } from "../ui/command";
 import { SidebarMenuButton, SidebarTrigger } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarChromeHeader } from "./SidebarChrome";
+import { SidebarConnectionsMenu } from "./SidebarConnectionsMenu";
 import { SidebarV2ViewMenu } from "./SidebarV2ViewMenu";
 
 /**
@@ -100,10 +101,12 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
         // Michael saw.
         //
         // `flex-wrap` is the overflow behaviour rather than a scroller or a
-        // squeeze: the sidebar is resizable down to 208px, where six 28px
-        // buttons plus their gaps come to 188px and fit with ~10px a side. A
-        // seventh icon, or a narrower sidebar, wraps to a second centred line
-        // instead of overflowing the panel.
+        // squeeze: the sidebar is resizable down to 208px, where seven 28px
+        // buttons plus their gaps come to 220px — past the 192px of usable
+        // width — so the last icon wraps to a second centred line rather than
+        // overflowing the panel. That wrap only happens at the narrowest few
+        // pixels of the resize range; at the default width all seven sit on
+        // one line.
         <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1 px-2 pb-1">
           <Tooltip>
             <TooltipTrigger
@@ -180,6 +183,11 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
             </TooltipTrigger>
             <TooltipPopup side="bottom">Workbench</TooltipPopup>
           </Tooltip>
+          {/* Also outside the `showProjectActions` gate, and for a stronger
+              reason than the Workbench: when a machine drops out, this is the
+              icon that says so, and a client with no projects is exactly the
+              client whose connections are worth checking. */}
+          <SidebarConnectionsMenu />
           {showProjectActions ? (
             <>
               <Tooltip>
