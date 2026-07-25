@@ -12,7 +12,7 @@
  * gets the helmet. Three unrelated illustrations would read as three brands.
  */
 import { cn } from "../../lib/utils";
-import { useId } from "react";
+import { type CSSProperties, useId, useMemo } from "react";
 
 import { lunarPhaseAt, type LunarPhase } from "../../lunarPhase";
 
@@ -79,6 +79,19 @@ export function MoonPhase({ phase, className }: { phase: LunarPhase; className?:
  * turned 1.4px stars into 4px blobs on a wide screen.
  */
 export function SkySpecks({ className }: { className?: string }) {
+  // Drawn once per mount. CSS has no randomness, and a fixed period would put a
+  // streak on the screen a second after every page load — see section 8.
+  const flight = useMemo(() => {
+    const periodSeconds = (22 + Math.random() * 33) * 60;
+    // First flight somewhere in the back three quarters of the cycle, so opening
+    // the app is never what triggers one.
+    const firstFlightSeconds = periodSeconds * (0.25 + Math.random() * 0.75);
+    return {
+      "--sc-shoot-period": `${Math.round(periodSeconds)}s`,
+      "--sc-shoot-delay": `${Math.round(firstFlightSeconds)}s`,
+    } as CSSProperties;
+  }, []);
+
   return (
     <div aria-hidden="true" className={cn("starcode-speck-field", className)}>
       {/* The drift layers are CHILDREN of the field, never a wrapper around it.
@@ -89,8 +102,9 @@ export function SkySpecks({ className }: { className?: string }) {
       <div className="starcode-star-layer starcode-star-layer-1" />
       <div className="starcode-star-layer starcode-star-layer-2" />
       <div className="starcode-star-layer starcode-star-layer-3" />
-      {/* Crosses about once every forty seconds; see section 8 of the theme. */}
-      <div className="starcode-shooting-star" />
+      {/* About once an hour; see section 8 of the theme for why the period is
+          set here rather than in CSS. */}
+      <div className="starcode-shooting-star" style={flight} />
     </div>
   );
 }
