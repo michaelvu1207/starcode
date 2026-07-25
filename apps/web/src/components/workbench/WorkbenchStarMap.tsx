@@ -295,6 +295,33 @@ function Star({
   );
 }
 
+/**
+ * A lineage edge, and the one line on the sky that had to get brighter.
+ *
+ * These carry information — which feature grows out of which — so they answer
+ * to the 3:1 component floor rather than to taste. Two things forced the
+ * treatment they have:
+ *
+ *   - The base is `foreground`, not `muted-foreground`. Muted cannot reach 3:1
+ *     over linen at *any* alpha (it tops out near 4.4:1 on paper and lands
+ *     under the floor once the sky wash is over it), so no opacity bump to the
+ *     old token could have worked in both themes.
+ *   - The alphas are high for a hairline because a 1px stroke only ever covers
+ *     part of the pixels it crosses. Nominal contrast overstates what the eye
+ *     gets from a thin line, so the number has to run ahead of the floor.
+ *
+ * Ghost edges stay subordinate through weight and dash, and keep a visible
+ * step of contrast, but they are *not* exempt from the floor: a plan whose
+ * branching cannot be traced is not conveying the plan.
+ *
+ * `check-starcode-contrast.mjs` re-derives both numbers against every sky
+ * phase, the tier bands and a chrome star. Change either alpha and run it.
+ */
+const BRANCH_STROKE = {
+  real: "text-foreground/70",
+  planned: "text-foreground/60",
+} as const;
+
 function Branch({
   branch,
   drawing,
@@ -313,7 +340,7 @@ function Branch({
       strokeLinecap="round"
       className={cn(
         "transition-[d] duration-[900ms] ease-out motion-reduce:transition-none",
-        branch.planned ? "text-muted-foreground/25" : "text-muted-foreground/45",
+        branch.planned ? BRANCH_STROKE.planned : BRANCH_STROKE.real,
         drawing && "sc-starmap-edge--drawing",
       )}
       strokeDasharray={branch.planned && !drawing ? "3 4" : undefined}

@@ -151,19 +151,6 @@ const UI = [
   ["light", "destructive dot on card", "#b8524b", LIGHT.card, 3],
   ["light", "info dot on card", "#4c72a8", LIGHT.card, 3],
   ["light", "primary fill on background", "#282c3c", LIGHT.background, 3],
-  // Informational, and not ours to fix. The Workbench star map draws its lineage
-  // edges at `bg-muted-foreground/40`, which sits under the 3:1 component floor.
-  // Re-anchoring the palette moved it from 2.08 to 2.51 — better, but still
-  // short. Raising it means editing that component's own opacity, which belongs
-  // to whoever owns the star map. Tracked here so the number is visible rather
-  // than discovered.
-  [
-    "dark",
-    "starmap lineage edge on background",
-    over("#c7b8a1", 0.4, DARK.background),
-    DARK.background,
-    1.3,
-  ],
 ];
 for (const [themeName, label, fg, bg, min] of UI) {
   const r = ratio(fg, bg);
@@ -280,6 +267,77 @@ for (const [sName, sHex] of Object.entries(STAR_SURFACES)) {
     if (!pass) fails++;
     rows.push(["star", tName, tHex, `${sName}+star`, lit, r.toFixed(2), pass ? "AA" : "FAIL"]);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Workbench lineage edges.
+//
+// The star map draws one edge per "this feature grows out of that one". That is
+// information, not decoration, so both the real and the planned edge answer to
+// the 3:1 component floor — a plan whose branching cannot be traced is not
+// conveying the plan, which is the whole reason the ghosts are drawn at all.
+//
+// The surface is not `--background`. An edge crosses the sky tint, the tier
+// bands the map paints over it, and — being a long thin line rather than a
+// glyph — is more likely than any text to run straight through a chrome star.
+// All three are stacked here, so this is the worst pixel an edge can occupy
+// rather than the average one.
+//
+// Values transcribed from BRANCH_STROKE and the band opacities in
+// `apps/web/src/components/workbench/WorkbenchStarMap.tsx`.
+const EDGE_ALPHA = { real: 0.7, planned: 0.6 };
+// `--sc-band-dark` peaks at the top tier, `--sc-band-light` at the bottom one.
+// Each is the value that pushes its theme's backdrop toward the stroke.
+const BAND_DARK_MAX = 0.008 + 3 * 0.008;
+const BAND_LIGHT_MAX = 0.03;
+
+for (const [kind, alpha] of Object.entries(EDGE_ALPHA)) {
+  for (const [sName, sHex] of Object.entries({ background: DARK.background, ...SKY_PHASES })) {
+    const phase = PHASE_STARS[sName] ?? 1;
+    const banded = over(darkText.foreground, BAND_DARK_MAX, sHex);
+    const surface =
+      phase === 0
+        ? banded
+        : over(STAR_TINT, phase * STAR_CHROME_MAX * BRIGHTEST_STAR_IN_TILE, banded);
+    const stroke = over(darkText.foreground, alpha, surface);
+    const r = ratio(stroke, surface);
+    const pass = r >= 3;
+    if (!pass) fails++;
+    rows.push([
+      "edge",
+      `${kind} lineage edge`,
+      stroke,
+      `${sName}+band+star`,
+      surface,
+      r.toFixed(2),
+      pass ? ">=3" : "FAIL(<3)",
+    ]);
+  }
+  for (const [sName, sHex] of Object.entries({ paper: null, ...SKY_WASHES })) {
+    const washed = sHex === null ? LIGHT.background : composite(sHex, LIGHT.background, 0.72);
+    const surface = over(lightText.foreground, BAND_LIGHT_MAX, washed);
+    const stroke = over(lightText.foreground, alpha, surface);
+    const r = ratio(stroke, surface);
+    const pass = r >= 3;
+    if (!pass) fails++;
+    rows.push([
+      "edge-lt",
+      `${kind} lineage edge`,
+      stroke,
+      `${sName}+band`,
+      surface,
+      r.toFixed(2),
+      pass ? ">=3" : "FAIL(<3)",
+    ]);
+  }
+}
+
+// A ghost that reads as brightly as real work would make the plan look done.
+// The floor is a floor, not a target: this holds the gap that keeps them
+// distinguishable once both clear it.
+if (!(EDGE_ALPHA.planned < EDGE_ALPHA.real)) {
+  fails++;
+  rows.push(["edge", "ghost stays subordinate", "—", "—", "—", "—", "FAIL"]);
 }
 
 // ---------------------------------------------------------------------------
