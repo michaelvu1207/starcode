@@ -21,6 +21,10 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import {
+  DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+  MAX_CLAUDE_CONTEXT_LIMIT_TOKENS,
+} from "@t3tools/shared/claudeContextLimit";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -617,6 +621,7 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         alwaysThinkingEnabled: false,
+        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -640,7 +645,58 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("caps the session context window at the configured limit", () => {
+    const harness = makeHarness({ claudeConfig: { contextLimitTokens: "400k" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+          [{ id: "contextWindow", value: "1m" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      // The 1M model variant is still selected; the cap governs compaction.
+      assert.equal(createInput?.options.model, "claude-fable-5[1m]");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 400_000 });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("clamps an out-of-band context limit instead of uncapping", () => {
+    const harness = makeHarness({ claudeConfig: { contextLimitTokens: "8m" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.settings, {
+        autoCompactWindow: MAX_CLAUDE_CONTEXT_LIMIT_TOKENS,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -665,6 +721,7 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         fastMode: true,
+        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -688,7 +745,9 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
