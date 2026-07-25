@@ -11,25 +11,39 @@
  * "what shape is this project in", the list answers "take me to that thread",
  * and asking a constellation to be a table is how both stop working.
  */
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId, type ProjectCategorySlug } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { ArchiveIcon, ArrowLeftIcon, PencilIcon } from "lucide-react";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ProjectCategorySlug,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { ArchiveIcon, ArrowLeftIcon, CompassIcon, PencilIcon } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { useThreadShells } from "../../state/entities";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useThreadActivities, useThreadShell, useThreadShells } from "../../state/entities";
 import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
-import { buildThreadRouteParams } from "../../threadRoutes";
+import { buildThreadRouteParams, resolveThreadRouteTarget } from "../../threadRoutes";
 import { resolveSidebarV2Status } from "../Sidebar.logic";
 import { Button } from "../ui/button";
+import type { SkyMaster } from "../workbench/StarMap.model";
+import {
+  collectMasterCreatedThreadIds,
+  resolveWorkbenchMaster,
+} from "../workbench/Workbench.master";
+import { WorkbenchMasterPane } from "../workbench/WorkbenchMasterPane";
 import { WorkbenchStarMap } from "../workbench/WorkbenchStarMap";
 import {
   WORKBENCH_TONE_DOT_CLASS,
   WORKBENCH_TONE_LABEL,
   toneForThreadStatus,
 } from "../workbench/Workbench.tone";
+import { projectMasterCandidates, projectSectionFor } from "./ProjectCatalog.model";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { projectAccentHue } from "./ProjectsIndex.model";
@@ -42,9 +56,114 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
   const threads = useThreadShells();
   const writer = useProjectWriter();
   const navigate = useNavigate();
+  const router = useRouter();
+  const handleNewThread = useNewThreadHandler();
   const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState(false);
+  /** `null` until the operator says; see `showMaster` for what that resolves to. */
+  const [masterPaneOpen, setMasterPaneOpen] = useState<boolean | null>(null);
+  const [preferredEnvironmentId, setPreferredEnvironmentId] = useState<EnvironmentId | null>(null);
 
   const project = view.projects.find((entry) => entry.slug === slug) ?? null;
+
+  /**
+   * This project's orchestrator, resolved through the same function the global
+   * Workbench uses.
+   *
+   * `resolveWorkbenchMaster` takes a candidates array and nothing else, which is
+   * exactly why phase 2 built `projectMasterCandidates` to produce one: the
+   * fleet passes one candidate per machine's server setting, a project passes
+   * one per machine's section, and neither needs the resolver to know which it
+   * is. Same local-first rule, same alternates switcher, no signature change.
+   */
+  const { designated, alternates } = useMemo(() => {
+    if (project === null) return { designated: null, alternates: [] };
+    const candidates = projectMasterCandidates(project).map((candidate) => ({
+      ...candidate,
+      // A machine the operator switched to outranks the local one, so the pane
+      // does not snap back on the next poll.
+      isLocal:
+        preferredEnvironmentId === null
+          ? candidate.isLocal
+          : candidate.environmentId === preferredEnvironmentId,
+    }));
+    return resolveWorkbenchMaster(candidates);
+  }, [preferredEnvironmentId, project]);
+
+  const masterThreadRef = useMemo(
+    () =>
+      designated === null
+        ? null
+        : scopeThreadRef(
+            EnvironmentId.make(designated.environmentId),
+            ThreadId.make(designated.threadId),
+          ),
+    [designated],
+  );
+  const masterThreadKey = masterThreadRef === null ? null : scopedThreadKey(masterThreadRef);
+
+  const masterActivities = useThreadActivities(masterThreadRef);
+  const masterCreatedThreadIds = useMemo(
+    () => collectMasterCreatedThreadIds(masterActivities),
+    [masterActivities],
+  );
+
+  const masterShell = useThreadShell(masterThreadRef);
+  const skyMaster = useMemo((): SkyMaster | null => {
+    if (designated === null || masterThreadKey === null) return null;
+    return {
+      key: masterThreadKey,
+      threadId: designated.threadId,
+      environmentId: designated.environmentId,
+      machineLabel: designated.label,
+      title: masterShell?.title ?? "Orchestrator",
+      alive: masterShell?.latestTurn?.completedAt === null,
+    };
+  }, [designated, masterShell, masterThreadKey]);
+
+  const designate = useCallback(
+    (environmentId: EnvironmentId, threadId: string) => {
+      if (project === null) return;
+      void writer.designateMaster(project.slug, environmentId, threadId);
+      setPreferredEnvironmentId(environmentId);
+      setPicking(false);
+    },
+    [project, writer],
+  );
+
+  const clearDesignation = useCallback(() => {
+    if (project === null || designated === null) return;
+    void writer.designateMaster(project.slug, EnvironmentId.make(designated.environmentId), "");
+    setPicking(false);
+  }, [designated, project, writer]);
+
+  /**
+   * Creating this project's orchestrator, through the app's ordinary new-thread
+   * flow, then claiming the id it reserved.
+   *
+   * The defaults come from *this project's* record rather than the machine's
+   * settings — that is the difference between a project master and the global
+   * one, and it is also the piece that makes a per-project orchestrator worth
+   * having: plan-mode and approval-required are configuration, so an
+   * orchestrator that delegates cannot write code no matter what is typed at it.
+   */
+  const createMaster = useCallback(
+    async (projectRef: ScopedProjectRef) => {
+      if (project === null) return;
+      const defaults = projectSectionFor(project, projectRef.environmentId).masterDefaults;
+      await handleNewThread(projectRef);
+      const params = router.state.matches[router.state.matches.length - 1]?.params ?? {};
+      const target = resolveThreadRouteTarget(params);
+      if (target?.kind !== "draft") return;
+      const store = useComposerDraftStore.getState();
+      const draft = store.getDraftThread(target.draftId);
+      if (draft === null) return;
+      store.setRuntimeMode(target.draftId, defaults.runtimeMode);
+      store.setInteractionMode(target.draftId, defaults.interactionMode);
+      designate(projectRef.environmentId, draft.threadId);
+    },
+    [designate, handleNewThread, project, router],
+  );
 
   /**
    * The sky's filter, as a stable identity.
@@ -80,6 +199,15 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
   }
 
   const hue = `${projectAccentHue(project.slug, project.display.accent)}deg`;
+  /**
+   * The orchestrator column, opened by default for a project that has one.
+   *
+   * It replaces the thread rail rather than joining it, so the home stays two
+   * columns in both states — the Workbench's own shape when you are
+   * orchestrating, and phase 3's shape when you are reading. Three columns at
+   * this width would crush all of them.
+   */
+  const showMaster = masterPaneOpen ?? designated !== null;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -144,6 +272,16 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMasterPaneOpen(!showMaster)}
+              data-testid="project-master-toggle"
+              className={cn(showMaster && "text-foreground")}
+            >
+              <CompassIcon className="size-3.5" />
+              {designated === null ? "Set orchestrator" : "Orchestrator"}
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
               <PencilIcon className="size-3.5" />
               Edit
@@ -181,17 +319,39 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden xl:flex-row">
+        {showMaster ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-border/60 xl:w-[30rem] xl:flex-none xl:border-b-0 xl:border-r">
+            <WorkbenchMasterPane
+              designation={designated}
+              alternates={alternates}
+              picking={picking}
+              onTogglePicking={() => setPicking((current) => !current)}
+              onSelectAlternate={(alternate) =>
+                setPreferredEnvironmentId(EnvironmentId.make(alternate.environmentId))
+              }
+              onDesignate={designate}
+              onCreate={(projectRef) => void createMaster(projectRef)}
+              onClear={clearDesignation}
+            />
+          </div>
+        ) : null}
+
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <WorkbenchStarMap
-            masterThreadKey={null}
-            master={null}
-            masterCreatedThreadIds={EMPTY_IDS}
+            masterThreadKey={masterThreadKey}
+            master={skyMaster}
+            masterCreatedThreadIds={masterCreatedThreadIds}
             includeThreadKey={includeThreadKey}
             emptyLabel="Nothing is filed here yet. Bind a folder to this project and its threads appear, or file one from the thread itself."
           />
         </div>
 
-        <aside className="flex min-h-0 shrink-0 flex-col overflow-hidden border-t border-border/60 xl:w-80 xl:border-l xl:border-t-0">
+        <aside
+          className={cn(
+            "flex min-h-0 shrink-0 flex-col overflow-hidden border-t border-border/60 xl:w-80 xl:border-l xl:border-t-0",
+            showMaster && "hidden",
+          )}
+        >
           <header className="flex shrink-0 items-baseline gap-2 border-b border-border/60 px-3 py-2">
             <h2 className="text-xs font-medium text-foreground">Threads</h2>
             <span className="text-[11px] text-muted-foreground/60">{rows.length}</span>
@@ -238,8 +398,6 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     </div>
   );
 }
-
-const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 /**
  * A slug nothing answers for.

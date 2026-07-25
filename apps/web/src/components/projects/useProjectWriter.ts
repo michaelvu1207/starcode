@@ -39,6 +39,20 @@ export interface ProjectWriter {
   readonly create: (title: string) => Promise<ProjectCategorySlug | null>;
   readonly rename: (slug: ProjectCategorySlug, patch: ProjectCategoryDisplayPatch) => Promise<void>;
   readonly setArchived: (slug: ProjectCategorySlug, archived: boolean) => Promise<void>;
+  /**
+   * Names this project's orchestrator on one machine, or clears it with an
+   * empty id.
+   *
+   * Machine-local like every other id in the local half, and for a reason
+   * beyond bookkeeping: the capability that carries the peer write tools is
+   * minted by the machine hosting the thread, so a master designated anywhere
+   * else would be a master with none of a master's tools.
+   */
+  readonly designateMaster: (
+    slug: ProjectCategorySlug,
+    environmentId: EnvironmentId,
+    threadId: string,
+  ) => Promise<void>;
 }
 
 export function useProjectWriter(): ProjectWriter {
@@ -153,8 +167,20 @@ export function useProjectWriter(): ProjectWriter {
     [connectedIds, upsert],
   );
 
+  const designateMaster = useCallback(
+    async (slug: ProjectCategorySlug, environmentId: EnvironmentId, threadId: string) => {
+      await upsert({
+        slug,
+        local: { environmentId, patch: { masterThreadId: threadId } },
+        environmentIds: [],
+      });
+      refreshProjectCatalogs([environmentId]);
+    },
+    [upsert],
+  );
+
   return useMemo(
-    () => ({ seed, bind, create, rename, setArchived }),
-    [bind, create, rename, seed, setArchived],
+    () => ({ seed, bind, create, rename, setArchived, designateMaster }),
+    [bind, create, designateMaster, rename, seed, setArchived],
   );
 }

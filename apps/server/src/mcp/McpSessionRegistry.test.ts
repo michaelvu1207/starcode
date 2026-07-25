@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ProjectCatalogRegistry } from "../projectCatalog/ProjectCatalogRegistry.ts";
 import { layerTest as serverSettingsLayerTest } from "../serverSettings.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
@@ -31,9 +32,16 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      // No master designated: these tests are about token lifecycle, and the
-      // capability set they assert on is the ordinary-session one.
-      Effect.provide(Layer.mergeAll(serverSettingsLayerTest(), NodeServices.layer)),
+      // No master designated anywhere — neither in settings nor in the project
+      // catalog. These tests are about token lifecycle, and the capability set
+      // they assert on is the ordinary-session one.
+      Effect.provide(
+        Layer.mergeAll(
+          serverSettingsLayerTest(),
+          Layer.mock(ProjectCatalogRegistry)({ list: Effect.succeed([]) }),
+          NodeServices.layer,
+        ),
+      ),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
