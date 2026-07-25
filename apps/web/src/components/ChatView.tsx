@@ -219,9 +219,9 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { ImportedThreadPrelude } from "./chat/ImportedThreadPrelude";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
-import { ChatHeader } from "./chat/ChatHeader";
-import { ChatHeaderRunContext } from "./chat/ChatHeaderRunContext";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { ComposerPaneMenu } from "./chat/ComposerPaneMenu";
+import { PanelLayoutControls } from "./chat/PanelLayoutControls";
+import { ComposerRunContext } from "./chat/ComposerRunContext";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -5503,11 +5503,115 @@ function ChatViewContent(props: ChatViewProps) {
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
 
+  // Fork: the thread header is gone; its survivors ride in the composer footer.
+  // Both must be built before the early return below — they are hooks — and
+  // both are memoised so ChatComposer's own memo keeps bailing between turns.
+  const composerRunContext = useMemo(
+    () =>
+      showComposerContextStrip && activeThread ? (
+        <ComposerRunContext
+          environmentId={activeThread.environmentId}
+          threadId={activeThread.id}
+          {...(routeKind === "draft" && draftId ? { draftId } : {})}
+          onEnvModeChange={onEnvModeChange}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+          {...(canOverrideServerThreadEnvMode
+            ? {
+                activeThreadBranchOverride: activeThreadBranch,
+                onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+              }
+            : {})}
+          envLocked={envLocked}
+          onComposerFocusRequest={scheduleComposerFocus}
+          {...(canCheckoutPullRequestIntoThread
+            ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+            : {})}
+          {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+          availableEnvironments={logicalProjectEnvironments}
+        />
+      ) : null,
+    [
+      activeThread,
+      activeThreadBranch,
+      canCheckoutPullRequestIntoThread,
+      canOverrideServerThreadEnvMode,
+      draftId,
+      envLocked,
+      envMode,
+      hasMultipleEnvironments,
+      logicalProjectEnvironments,
+      onEnvModeChange,
+      onEnvironmentChange,
+      onStartFromOriginChange,
+      openPullRequestDialog,
+      routeKind,
+      scheduleComposerFocus,
+      setPendingServerThreadBranch,
+      showComposerContextStrip,
+      startFromOrigin,
+    ],
+  );
+  const composerPaneMenu = useMemo(
+    () =>
+      activeThread ? (
+        <ComposerPaneMenu
+          activeThreadEnvironmentId={activeThread.environmentId}
+          activeProjectName={activeProject?.title}
+          activeProjectCwd={activeProject?.workspaceRoot ?? null}
+          openInCwd={gitCwd}
+          activeProjectScripts={activeProject?.scripts}
+          preferredScriptId={
+            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+          }
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          terminalAvailable={activeProject !== null}
+          terminalOpen={Boolean(terminalUiState.terminalOpen)}
+          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+          rightPanelAvailable={activeProject !== null}
+          rightPanelOpen={rightPanelOpen}
+          rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+          showRightPanelMaximize={rightPanelOpen && !shouldUsePlanSidebarSheet}
+          rightPanelMaximized={rightPanelMaximized}
+          onToggleTerminal={toggleTerminalVisibility}
+          onToggleRightPanel={toggleRightPanel}
+          onToggleRightPanelMaximized={toggleRightPanelMaximized}
+          onRunProjectScript={runProjectScript}
+          onAddProjectScript={saveProjectScript}
+          onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
+        />
+      ) : null,
+    [
+      activeProject,
+      activeThread,
+      availableEditors,
+      deleteProjectScript,
+      gitCwd,
+      keybindings,
+      lastInvokedScriptByProjectId,
+      rightPanelMaximized,
+      rightPanelOpen,
+      runProjectScript,
+      saveProjectScript,
+      shouldUsePlanSidebarSheet,
+      terminalUiState.terminalOpen,
+      toggleRightPanel,
+      toggleRightPanelMaximized,
+      toggleTerminalVisibility,
+      updateProjectScript,
+    ],
+  );
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
   }
 
+  // The mobile plan sheet keeps these in its own tab bar; everywhere else they
+  // reach the user through the composer's pane menu.
   const panelToggleControls = (
     <PanelLayoutControls
       terminalAvailable={activeProject !== null}
@@ -5520,17 +5624,7 @@ function ChatViewContent(props: ChatViewProps) {
       onToggleRightPanel={toggleRightPanel}
     />
   );
-  const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
-        />
-      ) : null}
-      {panelToggleControls}
-    </div>
-  );
+
   const rightPanelContent = activeThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -5606,40 +5700,8 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
-  // Fork: the run context lives in the thread header, not in a strip under the
-  // composer. Passing it as a node keeps the wiring here rather than widening
-  // ChatHeader by a dozen props; the cost is that ChatHeader's memo no longer
-  // bails, which is two cheap hooks per render because every child that does
-  // real work — run context, branch toolbar, action cluster — memoises itself.
-  const headerRunContext =
-    showComposerContextStrip && activeThread ? (
-      <ChatHeaderRunContext
-        environmentId={activeThread.environmentId}
-        threadId={activeThread.id}
-        {...(routeKind === "draft" && draftId ? { draftId } : {})}
-        onEnvModeChange={onEnvModeChange}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
-        {...(canOverrideServerThreadEnvMode
-          ? {
-              activeThreadBranchOverride: activeThreadBranch,
-              onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-            }
-          : {})}
-        envLocked={envLocked}
-        onComposerFocusRequest={scheduleComposerFocus}
-        {...(canCheckoutPullRequestIntoThread
-          ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-          : {})}
-        {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-        availableEnvironments={logicalProjectEnvironments}
-      />
-    ) : null;
-
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -5647,46 +5709,29 @@ function ChatViewContent(props: ChatViewProps) {
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
-        {/* Top bar */}
-        <header
-          data-chat-header
-          className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
-            isElectron
-              ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
-                  reserveTitleBarControlInset &&
-                    !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-[var(--workspace-native-controls-inset)]",
-                )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
-          {!rightPanelOpen ? panelLayoutControls : null}
-          <ChatHeader
-            activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            {...(routeKind === "draft" && draftId ? { draftId } : {})}
-            activeThreadTitle={activeThread.title}
-            activeProjectName={activeProject?.title}
-            activeProjectCwd={activeProject?.workspaceRoot ?? null}
-            openInCwd={gitCwd}
-            activeProjectScripts={activeProject?.scripts}
-            preferredScriptId={
-              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-            }
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
-            gitCwd={gitCwd}
-            runContext={headerRunContext}
-            onRunProjectScript={runProjectScript}
-            onAddProjectScript={saveProjectScript}
-            onUpdateProjectScript={updateProjectScript}
-            onDeleteProjectScript={deleteProjectScript}
+        {/* Fork: no thread header. The transcript and composer own the pane
+            edge to edge; everything the header used to carry now rides in the
+            composer footer.
+
+            The desktop app still needs this band. It is the window's drag
+            handle over the chat column, and on macOS the traffic lights
+            physically occupy its left 90px when the sidebar is collapsed —
+            hence the inset class, which upstream also applies here. It draws
+            nothing, so the living-sky backdrop runs to the top edge behind
+            it. */}
+        {isElectron ? (
+          <div
+            aria-hidden
+            data-chat-titlebar-band
+            className={cn(
+              "workspace-topbar drag-region relative shrink-0 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+              reserveTitleBarControlInset &&
+                !inlineRightPanelOwnsTitleBar &&
+                "wco:pr-[var(--workspace-native-controls-inset)]",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
           />
-        </header>
+        ) : null}
 
         <ThreadErrorBanner
           error={threadError}
@@ -5857,6 +5902,8 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadActivities={activeThread?.activities}
+                            runContext={composerRunContext}
+                            paneMenu={composerPaneMenu}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}

@@ -44,7 +44,8 @@ export interface ComposerOptionsPopoverProps {
   readonly contextLimitLabel: string | null;
 }
 
-function OptionRow(props: { label: string; hint?: string; children: ReactNode }) {
+/** Shared with `ComposerPaneMenu` so the two footer popovers stay one shape. */
+export function ComposerOptionRow(props: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3">
       <div className="min-w-0">
@@ -116,11 +117,13 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
         viewportClassName="py-3"
       >
         <div className="grid gap-2.5">
-          <OptionRow label="Model">{modelPicker}</OptionRow>
+          <ComposerOptionRow label="Model">{modelPicker}</ComposerOptionRow>
 
-          {traitsPicker ? <OptionRow label="Reasoning">{traitsPicker}</OptionRow> : null}
+          {traitsPicker ? (
+            <ComposerOptionRow label="Reasoning">{traitsPicker}</ComposerOptionRow>
+          ) : null}
 
-          <OptionRow label="Access" hint={runtimeModeOption.description}>
+          <ComposerOptionRow label="Access" hint={runtimeModeOption.description}>
             <Select
               value={runtimeMode}
               onValueChange={(value) => onRuntimeModeChange(value as RuntimeMode)}
@@ -155,17 +158,20 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
                 })}
               </SelectPopup>
             </Select>
-          </OptionRow>
+          </ComposerOptionRow>
 
           {contextLimitLabel ? (
-            <OptionRow label="Context limit" hint="Compacts on approach. Change in Settings.">
+            <ComposerOptionRow
+              label="Context limit"
+              hint="Compacts on approach. Change in Settings."
+            >
               <span
                 data-chat-composer-context-limit="true"
                 className="rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground text-xs tabular-nums"
               >
                 {contextLimitLabel}
               </span>
-            </OptionRow>
+            </ComposerOptionRow>
           ) : null}
         </div>
       </PopoverPopup>
