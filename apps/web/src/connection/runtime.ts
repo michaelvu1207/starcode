@@ -1,5 +1,6 @@
 import { Connection } from "@t3tools/client-runtime/connection";
 import { featureFlowSnapshotLoaderLayer } from "@t3tools/client-runtime/state/feature-flow";
+import { projectCatalogLoaderLayer } from "@t3tools/client-runtime/state/project-catalog";
 import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
 import { terminalHistoryLoaderLayer } from "@t3tools/client-runtime/state/terminal-history";
 import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
@@ -20,6 +21,7 @@ const snapshotLoaderLayer = Layer.mergeAll(
   usageSnapshotLoaderLayer,
   terminalHistoryLoaderLayer,
   featureFlowSnapshotLoaderLayer,
+  projectCatalogLoaderLayer,
 );
 
 type ConnectionLayerSource =
