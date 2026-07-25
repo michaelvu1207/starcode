@@ -21,12 +21,20 @@ const textEncoder = new TextEncoder();
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
-function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function makeSafeStorageLayer(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  // Fork: flipped by any safe-storage call, so a test can assert that a boot
+  // stayed away from the OS keychain entirely.
+  touched: Ref.Ref<boolean> | null = null,
+) {
+  const markTouched = touched === null ? Effect.void : Ref.set(touched, true);
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-    isEncryptionAvailable: Effect.succeed(available),
-    encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
+    isEncryptionAvailable: markTouched.pipe(Effect.as(available)),
+    encryptString: (value) => markTouched.pipe(Effect.as(textEncoder.encode(`encrypted:${value}`))),
     decryptString: (value) => {
       return Effect.gen(function* () {
+        yield* markTouched;
         const decoded = textDecoder.decode(value);
         if (
           !decoded.startsWith("encrypted:") ||
@@ -47,6 +55,7 @@ function makeLayer(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  touched: Ref.Ref<boolean> | null = null,
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -63,7 +72,7 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
+  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt, touched);
   const dependencies = Layer.mergeAll(
     environmentLayer,
     safeStorageLayer,
@@ -93,7 +102,7 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
-  it.effect("persists, reads, and clears an encrypted connection catalog", () =>
+  it.effect("persists, reads, and clears a connection catalog", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -108,15 +117,78 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("does not persist when secure storage is unavailable", () =>
+  // Fork: upstream refused to persist without OS-level encryption. The catalog
+  // is now a plain file under T3CODE_HOME, so secure storage being unavailable
+  // is no longer a reason to lose the user's paired machines.
+  it.effect("persists even when secure storage is unavailable", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        assert.isFalse(yield* store.set("{}"));
-        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+        assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
       }),
       false,
     ),
+  );
+
+  // Fork: the regression guard for the keychain-prompt bug. Any safe-storage
+  // call on a normal boot fails the test rather than quietly costing a password
+  // dialog on the user's machine.
+  it.effect("never reaches secure storage on a plaintext round trip", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const touched = yield* Ref.make(false);
+      const layer = makeLayer(baseDir, true, null, NodeServices.layer, touched);
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+
+      // A first boot with no catalog and no legacy registry.
+      assert.deepStrictEqual(yield* store.get, Option.none());
+      assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+      assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
+
+      assert.isFalse(yield* Ref.get(touched), "secure storage was used on a plaintext boot");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  // Fork: the one-time upgrade. A v1 document costs exactly one decrypt, then
+  // the file is rewritten as v2 and later boots stay clear of the keychain.
+  it.effect("upgrades a legacy encrypted catalog to plaintext on first read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const touched = yield* Ref.make(false);
+      const layer = makeLayer(baseDir, true, null, NodeServices.layer, touched);
+      const catalog = '{"schemaVersion":1,"targets":[]}';
+      const catalogPath = `${baseDir}/userdata/connection-catalog.json`;
+      const encrypted = Buffer.from(`encrypted:${catalog}`).toString("base64");
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        catalogPath,
+        `{"version":1,"encryptedCatalog":"${encrypted}"}\n`,
+      );
+
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+
+      assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+      assert.isTrue(yield* Ref.get(touched), "the legacy read should decrypt once");
+
+      const rewritten = yield* fileSystem.readFileString(catalogPath);
+      assert.include(rewritten, '"version":2');
+      assert.notInclude(rewritten, "encryptedCatalog");
+
+      yield* Ref.set(touched, false);
+      assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+      assert.isFalse(yield* Ref.get(touched), "the upgraded catalog should not decrypt again");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>
@@ -390,7 +462,18 @@ describe("DesktopConnectionCatalogStore", () => {
         Effect.provide(layer),
       );
 
-      assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+      // Fork: seeded as a v1 document, because `set` writes plaintext now. The
+      // contract under test is unchanged — an undecryptable legacy catalog must
+      // surface as an error and stay on disk, never be silently discarded.
+      const catalogPath = `${baseDir}/userdata/connection-catalog.json`;
+      const encrypted = Buffer.from('encrypted:{"schemaVersion":1,"targets":[]}').toString(
+        "base64",
+      );
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        catalogPath,
+        `{"version":1,"encryptedCatalog":"${encrypted}"}\n`,
+      );
       yield* Ref.set(failDecrypt, true);
       const error = yield* store.get.pipe(Effect.flip);
       assert.instanceOf(
@@ -398,7 +481,7 @@ describe("DesktopConnectionCatalogStore", () => {
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
       );
       assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
+      assert.equal(error.catalogPath, catalogPath);
       assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
       const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
       assert.instanceOf(decryptError.cause, Error);
