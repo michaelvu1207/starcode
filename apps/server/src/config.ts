@@ -31,6 +31,8 @@ export interface ServerDerivedPaths {
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
   readonly peersPath: string;
+  /** Import provenance: which CLI session became which thread. See `history/importRegistry.ts`. */
+  readonly historyImportsPath: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
@@ -114,6 +116,7 @@ export const deriveServerPaths = Effect.fn(function* (
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
     peersPath: join(stateDir, "peers.json"),
+    historyImportsPath: join(stateDir, "history-imports.json"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,

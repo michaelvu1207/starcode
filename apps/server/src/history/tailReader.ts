@@ -252,10 +252,42 @@ export const readSessionHead = async (input: {
   readonly path: string;
   readonly provider: HistoryProvider;
 }): Promise<Pick<HistorySessionSummary, "projectPath" | "snippet">> => {
+  const { projectPath, snippet } = await foldSessionHead(
+    input,
+    new SessionHeadFold(input.provider),
+  );
+  return { projectPath, snippet };
+};
+
+/**
+ * Anything that can be fed a session's opening lines and say when it has seen
+ * enough. `push` returns true to stop the scan early.
+ */
+export interface SessionHeadConsumer<Result> {
+  push: (line: string) => boolean;
+  readonly complete: boolean;
+  readonly result: Result;
+}
+
+/**
+ * Streams the front of a session file through a fold, bounded by the
+ * provider's head budget.
+ *
+ * Shared rather than duplicated because the budget is the interesting part:
+ * Codex's preamble runs to ~80 KB before the first real message, and getting
+ * that number wrong means either a listing row with no snippet or an import
+ * that reads a megabyte to find one line.
+ */
+export const foldSessionHead = async <Result>(
+  input: {
+    readonly path: string;
+    readonly provider: HistoryProvider;
+  },
+  fold: SessionHeadConsumer<Result>,
+): Promise<Result> => {
   const budget = HEAD_BUDGET_BYTES[input.provider];
   const handle = await NodeFSP.open(input.path, "r");
   try {
-    const fold = new SessionHeadFold(input.provider);
     let position = 0;
     let carry = "";
     while (position < budget) {
@@ -278,8 +310,7 @@ export const readSessionHead = async (input: {
       if (done || bytesRead < chunk.length) break;
     }
     if (!fold.complete && carry.length > 0) fold.push(carry);
-    const { projectPath, snippet } = fold.result;
-    return { projectPath, snippet };
+    return fold.result;
   } finally {
     await handle.close();
   }

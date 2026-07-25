@@ -24,8 +24,17 @@
  * @module History
  */
 import * as Schema from "effect/Schema";
+import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Days of history a listing covers when the caller names no window. */
 export const HISTORY_SESSIONS_DEFAULT_WINDOW_DAYS = 7;
@@ -165,3 +174,165 @@ export const HistoryTranscriptPage = Schema.Struct({
   nextBefore: Schema.NullOr(NonNegativeInt),
 });
 export type HistoryTranscriptPage = typeof HistoryTranscriptPage.Type;
+
+/**
+ * Import: turning one of those on-disk sessions into a real starcode thread.
+ *
+ * The rest of this module is a reader. This part is not — it is the one place
+ * the CLIs' own stores cross into t3's write model, and it does so without
+ * copying a single message. What gets written is a thread and a resume
+ * binding; the transcript stays where the CLI put it, and the *model's* memory
+ * of it comes back on the imported thread's first turn because the provider is
+ * asked to resume the original session rather than start a new one.
+ *
+ * That mechanism is why the failure modes below are refusals rather than
+ * best-effort attempts. Claude resolves `--resume <id>` relative to the
+ * session's own project directory, and Codex silently degrades an unknown
+ * thread id into a brand-new empty thread — so an import that guesses wrong
+ * does not error, it produces a thread with amnesia. Every precondition is
+ * therefore checked before anything is written.
+ */
+
+/** Why an import was refused. Each of these is a precondition, not a hiccup. */
+export const HistoryImportRefusalReason = Schema.Literals([
+  /** The session file no longer parses into an id and a working directory. */
+  "session_unreadable",
+  /** The file carries no native session id we could resume (or it is malformed). */
+  "session_id_unusable",
+  /** The session never recorded the directory it ran in, so no project can match it. */
+  "session_cwd_unknown",
+  /** No such provider instance is configured on this machine. */
+  "instance_not_found",
+  /** The named instance is configured but disabled. */
+  "instance_disabled",
+  /** The instance runs a driver that cannot resume this kind of session. */
+  "instance_driver_mismatch",
+  /**
+   * The instance's home (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`) does not contain
+   * this session, so resuming through it would find nothing. This is the
+   * refusal that stops a silent empty Codex thread.
+   */
+  "instance_home_mismatch",
+  /** No model could be resolved for the new thread. */
+  "model_unavailable",
+  /** The caller named a project that does not exist. */
+  "project_not_found",
+  /** The project exists but is rooted somewhere other than the session's cwd. */
+  "project_cwd_mismatch",
+  /** Creating the project at the session's cwd failed. */
+  "project_create_failed",
+  /** Creating the thread failed. */
+  "thread_create_failed",
+  /** The resume binding could not be written, so the thread would not resume. */
+  "binding_write_failed",
+]);
+export type HistoryImportRefusalReason = typeof HistoryImportRefusalReason.Type;
+
+export class HistoryImportRefusedError extends Schema.TaggedErrorClass<HistoryImportRefusedError>()(
+  "HistoryImportRefusedError",
+  {
+    code: Schema.Literal("history_import_refused"),
+    reason: HistoryImportRefusalReason,
+    /** Free text for the dialog: which home, which cwd, which driver. */
+    detail: Schema.optional(Schema.String),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(HistoryImportRefusedError)(this, { status: 409 });
+  }
+}
+
+export const HistoryImportRequest = Schema.Struct({
+  /**
+   * Which configured instance will own the imported thread. Defaults to the
+   * built-in instance for the session's provider (`claudeAgent` / `codex`).
+   * Whatever it resolves to must own the session's home, or the import is
+   * refused rather than started fresh.
+   */
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
+  /**
+   * Import into this project instead of matching one by working directory.
+   * Refused unless its `workspaceRoot` is the session's cwd — a thread's
+   * effective cwd comes from its project, and a mismatch breaks resume.
+   */
+  projectId: Schema.optionalKey(ProjectId),
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+  title: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Answer to a previous `needs_project` outcome. Absent, an import with no
+   * matching project reports what it would create and writes nothing; set,
+   * it creates a project at the session's cwd and proceeds.
+   */
+  createProject: Schema.optionalKey(Schema.Boolean),
+});
+export type HistoryImportRequest = typeof HistoryImportRequest.Type;
+
+/**
+ * The import landed (or had already landed). `alreadyImported` distinguishes
+ * the two, and re-importing is deliberately safe: it returns the thread the
+ * first import made rather than making a second one bound to the same session.
+ */
+export const HistoryImportThreadResult = Schema.Struct({
+  status: Schema.Literal("imported"),
+  alreadyImported: Schema.Boolean,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  /** The session's own working directory, which is also the thread's. */
+  cwd: TrimmedNonEmptyString,
+  /** The CLI's id for the session — what the provider is asked to resume. */
+  nativeSessionId: TrimmedNonEmptyString,
+  provider: HistoryProvider,
+  providerInstanceId: ProviderInstanceId,
+  title: TrimmedNonEmptyString,
+});
+export type HistoryImportThreadResult = typeof HistoryImportThreadResult.Type;
+
+/**
+ * Nothing was written. No project is rooted at the session's cwd, and creating
+ * one across four machines is not something to do silently — the caller is
+ * told what would be created and can retry with `createProject`.
+ */
+export const HistoryImportNeedsProjectResult = Schema.Struct({
+  status: Schema.Literal("needs_project"),
+  cwd: TrimmedNonEmptyString,
+  /** Last path segment of `cwd`: the title the project would get. */
+  suggestedProjectTitle: TrimmedNonEmptyString,
+  provider: HistoryProvider,
+  providerInstanceId: ProviderInstanceId,
+  suggestedThreadTitle: TrimmedNonEmptyString,
+});
+export type HistoryImportNeedsProjectResult = typeof HistoryImportNeedsProjectResult.Type;
+
+export const HistoryImportResult = Schema.Union([
+  HistoryImportThreadResult,
+  HistoryImportNeedsProjectResult,
+]);
+export type HistoryImportResult = typeof HistoryImportResult.Type;
+
+/**
+ * One line of the import registry: which CLI session became which thread.
+ *
+ * This is provenance, not state. It exists so the picker can badge a session
+ * as already imported and offer to open the thread instead of importing it
+ * twice; the resume binding on the thread is the authoritative link.
+ */
+export const HistoryImportRecord = Schema.Struct({
+  /** The opaque, path-derived id — stable only on the machine that minted it. */
+  historySessionId: HistorySessionId,
+  /** The CLI's own session id, which survives a re-index and a path change. */
+  nativeSessionId: TrimmedNonEmptyString,
+  provider: HistoryProvider,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  cwd: TrimmedNonEmptyString,
+  importedAt: IsoDateTime,
+});
+export type HistoryImportRecord = typeof HistoryImportRecord.Type;
+
+export const HistoryImportsPage = Schema.Struct({
+  /** The whole registry. It is one row per import and never paginated. */
+  imports: Schema.Array(HistoryImportRecord),
+});
+export type HistoryImportsPage = typeof HistoryImportsPage.Type;
