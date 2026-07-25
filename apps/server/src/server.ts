@@ -93,6 +93,7 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
 import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
+import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -359,6 +360,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(peersHttpApiLayer),
       Layer.provide(usageHttpApiLayer),
+      Layer.provide(historyHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -372,6 +374,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(PeerServicesLive),
   Layer.provide(UsageServicesLive),
+  Layer.provide(HistoryServicesLive),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(browserApiCorsLayer),
 );

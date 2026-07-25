@@ -26,6 +26,7 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { HistorySessionId, HistorySessionsPage, HistoryTranscriptPage } from "./history.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -91,6 +92,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "peers_load_failed",
   "peer_registration_failed",
   "peer_remove_failed",
+  "history_sessions_failed",
+  "history_transcript_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -165,7 +168,16 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  /**
+   * The id did not resolve against the server's terminal-history index. This
+   * is the only answer the transcript route ever gives for an id it does not
+   * recognise, forged or merely stale, so a caller cannot distinguish a file
+   * that is absent from one it is not allowed to name.
+   */
+  "history_session_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
@@ -547,6 +559,52 @@ export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage").add(
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+/**
+ * Read-only terminal history: the CLI session logs sitting on this machine's
+ * disk, outside t3 entirely.
+ *
+ * Scoped on `orchestration:read` for the same reason usage is, and the same
+ * reason matters more here: a remotely-paired hub client holds a pairing
+ * credential, not an administrative one, and reading another machine's history
+ * is the entire point of the feature.
+ *
+ * Both endpoints take their filters as query parameters rather than a POST
+ * body — they are reads, they are cacheable, and the listing's cursor belongs
+ * in a URL the client can hold onto. `sessionId` is a *path* parameter on the
+ * transcript route so that a relay client's DPoP proof, which binds to the
+ * fully interpolated URL, covers which session was asked for.
+ */
+export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
+  .add(
+    HttpApiEndpoint.get("sessions", "/api/history/sessions", {
+      headers: OptionalBearerHeaders,
+      // Every filter is an optional string parsed by the handler rather than a
+      // typed schema. Query values arrive as text regardless, and a garbled
+      // `limit` should clamp to something sane instead of failing the request
+      // the sidebar strip made.
+      query: Schema.Struct({
+        since: Schema.optionalKey(Schema.String),
+        until: Schema.optionalKey(Schema.String),
+        limit: Schema.optionalKey(Schema.String),
+        cursor: Schema.optionalKey(Schema.String),
+      }),
+      success: HistorySessionsPage,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("transcript", "/api/history/sessions/:sessionId/transcript", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ sessionId: HistorySessionId }),
+      query: Schema.Struct({
+        before: Schema.optionalKey(Schema.String),
+        limit: Schema.optionalKey(Schema.String),
+      }),
+      success: HistoryTranscriptPage,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -614,4 +672,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPeersHttpApi)
   .add(EnvironmentUsageHttpApi)
+  .add(EnvironmentHistoryHttpApi)
   .add(EnvironmentConnectHttpApi) {}
