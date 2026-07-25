@@ -18,6 +18,7 @@ import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDi
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ImportConversationDialog } from "../components/history/ImportConversationDialog";
+import { StarcodeSky } from "../components/brand/StarcodeSky";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { Button } from "../components/ui/button";
@@ -98,10 +99,14 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  // The sky is mounted in all three branches, not only the app shell. Pairing
+  // and the pre-auth screens are the first thing anyone sees, and "the whole
+  // app" has to include them or the backdrop changes the moment you sign in.
   if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {
     return (
       <>
         <DocumentTitleSync />
+        <StarcodeSky />
         <Outlet />
       </>
     );
@@ -111,6 +116,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <StarcodeSky />
         <Outlet />
       </>
     );
@@ -129,6 +135,12 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
+        {/* The one backdrop, portalled to `document.body` behind everything.
+            Mounted here rather than inside the sidebar wrapper because every
+            `@base-ui` portal — dialogs, menus, tooltips — lands on the body, and
+            those surfaces blur their backdrop; a sky inside the wrapper is not
+            in their backdrop chain, so each one would blur nothing. */}
+        <StarcodeSky />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />

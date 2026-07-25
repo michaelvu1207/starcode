@@ -10,6 +10,13 @@
  *
  * Pairing is the app's only genuinely idle screen — you open it, then wait —
  * so it is where the motif budget is spent: the night sky, and the helmet.
+ *
+ * It used to paint its own sky: an opaque `bg-background` plus two hand-rolled
+ * gradients pinned to `--sc-ink-950` and butter, which is to say a seventh copy
+ * of the backdrop that did not track the hour and drifted from the six inside
+ * the app shell. `StarcodeSky` now paints the window on this route too, so this
+ * component is transparent and keeps only what is genuinely its own — the
+ * helmet, the wordmark, and the bright speck field an idle screen has earned.
  */
 import type { ReactNode } from "react";
 
@@ -18,12 +25,8 @@ import { StarcodeWordmark } from "./StarcodeWordmark";
 
 export function PairingSky({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10 text-foreground sm:px-6">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        {/* Sky: deepest at the top, resolving into the page background. Mirrors
-            the sidebar's own gradient so the two surfaces read as one world. */}
-        <div className="absolute inset-x-0 top-0 h-[55vh] bg-[linear-gradient(to_bottom,var(--sc-ink-950,#0c0e16),transparent)] not-dark:hidden" />
-        <div className="absolute inset-x-0 top-0 h-[45vh] bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--sc-butter,#f0d9a0)_22%,transparent),transparent)] dark:hidden" />
         <SkySpecks />
       </div>
 

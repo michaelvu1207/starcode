@@ -14,6 +14,13 @@
  *
  * Exits non-zero on any failure.
  */
+import {
+  BRIGHTEST_STAR_IN_TILE,
+  STAR_CHROME_MAX,
+  STAR_TINT,
+  buildTimeline,
+} from "./lib/starcode-sky-timeline.mjs";
+
 const hex = (h) => {
   const s = h.replace("#", "");
   const n =
@@ -160,113 +167,260 @@ for (const [themeName, label, fg, bg, min] of UI) {
 }
 
 // ---------------------------------------------------------------------------
-// Sky backdrop phases.
+// The sky, swept.
 //
-// `starcodeSky.ts` tints the TOP of the main pane per time of day, so the
-// darkest surface a text token can land on is no longer `--background` — it is
-// whichever phase colour is lightest. Transcript content sits below where the
-// gradient has resolved, but headers, breadcrumbs, and empty-state copy sit in
-// the tinted band, so every text token is re-checked against the extremes.
+// The backdrop is no longer four hand-picked phases. It is a 38-keyframe
+// timeline derived from a day-to-night time-lapse, and every keyframe carries
+// five gradient stops rather than two colours — so the surface a text token can
+// land on is one of 190 rather than one of eight, and transcribing them here
+// stopped being an option.
 //
-// Values transcribed from SKY_STOPS in `apps/web/src/starcodeSky.ts`.
-const SKY_PHASES = {
-  "night-top": "#0a0f24",
-  "night-glow": "#0f173d",
-  "dawn-top": "#49182d",
-  "dawn-glow": "#481921",
-  "day-top": "#1b304b",
-  "day-glow": "#17314f",
-  "dusk-top": "#3e183d",
-  "dusk-glow": "#45172e",
-};
+// The timeline is therefore IMPORTED rather than transcribed. That is a real
+// change in this file's guarantee: the checks above are still copies of values
+// that live in the CSS and can silently desync, but the sky can no longer drift
+// from what it is being checked against, because both come from the same
+// derivation. `derive-starcode-sky-timeline.mjs --check` holds the shipped
+// module to the same source.
+//
+// Four stacks are swept, each a strictly worse surface than the last:
+//
+//   sky    text on the raw gradient stop
+//   star   ...with the brightest chrome star composited on top of it
+//   panel  ...seen through a structural panel at `--sc-glass-panel` (L1)
+//   glass  ...and then through a popover or card at the user's minimum
+//          `glassOpacity` of 40% (L2)
+//
+// The last one is the one that did not exist before this round: with opaque
+// panels, a dialog at 40% sat on a known plate. Over the sky it sits on the sky,
+// which is why `--sc-glass-panel` has to be solved rather than picked.
+const VERBOSE = process.argv.includes("--verbose");
+const TIMELINE = buildTimeline();
 
-for (const [tName, tHex] of Object.entries(darkText)) {
-  if (tName.startsWith("sidebar-")) continue;
-  for (const [sName, sHex] of Object.entries(SKY_PHASES)) {
-    const r = ratio(tHex, sHex);
-    const pass = r >= 4.5;
-    if (!pass) fails++;
-    rows.push(["sky", tName, tHex, sName, sHex, r.toFixed(2), pass ? "AA" : "FAIL"]);
-  }
+// Transcribed from `--sc-glass-panel` in starcode-theme.css. Solved below.
+const GLASS_PANEL = 0.68;
+// `MIN_GLASS_OPACITY` from packages/contracts/src/settings.ts — the most
+// transparent a user can drag the slider, and therefore the only value worth
+// gating on. Checking the default would be checking the easy case.
+const MIN_GLASS_OPACITY = 0.4;
+
+/** Sky stop, plus the brightest star the chrome field can put on it. */
+function litSky(stop, stars) {
+  if (stars <= 0) return stop;
+  return over(STAR_TINT, stars * STAR_CHROME_MAX * BRIGHTEST_STAR_IN_TILE, stop);
 }
 
-// The light theme's wash is a translucent tint over linen rather than an opaque
-// fill, so the surface a token actually lands on is the composite. Checked at
-// the strongest stop of each gradient — 55% on the main pane, 42% on the sidebar
-// band — which is the darkest the paper ever gets.
-const SKY_WASHES = {
-  "night-wash": "#dde3f4",
-  "dawn-wash": "#f9ddd4",
-  "day-wash": "#d5e5f7",
-  "dusk-wash": "#fae0be",
-};
-
-/** Composite `over` at `alpha` onto opaque `base`, both `#rrggbb`. */
-function composite(over, base, alpha) {
-  const [o, b] = [over, base].map((h) =>
-    [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16)),
-  );
-  const mixed = o.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)));
-  return `#${mixed.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+/**
+ * Sweep a stack across the whole timeline and both panel bases.
+ *
+ * Emits at most one row per (stack, token) unless `--verbose` — the worst one —
+ * plus every failure. 38 keyframes times 5 stops times 12 tokens times 4 stacks
+ * is 91k comparisons; printing them is not a report, it is a haystack.
+ */
+function sweep(stack, surfaceFor, { floor = 4.5, texts = darkText } = {}) {
+  const worstPerToken = new Map();
+  for (const frame of TIMELINE) {
+    for (const [index, stop] of frame.stops.entries()) {
+      const surface = surfaceFor(stop, frame);
+      for (const [tName, tHex] of Object.entries(texts)) {
+        const r = ratio(tHex, surface);
+        const pass = r >= floor;
+        if (!pass) fails++;
+        const key = tName;
+        const current = worstPerToken.get(key);
+        if (!current || r < current.r || (!pass && VERBOSE)) {
+          worstPerToken.set(key, {
+            r,
+            row: [
+              stack,
+              tName,
+              tHex,
+              `${frame.hour}h stop${index}`,
+              surface,
+              r.toFixed(2),
+              pass ? "AA" : "FAIL",
+            ],
+          });
+        }
+        if (VERBOSE || !pass) {
+          rows.push([
+            stack,
+            tName,
+            tHex,
+            `${frame.hour}h stop${index}`,
+            surface,
+            r.toFixed(2),
+            pass ? "AA" : "FAIL",
+          ]);
+        }
+      }
+    }
+  }
+  if (!VERBOSE) for (const { row } of worstPerToken.values()) rows.push(row);
+  let worst = Infinity;
+  for (const { r } of worstPerToken.values()) worst = Math.min(worst, r);
+  return worst;
 }
 
-for (const [tName, tHex] of Object.entries(lightText)) {
-  for (const [sName, sHex] of Object.entries(SKY_WASHES)) {
-    const surface = tName.startsWith("sidebar-")
-      ? composite(sHex, LIGHT.sidebar, 0.42)
-      : composite(sHex, LIGHT.background, 0.72);
-    const r = ratio(tHex, surface);
-    const pass = r >= 4.5;
-    if (!pass) fails++;
-    rows.push(["sky-lt", tName, tHex, sName, surface, r.toFixed(2), pass ? "AA" : "FAIL"]);
+// Sidebar tokens only ever paint on the sidebar panel; everything else lands on
+// the pane. Two bases, and each token is checked against the one it can reach.
+const paneText = Object.fromEntries(
+  Object.entries(darkText).filter(([name]) => !name.startsWith("sidebar-")),
+);
+const sidebarText = Object.fromEntries(
+  Object.entries(darkText).filter(([name]) => name.startsWith("sidebar-")),
+);
+
+const worst = {};
+worst.sky = sweep("sky", (stop) => stop, { texts: paneText });
+worst.star = sweep("star", (stop, frame) => litSky(stop, frame.stars), { texts: paneText });
+worst.pane = sweep(
+  "pane",
+  (stop, frame) => over(DARK.background, GLASS_PANEL, litSky(stop, frame.stars)),
+  {
+    texts: paneText,
+  },
+);
+worst.sidebar = sweep(
+  "sidebar",
+  (stop, frame) => over(DARK.sidebar, GLASS_PANEL, litSky(stop, frame.stars)),
+  { texts: sidebarText },
+);
+worst.glass = sweep(
+  "glass",
+  (stop, frame) =>
+    over(
+      DARK.popover,
+      MIN_GLASS_OPACITY,
+      over(DARK.background, GLASS_PANEL, litSky(stop, frame.stars)),
+    ),
+  { texts: paneText },
+);
+worst.card = sweep(
+  "card",
+  (stop, frame) =>
+    over(
+      DARK.card,
+      MIN_GLASS_OPACITY,
+      over(DARK.background, GLASS_PANEL, litSky(stop, frame.stars)),
+    ),
+  { texts: paneText },
+);
+
+// ---------------------------------------------------------------------------
+// Solve `--sc-glass-panel`, rather than trusting the number transcribed above.
+//
+// More opaque is always safer — at 100% the panel is the flat palette every
+// check above already passes — so there is a lowest alpha that still clears the
+// floor everywhere, and bisecting for it turns "82% looked fine" into "82% is
+// inside the margin, and here is how much margin". Same discipline as
+// `--sc-star-chrome-max`.
+//
+// THE ANSWER, AS OF THIS TIMELINE, IS ZERO, and that is worth understanding
+// rather than deleting. Every panel base (`--background`, `--sidebar`,
+// `--popover`, `--card`) is darker than the sky at every hour it could matter,
+// so tinting a panel over the sky can only *raise* contrast. The binding
+// constraint is one level up: `LIGHTNESS_CEILING` in the timeline derivation is
+// already solved so that text clears AA on the raw star-lit sky with no panel at
+// all. Which means the panel tint is not a legibility knob — it is pure taste,
+// and it can go as low as it looks good at. The bisection stays because that
+// conclusion is a property of the current palette and timeline, not a law; if
+// either gets lighter, this is where it will show up first.
+function panelHolds(alpha) {
+  for (const frame of TIMELINE) {
+    for (const stop of frame.stops) {
+      const lit = litSky(stop, frame.stars);
+      const stacks = [
+        [over(DARK.background, alpha, lit), paneText],
+        [over(DARK.sidebar, alpha, lit), sidebarText],
+        [over(DARK.popover, MIN_GLASS_OPACITY, over(DARK.background, alpha, lit)), paneText],
+        [over(DARK.card, MIN_GLASS_OPACITY, over(DARK.background, alpha, lit)), paneText],
+      ];
+      for (const [surface, texts] of stacks) {
+        for (const tHex of Object.values(texts)) if (ratio(tHex, surface) < 4.5) return false;
+      }
+    }
   }
+  return true;
+}
+
+let panelLow = 0;
+let panelHigh = 1;
+for (let i = 0; i < 20; i += 1) {
+  const mid = (panelLow + panelHigh) / 2;
+  if (panelHolds(mid)) panelHigh = mid;
+  else panelLow = mid;
+}
+const panelFloor = panelHigh;
+if (GLASS_PANEL < panelFloor) {
+  fails++;
+  rows.push([
+    "solve",
+    "--sc-glass-panel",
+    `${(GLASS_PANEL * 100).toFixed(0)}%`,
+    "minimum that holds AA",
+    `${(panelFloor * 100).toFixed(1)}%`,
+    "—",
+    "FAIL",
+  ]);
+} else {
+  rows.push([
+    "solve",
+    "--sc-glass-panel",
+    `${(GLASS_PANEL * 100).toFixed(0)}%`,
+    "minimum that holds AA",
+    `${(panelFloor * 100).toFixed(1)}%`,
+    "—",
+    "OK",
+  ]);
 }
 
 // ---------------------------------------------------------------------------
-// The chrome starfield ceiling.
+// The light theme's wash.
 //
-// Stars are painted across the sidebar and the main pane, which means one can
-// land directly behind body text. `--sc-star-chrome-max` in starcode-theme.css
-// is the layer opacity that makes that safe: at this value the brightest star in
-// the tile composites to a colour that still clears AA against every text token.
-//
-// This block re-derives the guarantee rather than trusting it. If a phase colour
-// is made lighter or the ceiling is raised past what the palette can carry, this
-// fails and says so — which is the only reason it is safe to put a starfield
-// behind working UI at all.
-const STAR_CHROME_MAX = 0.26;
-const STAR_TINT = "#eadcc6";
-const BRIGHTEST_STAR_IN_TILE = 0.86;
-
-const STAR_SURFACES = { background: DARK.background, sidebar: DARK.sidebar, ...SKY_PHASES };
-
-// Phase scales the layer on top of the ceiling, so each phase is checked at the
-// star count it actually renders with — night at full, dusk and dawn thinned,
-// midday not at all. Checking every phase at the night value would fail colours
-// that never carry a star.
-const PHASE_STARS = {
-  background: 1,
-  sidebar: 1,
-  "night-top": 1,
-  "night-glow": 1,
-  "dawn-top": 0.35,
-  "dawn-glow": 0.35,
-  "day-top": 0,
-  "day-glow": 0,
-  "dusk-top": 0.4,
-  "dusk-glow": 0.4,
-};
-
-for (const [sName, sHex] of Object.entries(STAR_SURFACES)) {
-  const phase = PHASE_STARS[sName] ?? 1;
-  if (phase === 0) continue;
-  const lit = over(STAR_TINT, phase * STAR_CHROME_MAX * BRIGHTEST_STAR_IN_TILE, sHex);
-  for (const [tName, tHex] of Object.entries(darkText)) {
-    const r = ratio(tHex, lit);
-    const pass = r >= 4.5;
-    if (!pass) fails++;
-    rows.push(["star", tName, tHex, `${sName}+star`, lit, r.toFixed(2), pass ? "AA" : "FAIL"]);
+// A translucent tint over linen rather than an opaque fill, so the surface a
+// token actually lands on is the composite — checked at the strongest stop of
+// the sky gradient (58% over `--background`), which is the darkest the paper
+// ever gets, and again through the panel tint.
+{
+  const worstPerToken = new Map();
+  for (const frame of TIMELINE) {
+    const paper = over(frame.wash, 0.58, LIGHT.background);
+    for (const [tName, tHex] of Object.entries(lightText)) {
+      const base = tName.startsWith("sidebar-") ? LIGHT.sidebar : LIGHT.background;
+      const surface = over(base, GLASS_PANEL, paper);
+      const r = ratio(tHex, surface);
+      const pass = r >= 4.5;
+      if (!pass) fails++;
+      const current = worstPerToken.get(tName);
+      if (!current || r < current.r) {
+        worstPerToken.set(tName, {
+          r,
+          row: [
+            "sky-lt",
+            tName,
+            tHex,
+            `${frame.hour}h wash`,
+            surface,
+            r.toFixed(2),
+            pass ? "AA" : "FAIL",
+          ],
+        });
+      }
+      if (VERBOSE || !pass) {
+        rows.push([
+          "sky-lt",
+          tName,
+          tHex,
+          `${frame.hour}h wash`,
+          surface,
+          r.toFixed(2),
+          pass ? "AA" : "FAIL",
+        ]);
+      }
+    }
   }
+  if (!VERBOSE) for (const { row } of worstPerToken.values()) rows.push(row);
+  worst.light = Math.min(...[...worstPerToken.values()].map((v) => v.r));
 }
 
 // ---------------------------------------------------------------------------
@@ -277,112 +431,99 @@ for (const [sName, sHex] of Object.entries(STAR_SURFACES)) {
 // the 3:1 component floor — a plan whose branching cannot be traced is not
 // conveying the plan, which is the whole reason the ghosts are drawn at all.
 //
-// The surface is not `--background`. An edge crosses the sky tint, the tier
-// bands the map paints over it, and — being a long thin line rather than a
+// The surface is not `--background`. An edge crosses the sky, the tier bands the
+// map paints over it, the panel tint, and — being a long thin line rather than a
 // glyph — is more likely than any text to run straight through a chrome star.
-// All three are stacked here, so this is the worst pixel an edge can occupy
+// All of them are stacked here, so this is the worst pixel an edge can occupy
 // rather than the average one.
 //
 // Values transcribed from BRANCH_STROKE and the band opacities in
 // `apps/web/src/components/workbench/WorkbenchStarMap.tsx`.
 const EDGE_ALPHA = { real: 0.7, planned: 0.6 };
 // `--sc-band-dark` peaks at the top tier, `--sc-band-light` at the bottom one.
-// Each is the value that pushes its theme's backdrop toward the stroke.
 const BAND_DARK_MAX = 0.008 + 3 * 0.008;
 const BAND_LIGHT_MAX = 0.03;
 
 for (const [kind, alpha] of Object.entries(EDGE_ALPHA)) {
-  for (const [sName, sHex] of Object.entries({ background: DARK.background, ...SKY_PHASES })) {
-    const phase = PHASE_STARS[sName] ?? 1;
-    const banded = over(darkText.foreground, BAND_DARK_MAX, sHex);
-    const surface =
-      phase === 0
-        ? banded
-        : over(STAR_TINT, phase * STAR_CHROME_MAX * BRIGHTEST_STAR_IN_TILE, banded);
-    const stroke = over(darkText.foreground, alpha, surface);
-    const r = ratio(stroke, surface);
-    const pass = r >= 3;
-    if (!pass) fails++;
-    rows.push([
-      "edge",
-      `${kind} lineage edge`,
-      stroke,
-      `${sName}+band+star`,
-      surface,
-      r.toFixed(2),
-      pass ? ">=3" : "FAIL(<3)",
-    ]);
+  let worstEdge = { r: Infinity, row: null };
+  for (const frame of TIMELINE) {
+    for (const [index, stop] of frame.stops.entries()) {
+      const panel = over(DARK.background, GLASS_PANEL, litSky(stop, frame.stars));
+      const surface = over(darkText.foreground, BAND_DARK_MAX, panel);
+      const stroke = over(darkText.foreground, alpha, surface);
+      const r = ratio(stroke, surface);
+      const pass = r >= 3;
+      if (!pass) fails++;
+      if (r < worstEdge.r || (!pass && VERBOSE)) {
+        worstEdge = {
+          r,
+          row: [
+            "edge",
+            `${kind} lineage edge`,
+            stroke,
+            `${frame.hour}h stop${index}`,
+            surface,
+            r.toFixed(2),
+            pass ? ">=3" : "FAIL(<3)",
+          ],
+        };
+      }
+    }
   }
-  for (const [sName, sHex] of Object.entries({ paper: null, ...SKY_WASHES })) {
-    const washed = sHex === null ? LIGHT.background : composite(sHex, LIGHT.background, 0.72);
+  rows.push(worstEdge.row);
+
+  let worstLight = { r: Infinity, row: null };
+  for (const frame of TIMELINE) {
+    const washed = over(frame.wash, 0.58, LIGHT.background);
     const surface = over(lightText.foreground, BAND_LIGHT_MAX, washed);
     const stroke = over(lightText.foreground, alpha, surface);
     const r = ratio(stroke, surface);
     const pass = r >= 3;
     if (!pass) fails++;
-    rows.push([
-      "edge-lt",
-      `${kind} lineage edge`,
-      stroke,
-      `${sName}+band`,
-      surface,
-      r.toFixed(2),
-      pass ? ">=3" : "FAIL(<3)",
-    ]);
+    if (r < worstLight.r) {
+      worstLight = {
+        r,
+        row: [
+          "edge-lt",
+          `${kind} lineage edge`,
+          stroke,
+          `${frame.hour}h wash`,
+          surface,
+          r.toFixed(2),
+          pass ? ">=3" : "FAIL(<3)",
+        ],
+      };
+    }
   }
+  rows.push(worstLight.row);
 }
 
 // A ghost that reads as brightly as real work would make the plan look done.
-// The floor is a floor, not a target: this holds the gap that keeps them
-// distinguishable once both clear it.
 if (!(EDGE_ALPHA.planned < EDGE_ALPHA.real)) {
   fails++;
   rows.push(["edge", "ghost stays subordinate", "—", "—", "—", "—", "FAIL"]);
 }
 
-// ---------------------------------------------------------------------------
-// The glass floor.
-//
-// Dialogs, popovers and the composer paint at `--glass-opacity`, which the user
-// can drag down to MIN_GLASS_OPACITY (40) in settings. At that setting the
-// surface is mostly transparent, so its text is not sitting on `--popover` at
-// all — it is sitting on 40% of that colour over whatever is behind, which on an
-// idle route is the sky at its lightest.
-//
-// Every check above assumes an opaque surface, so none of them cover this. It is
-// the one place a user setting can move a contrast ratio, which is exactly why
-// it belongs in the gate rather than in a comment.
-const MIN_GLASS_OPACITY = 0.4;
-const GLASS_BEHIND = { ...SKY_PHASES, background: DARK.background };
-
-for (const [surfaceName, surfaceHex] of [
-  ["popover", DARK.popover],
-  ["card", DARK.card],
-]) {
-  for (const [behindName, behindHex] of Object.entries(GLASS_BEHIND)) {
-    const glass = over(surfaceHex, MIN_GLASS_OPACITY, behindHex);
-    for (const [tName, tHex] of Object.entries(darkText)) {
-      if (tName.startsWith("sidebar-")) continue;
-      const r = ratio(tHex, glass);
-      const pass = r >= 4.5;
-      if (!pass) fails++;
-      rows.push([
-        "glass",
-        tName,
-        tHex,
-        `${surfaceName}@40%/${behindName}`,
-        glass,
-        r.toFixed(2),
-        pass ? "AA" : "FAIL",
-      ]);
-    }
-  }
-}
-
-const w = [6, 34, 9, 26, 9, 7, 10];
+const w = [8, 34, 9, 26, 9, 7, 10];
 const line = (r) => r.map((c, i) => String(c).padEnd(w[i])).join(" ");
-console.log(line(["theme", "token", "fg", "surface", "bg", "ratio", "verdict"]));
+console.log(line(["stack", "token", "fg", "surface", "bg", "ratio", "verdict"]));
 console.log("-".repeat(w.reduce((a, b) => a + b + 1, 0)));
 for (const r of rows) console.log(line(r));
+
+console.log(
+  `\nswept ${TIMELINE.length} keyframes x 5 stops. Worst ratio per stack:\n` +
+    Object.entries(worst)
+      .map(([name, r]) => `  ${name.padEnd(8)} ${r.toFixed(2)}`)
+      .join("\n") +
+    `\n  --sc-glass-panel ${(GLASS_PANEL * 100).toFixed(0)}%, minimum that holds AA: ${(panelFloor * 100).toFixed(1)}%` +
+    (panelFloor < 0.01
+      ? " — unconstrained. Every panel base is darker than the sky, so the tint\n" +
+        "    cannot lower contrast; the sky's own lightness ceiling is the binding gate.\n" +
+        "    How much sky shows through the sidebar and the pane is a taste decision."
+      : ""),
+);
+console.log(
+  VERBOSE ? "" : "\n(only the worst row per stack and token is shown; --verbose for all)",
+);
 console.log(`\n${fails} failure(s)`);
 process.exit(fails === 0 ? 0 : 1);

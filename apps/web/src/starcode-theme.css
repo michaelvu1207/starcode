@@ -98,11 +98,48 @@
   --sc-linen-500: #cbc0a4;
 
   /* Overwritten every minute by `starcodeSky.ts`. Declared here so the backdrop
-     is correct on first paint and degrades to plain night if that never runs. */
-  --sc-sky-top: #080a14;
-  --sc-sky-glow: #0d1020;
-  --sc-sky-wash: #c9d2ee;
+     is correct on first paint and degrades to plain night if that never runs —
+     these are the hour-0 keyframe verbatim. Five gradient stops from zenith to
+     horizon, plus the one directional light and where it sits. The values come
+     from a day-to-night time-lapse; see `starcodeSkyTimeline.ts`. */
+  --sc-sky-top: #090e17;
+  --sc-sky-high: #080f19;
+  --sc-sky-glow: #07111d;
+  --sc-sky-low: #061323;
+  --sc-sky-horizon: #071221;
+  --sc-sky-wash: #d2e6ff;
   --sc-sky-stars: 1;
+  --sc-sky-ember: #496189;
+  --sc-sky-ember-alpha: 0.05;
+  --sc-sky-ember-x: 58.2%;
+
+  /* How solid a structural panel is over the sky. The sidebar and the main pane
+     are no longer surfaces with their own backdrops — they are tinted glass, and
+     this is the tint. Solved rather than chosen: it is the transparency at which
+     the tightest text token still clears AA on every one of the 38 keyframes, in
+     both themes, with the user's glass slider dragged to its 40% minimum.
+     `scripts/check-starcode-contrast.mjs` re-derives it and fails if a palette
+     or timeline change breaks the guarantee. Lowering it is the one edit in this
+     file that can make the whole app harder to read.
+
+     Except that, as of this palette, it cannot: the gate reports the minimum
+     that holds AA as 0%. Every panel base is darker than the sky at every hour,
+     so tinting over the sky can only raise contrast, and the binding constraint
+     is one level up — the timeline's own lightness ceiling, which is already
+     solved against text on the bare star-lit sky. So this number is pure taste,
+     and the gate says so out loud rather than implying a safety it is not
+     providing. 68% was picked from a three-way screenshot at dusk: 82% flattens
+     the sky back into a plate, and 55% starts costing the sidebar its edge. */
+  --sc-glass-panel: 68%;
+
+  /* Baked turbulence, used as a mask over the mesh blobs so their edges come out
+     filamentary instead of elliptical. This is the difference between "three
+     ovals" and "cloud". Same technique as `--surface-grain` in `index.css`, at a
+     hundredth of the frequency: that one is film grain, this one is weather.
+     `stitchTiles` makes it tile, so it repeats seamlessly at any viewport. The
+     alpha ramp keeps it between 45% and 100% coverage — a mask that reaches zero
+     punches visible holes in the blob rather than softening it. */
+  --sc-sky-mesh-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1400' height='1400'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.0035' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.55 0 0 0 0.45'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
 
   /* The ceiling on how bright a star may get anywhere body text can land.
      Solved, not guessed: at this layer opacity the brightest star in the tile
@@ -134,11 +171,10 @@
 
   --sc-font-display: "Baloo 2 Variable", "Baloo 2", ui-rounded, system-ui, sans-serif;
 
-  /* Two crops of one sky. `--sc-sky-tile` is exactly the height of the
-     sidebar's sky band and repeats on x only, so no speck can paint below the
-     band and land on a thread title. `--sc-speck-tile` covers a whole page for
-     the idle surfaces. */
-  --sc-sky-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='660' height='88' viewBox='0 0 660 88'%3E%3Cg fill='%23eadcc6'%3E%3Ccircle cx='93.0' cy='33.4' r='1.34' opacity='0.43'/%3E%3Ccircle cx='219.9' cy='17.8' r='1.6' opacity='0.64'/%3E%3Ccircle cx='295.9' cy='34.8' r='1.01' opacity='0.72'/%3E%3Ccircle cx='364.1' cy='39.1' r='1.37' opacity='0.43'/%3E%3Ccircle cx='433.2' cy='20.7' r='0.92' opacity='0.83'/%3E%3Ccircle cx='505.1' cy='44.9' r='1.4' opacity='0.86'/%3E%3Ccircle cx='574.9' cy='26.7' r='1.55' opacity='0.84'/%3E%3C/g%3E%3Cg fill='%23f0d9a0'%3E%3Cpath d='M292 20c3.0 3.75 3.9 4.31 3.75 3.0-3.75 3.0-3.9 4.31-3.0 3.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0 3.9-4.31 3.0-3.75Z' opacity='0.6'/%3E%3C/g%3E%3C/svg%3E");
+  /* One tile, for the whole sky. The 88px `--sc-sky-tile` crop that used to
+     bound the sidebar's band by geometry is gone with the band: the field is
+     bounded by opacity now (`--sc-star-chrome-max`), which is a guarantee about
+     legibility rather than about where a speck happens to land. */
   --sc-speck-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='660' height='540' viewBox='0 0 660 540'%3E%3Cg fill='%23eadcc6'%3E%3Ccircle cx='51.4' cy='74.0' r='1.27' opacity='0.6'/%3E%3Ccircle cx='24.5' cy='135.8' r='1.4' opacity='0.75'/%3E%3Ccircle cx='17.8' cy='336.2' r='1.45' opacity='0.37'/%3E%3Ccircle cx='80.4' cy='415.5' r='1.39' opacity='0.43'/%3E%3Ccircle cx='109.9' cy='23.8' r='1.09' opacity='0.37'/%3E%3Ccircle cx='137.2' cy='158.4' r='1.32' opacity='0.67'/%3E%3Ccircle cx='153.1' cy='222.1' r='1.12' opacity='0.85'/%3E%3Ccircle cx='165.8' cy='329.2' r='1.15' opacity='0.46'/%3E%3Ccircle cx='110.6' cy='423.2' r='1.22' opacity='0.77'/%3E%3Ccircle cx='174.3' cy='518.8' r='0.9' opacity='0.45'/%3E%3Ccircle cx='233.6' cy='77.9' r='1.22' opacity='0.39'/%3E%3Ccircle cx='255.7' cy='119.3' r='0.97' opacity='0.52'/%3E%3Ccircle cx='254.2' cy='198.9' r='1.1' opacity='0.4'/%3E%3Ccircle cx='212.6' cy='409.1' r='1.26' opacity='0.45'/%3E%3Ccircle cx='209.3' cy='504.8' r='0.99' opacity='0.56'/%3E%3Ccircle cx='363.7' cy='155.8' r='1.14' opacity='0.79'/%3E%3Ccircle cx='355.4' cy='324.7' r='0.98' opacity='0.84'/%3E%3Ccircle cx='349.5' cy='483.3' r='1.14' opacity='0.39'/%3E%3Ccircle cx='405.9' cy='141.9' r='1.2' opacity='0.58'/%3E%3Ccircle cx='423.1' cy='230.1' r='1.59' opacity='0.44'/%3E%3Ccircle cx='447.1' cy='387.9' r='1.05' opacity='0.72'/%3E%3Ccircle cx='402.5' cy='525.8' r='1.61' opacity='0.65'/%3E%3Ccircle cx='490.2' cy='13.4' r='1.67' opacity='0.47'/%3E%3Ccircle cx='501.2' cy='157.1' r='1.38' opacity='0.5'/%3E%3Ccircle cx='487.7' cy='296.4' r='1.35' opacity='0.78'/%3E%3Ccircle cx='502.8' cy='433.5' r='1.06' opacity='0.36'/%3E%3Ccircle cx='514.7' cy='464.9' r='1.04' opacity='0.53'/%3E%3Ccircle cx='586.5' cy='35.6' r='1.61' opacity='0.84'/%3E%3Ccircle cx='626.6' cy='140.8' r='1.01' opacity='0.37'/%3E%3Ccircle cx='627.3' cy='346.7' r='0.92' opacity='0.67'/%3E%3Ccircle cx='629.4' cy='392.6' r='1.7' opacity='0.39'/%3E%3Ccircle cx='629.8' cy='522.4' r='1.49' opacity='0.7'/%3E%3C/g%3E%3Cg fill='%23f0d9a0'%3E%3Cpath d='M214 118c4.2 5.25 5.46 6.04 5.25 4.2-5.25 4.2-5.46 6.04-4.2 5.25-4.2-5.25-5.46-6.04-5.25-4.25.25-4.2 5.46-6.04 4.2-5.25Z' opacity='0.7'/%3E%3Cpath d='M508 376c3.4 4.25 4.42 4.89 4.25 3.4-4.25 3.4-4.42 4.89-3.4 4.25-3.4-4.25-4.42-4.89-4.25-3.44.25-3.4 4.42-4.89 3.4-4.25Z' opacity='0.5'/%3E%3Cpath d='M96 452c3.0 3.75 3.9 4.31 3.75 3.0-3.75 3.0-3.9 4.31-3.0 3.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0 3.9-4.31 3.0-3.75Z' opacity='0.44'/%3E%3C/g%3E%3C/svg%3E");
 }
 
@@ -362,39 +398,96 @@
 }
 
 /* ---------------------------------------------------------------------------
- * 4. The night sky — the brand's one signature
+ * 4. The sky — one layer, behind everything
  *
- * The sidebar is a window at night: the surface deepens toward the top and
- * carries a sparse star field, and the crescent in the wordmark is the moon in
- * that sky. It is a background layer on the element that already paints the
- * sidebar's background color, so no component knows it exists.
+ * THE APP IS A WINDOW AT NIGHT. The whole window, not six of them.
  *
- * Held deliberately faint. Thread rows scroll through this area constantly and
- * the sky must never compete with a thread title. Light theme gets the warm
- * dawn wash but no stars — specks on linen read as dust, not sky.
+ * This used to be painted in six places: a band on the sidebar panel, a
+ * starfield on the sidebar panel, a gradient on the main pane, a starfield on
+ * the main pane, and a light-theme wash for each — plus a rule that punched a
+ * hole through every route's wrapper so the pane's gradient could be seen at
+ * all. Six surfaces meant six chances to disagree, and they did: the seam down
+ * the middle of the app was fought twice, once by stretching the sidebar's band
+ * from 88px to full height and once by tinting it from the pane's phase. Both
+ * treated the symptom. The cause was that the sky was a property of panels.
+ *
+ * It is now a property of the window. `components/brand/StarcodeSky.tsx`
+ * portals one fixed element to `document.body` at `z-index: -1`; the sidebar,
+ * the pane, the workbench and the settings shell are tinted glass over it
+ * (section 4c). There is no seam because there is nothing to align.
+ *
+ * WHERE THE COLOURS COME FROM. A real day-to-night time-lapse, sampled across
+ * its length and compressed into this palette — 38 keyframes, generated into
+ * `starcodeSkyTimeline.ts`, interpolated every minute by `starcodeSky.ts`. See
+ * `scripts/lib/starcode-sky-timeline.mjs` for the transform and every taste
+ * decision in it. Nothing about the sky's *colour* is tunable from this file.
+ *
+ * THE THREE-TIER DOCTRINE, which is the rule the rest of the theme now obeys:
+ *   L0  the sky           — this layer. Gradient, mesh, stars. One composited
+ *                           layer for the whole app.
+ *   L1  structural panels — sidebar, main pane, shells. Tint only, no filter:
+ *                           a blur of a smooth gradient is the same gradient at
+ *                           the cost of a full-viewport GPU pass, and it would
+ *                           smear the starfield into grey haze.
+ *   L2  floating surfaces — composer, dropdowns, dialogs, toasts. Unchanged;
+ *                           they already blur, and their backdrop is now the
+ *                           real sky rather than a flat plate.
+ *   L3  opaque islands    — terminal, diff panel, form controls, sticky heads.
+ *                           Opaque by rule. Content must never scroll under
+ *                           text. This is the restraint rule applied to
+ *                           translucency, not a concession to it.
+ *
+ * BUDGET. Five composited layers total (sky, three blobs, starfield), all of
+ * them `transform` and `opacity` only. No canvas, no WebGL, no rAF, no timer
+ * beyond the existing one-minute colour tick. Browsers suspend CSS animations on
+ * hidden documents, so a backgrounded window costs nothing.
  * ------------------------------------------------------------------------ */
 
-/* The sky has to be painted on `sidebar-inner`, not on the element carrying
-   `data-sidebar-version`. That element is `sidebar-container`, and its only
-   child is an opaque `bg-sidebar` panel that covers the container's own
-   background entirely — upstream never noticed because it only ever set a
-   background *color* there, and the two colors matched.
-   `sidebar-inner` already carries the `surface-grain` utility, so its grain
-   layer is restated here rather than clobbered. */
-[data-sidebar-version="v1"] [data-slot="sidebar-inner"],
-[data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
-  /* The gradient is the header's backdrop: 88px, ending above the first group
-     row. The gradient now runs the full height of the panel instead: held to the
-     band, the sidebar stayed near-black while the pane beside it filled with
-     colour, and the seam between them was the first thing the eye found. The
-     starfield is likewise no longer held to the band — see the full-height layer
-     below — because it is bounded by opacity rather than by geometry. */
-  --sc-sky-height: 88px;
+/* THE TRAP THAT COSTS AN AFTERNOON IF YOU MISS IT. `body` does not establish a
+   stacking context here, so a `z-index: -1` child of it is painted in the ROOT
+   stacking context — after `html`'s background, but *before* body's own box.
+   Body's background therefore paints on top of the sky and hides it completely,
+   and because `syncBrowserChromeTheme` keeps body's colour synced to the sky's
+   top stop, the result does not look broken: it looks like a flat, correctly
+   tinted app with no gradient, no mesh and no stars. It took a nine-hour
+   screenshot sweep that came back nine identical frames to find it.
+   So body stops painting. `html` keeps the colour (it is behind the sky, and it
+   is what shows on overscroll), and the grain moves onto the sky layer, which
+   now covers the whole viewport anyway — leaving it on body would double it.
+
+   THE SECOND HALF OF THE SAME TRAP. `index.html` ships its own anti-flash boot
+   styles — `body { background: #fff }` and `html.dark body { background:
+   #161616 }` — in a `<style>` in the head. The dark one is specificity (0,1,2),
+   which this rule has to MATCH rather than undercut; a bare `body` selector
+   loses to it silently, and the sky stays hidden in dark mode only, which is
+   the half of the app that has a sky. */
+body,
+html.dark body {
+  background-color: transparent;
+  background-image: none;
+}
+
+.starcode-sky {
+  position: fixed;
+  inset: 0;
+  /* Below every in-flow descendant of body, above body's own background. The
+     classic placement, and the reason this works with zero component edits. */
+  z-index: -1;
+  pointer-events: none;
+  /* The blobs are deliberately larger than the viewport. */
+  overflow: hidden;
+  /* Opaque, and equal to the gradient's first stop by construction. This is what
+     `syncBrowserChromeTheme` samples for the browser and native titlebar tint —
+     it used to sample the main pane, which is now translucent and would have
+     handed it a colour with an alpha channel. */
+  background-color: color-mix(in srgb, var(--sc-sky-wash) 58%, var(--background));
   background-image:
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--sc-sky-wash) 42%, transparent) 0%,
-      transparent 100%
+      color-mix(in srgb, var(--sc-sky-wash) 58%, var(--background)) 0%,
+      color-mix(in srgb, var(--sc-sky-wash) 26%, var(--background)) 28%,
+      color-mix(in srgb, var(--sc-sky-wash) 9%, var(--background)) 56%,
+      var(--background) 84%
     ),
     var(--surface-grain);
   background-repeat: no-repeat, repeat;
@@ -402,64 +495,179 @@
     top left,
     top left;
   background-size:
-    100% var(--sc-sky-height),
-    256px 256px;
-}
-
-.dark [data-sidebar-version="v1"] [data-slot="sidebar-inner"],
-.dark [data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
-  /* Three layers: the shared star tile, the sky gradient, then the grain the
-     panel already had. The gradient is what makes the specks readable — cream
-     at 0.35-0.85 alpha disappears against the sidebar surface but reads
-     clearly against the deep colour at the top of the band, so the field fades
-     out on its own as it descends into the thread rows.
-
-     Tinted with `--sc-sky-top` rather than a fixed near-black so the band tracks
-     the phase alongside the main pane. Left fixed, the sidebar stayed midnight
-     while the pane beside it turned plum, and the seam between them was the
-     first thing the eye went to. */
-  background-image:
-    var(--sc-sky-tile),
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--sc-sky-top) 88%, transparent) 0%,
-      color-mix(in srgb, var(--sc-sky-glow) 62%, transparent) 26%,
-      color-mix(in srgb, var(--sc-sky-glow) 30%, transparent) 55%,
-      transparent 92%
-    ),
-    var(--surface-grain);
-  background-repeat: repeat-x, no-repeat, repeat;
-  background-position:
-    top left,
-    top left,
-    top left;
-  background-size:
-    660px var(--sc-sky-height),
     100% 100%,
     256px 256px;
+  /* Keeps the sky out of the root snapshot when anything calls
+     `startViewTransition` — `draftHeroTransition.ts` already does. Crossfading
+     two identical skies is a double exposure that also freezes the drift for the
+     duration; naming the layer gives it its own group, and section 10 holds that
+     group still. */
+  view-transition-name: sc-sky;
 }
 
-/* The sidebar's own share of the chrome starfield, at the same solved ceiling.
-   Painted on `sidebar-inner` because that is the opaque panel — the container
-   above it is covered by this element and anything drawn there is never seen. */
-.dark [data-sidebar-version="v1"] [data-slot="sidebar-inner"]::before,
-.dark [data-sidebar-version="v2"] [data-slot="sidebar-inner"]::before {
-  content: "";
+/* Zenith to horizon down the viewport, which is both the physical arrangement
+   and the one the source footage has. The last stop resolves to `--background`
+   well before the bottom edge, so the densest part of every route — transcript,
+   composer, settings rows — still sits on flat ink rather than on colour. */
+.dark .starcode-sky {
+  background-color: var(--sc-sky-top);
+  background-image:
+    linear-gradient(
+      to bottom,
+      var(--sc-sky-top) 0%,
+      var(--sc-sky-high) 15%,
+      var(--sc-sky-glow) 33%,
+      var(--sc-sky-low) 51%,
+      var(--sc-sky-horizon) 68%,
+      var(--background) 92%
+    ),
+    var(--surface-grain);
+}
+
+/* ---------------------------------------------------------------------------
+ * 4a. The mesh
+ *
+ * Michael asked for shaders. This is the compositor-only answer, and it gets
+ * most of the way there: three vast radial blobs on slow, non-repeating periods,
+ * seen through a baked turbulence mask so their edges are filamentary rather
+ * than elliptical. The mask is what separates this from "three ovals" — it is
+ * the same technique as `--surface-grain`, a hundred times coarser.
+ *
+ * The mask is STATIC and the blobs move under it. That is not a compromise: a
+ * drifting mask means animating `mask-position`, which repaints the layer every
+ * frame and is exactly the trap this whole system is built to avoid. Blobs
+ * translating beneath a fixed filament field already produce shapes that evolve
+ * rather than merely translate, which is the effect being bought.
+ *
+ * Periods are 137s / 193s / 271s — pairwise coprime, so the three never
+ * visibly resynchronise inside any session.
+ * ------------------------------------------------------------------------ */
+
+.starcode-sky-mesh {
   position: absolute;
-  inset: 0;
+  inset: -25%;
   pointer-events: none;
-  z-index: 0;
+  -webkit-mask-image: var(--sc-sky-mesh-mask);
+  mask-image: var(--sc-sky-mesh-mask);
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  -webkit-mask-size: 1400px 1400px;
+  mask-size: 1400px 1400px;
+}
+
+.starcode-sky-blob {
+  position: absolute;
+  border-radius: 50%;
+  /* `closest-side` rather than a hard stop: the blob has no edge at all, which
+     is what lets three of them overlap without showing where one ends. */
+  background-image: radial-gradient(closest-side, var(--sc-blob-color) 0%, transparent 100%);
+  opacity: var(--sc-blob-alpha);
+  animation: starcode-blob-drift var(--sc-blob-period) ease-in-out infinite alternate;
+}
+
+@keyframes starcode-blob-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(var(--sc-blob-dx), var(--sc-blob-dy), 0) scale(var(--sc-blob-scale));
+  }
+}
+
+/* The one directional light, and the only thing that stops the backdrop reading
+   as a symmetric vertical ramp. Colour, strength and horizontal position all
+   come from the timeline: it is warm and strong within an hour of sunrise and
+   sunset, and a faint ember the rest of the time — which is what the source
+   footage's night actually looks like, a city under a dark sky.
+   `left` is set from a custom property and steps once a minute rather than
+   transitioning. The anchor moves about two pixels per tick; a transition on
+   `left` would buy nothing and cost a layout pass per frame for sixty seconds. */
+.starcode-sky-blob-ember {
+  left: var(--sc-sky-ember-x);
+  top: 68%;
+  width: 150vw;
+  height: 105vh;
+  margin-left: -75vw;
+  margin-top: -52vh;
+  --sc-blob-color: var(--sc-sky-ember);
+  /* Halved in light: on linen a glow this size reads as a stain long before it
+     reads as light. */
+  --sc-blob-alpha: calc(var(--sc-sky-ember-alpha) * 0.5);
+  --sc-blob-period: 193s;
+  --sc-blob-dx: 3vw;
+  --sc-blob-dy: -2vh;
+  --sc-blob-scale: 1.08;
+}
+
+.dark .starcode-sky-blob-ember {
+  --sc-blob-alpha: var(--sc-sky-ember-alpha);
+}
+
+/* The two ambient blobs are dark only. On paper they have nothing to be: the
+   light theme's sky is a wash at the top of the page, and a coloured cloud
+   drifting under a settings list is a smudge on the paper, not weather. */
+.starcode-sky-blob-high,
+.starcode-sky-blob-wide {
+  display: none;
+}
+
+.dark .starcode-sky-blob-high {
+  display: block;
+  left: 18%;
+  top: 6%;
+  width: 120vw;
+  height: 80vh;
+  margin-left: -60vw;
+  margin-top: -40vh;
+  /* Lifted toward the cream foreground, or a blob tinted from the sky it sits on
+     is invisible by definition. */
+  --sc-blob-color: color-mix(in srgb, var(--sc-sky-high) 46%, var(--sc-cream-100));
+  --sc-blob-alpha: 0.07;
+  --sc-blob-period: 271s;
+  --sc-blob-dx: 6vw;
+  --sc-blob-dy: 3vh;
+  --sc-blob-scale: 1.12;
+}
+
+.dark .starcode-sky-blob-wide {
+  display: block;
+  left: 76%;
+  top: 34%;
+  width: 165vw;
+  height: 70vh;
+  margin-left: -82vw;
+  margin-top: -35vh;
+  --sc-blob-color: color-mix(in srgb, var(--sc-sky-glow) 52%, var(--sc-starlight));
+  --sc-blob-alpha: 0.055;
+  --sc-blob-period: 137s;
+  --sc-blob-dx: -5vw;
+  --sc-blob-dy: 2vh;
+  --sc-blob-scale: 1.06;
+}
+
+/* The chrome starfield, at the solved ceiling: `--sc-star-chrome-max` is the
+   layer opacity at which the brightest star in the tile still leaves
+   `muted-foreground` above AA, so a star may sit anywhere — including directly
+   behind a row of text — without being able to push it below the floor. That
+   guarantee is what lets the field cover the working UI instead of stopping at
+   the empty states.
+   It drifts now, where the sidebar's copy could not: one field for the whole
+   window means one wrap period, rather than a narrow panel wrapping four times
+   as often as the pane beside it. Scaled by the hour on top of the ceiling, so
+   it thins through dusk and is gone by midday. Dark only — specks on linen read
+   as dust. */
+.dark .starcode-sky-field {
+  position: absolute;
+  /* One tile of slack on the right, for the wrap. */
+  inset: 0 -660px 0 0;
+  pointer-events: none;
   background-image: var(--sc-speck-tile);
   background-repeat: repeat;
-  background-position: top left;
+  background-position: top center;
   background-size: 660px 540px;
   opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
-}
-
-/* Everything the panel actually contains has to sit above that layer. */
-.dark [data-slot="sidebar-inner"] > * {
-  position: relative;
-  z-index: 1;
+  animation: starcode-star-drift 900s linear infinite;
+  --sc-drift-cant: 0deg;
 }
 
 /* ---------------------------------------------------------------------------
@@ -503,118 +711,63 @@
 }
 
 /* ---------------------------------------------------------------------------
- * 4c. The sky backdrop
+ * 4c. L1 — the structural panels, as glass over the sky
  *
- * The main pane's background gradiates out of `--background` into a starry sky
- * whose palette tracks the viewer's local clock — see `starcodeSky.ts`, which
- * owns the phase and writes `--sc-sky-*` here every minute.
+ * The sidebar and the main pane used to paint their own backdrops. They now
+ * paint a tint, and the sky shows through both. That is the whole of the change
+ * that removes the seam: two panels sharing one backdrop cannot disagree about
+ * where it is.
  *
- * Painted on `sidebar-inset`, which is the outermost element of the main pane.
- * Every route then wraps its content in another full-size `bg-background` div,
- * so the gradient has to be uncovered as well as painted — hence the
- * transparency rule below. Both `sidebar-inset` and that wrapper resolve to the
- * same `--background`, so clearing the inner one changes nothing except what
- * can be seen through it. (`body` is not an option: it sits behind the inset,
- * which is opaque.) The inset already carries the `surface-grain` utility, so
- * its grain is restated rather than clobbered — the trap the sidebar sky hit.
+ * TINT, NOT BLUR. `backdrop-filter` is the obvious reading of "glassy" and it is
+ * the wrong primitive here, on two counts. A Gaussian blur of a smooth vertical
+ * gradient is, to a rounding error, the same gradient — a full-viewport GPU pass
+ * to produce a picture nobody can tell from the input. And the one thing behind
+ * these panels that *isn't* smooth is the starfield, where blurring is actively
+ * destructive: 1-2px specks smear into grey haze, which is the exact texture two
+ * previous rounds were spent earning. What reads as glass over a smooth backdrop
+ * is tint plus hairline, neither of which needs a filter. Every
+ * `backdrop-filter` in the app stays where it already is — on floating surfaces
+ * over content (L2), never on a structural panel.
  *
  * KNOBS, for tuning this without reading the rest of the file:
- *   - how far down the sky reaches: the last two stops of the dark gradient
- *     below (currently 34% and 58%). Lower them to keep the sky nearer the top.
- *   - how strong the light theme's tint is: the two `color-mix` percentages in
- *     the `:root:not(.dark)` rule (55% and 18%).
- *   - the colours themselves, and how many stars each phase carries: `SKY_STOPS`
- *     in `starcodeSky.ts`. Change a colour there and re-run
- *     `node scripts/check-starcode-contrast.mjs` — it holds every phase to AA and
- *     exits non-zero, so a too-light phase fails loudly rather than shipping.
+ *   - how much sky comes through the panels: `--sc-glass-panel` in section 1.
+ *     It is solved by `scripts/check-starcode-contrast.mjs`, so lower it and
+ *     re-run the gate rather than lowering it and looking.
+ *   - how far down the sky reaches: the gradient stops in section 4.
+ *   - the colours themselves, and how many stars each hour carries: not here and
+ *     not tunable by hand. `scripts/lib/starcode-sky-timeline.mjs`, then
+ *     `node scripts/derive-starcode-sky-timeline.mjs`.
  *   - how many specks survive into daylight: the `0.1 +` floor on
  *     `.starcode-speck-field` in section 4b. Set it to 0 for a starless noon.
- *
- * COLOUR ONLY. The backdrop here is a gradient and nothing else — no stars. A
- * star tile on this element repeats down the whole pane, and on a dense route it
- * puts specks on top of every settings row; the brand rule is that celestial
- * marks belong on idle surfaces, and everything else takes the palette alone.
- * The starfield therefore lives on `.starcode-speck-field`, which the empty
- * states mount and dense routes do not, and it reads the same `--sc-sky-*`
- * values so the two stay in step.
  * ------------------------------------------------------------------------ */
 
-/* Scoped to direct children so nothing deeper — cards, popovers, the composer,
-   any surface that needs to occlude what scrolls under it — loses its fill. */
+[data-sidebar-version="v1"] [data-slot="sidebar-inner"],
+[data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--sidebar) var(--sc-glass-panel), transparent);
+  /* The panel already carried `surface-grain`; setting a background-image here
+     would clobber it, so it is restated. Same trap the old sidebar sky hit. */
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+[data-slot="sidebar-inset"] {
+  background-color: color-mix(in srgb, var(--background) var(--sc-glass-panel), transparent);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Every route wraps its content in another full-size `bg-background` div. That
+   div is opaque `--background`, so without this the pane would be glass over an
+   opaque plate — the sky would be occluded one element below where it is let in.
+   This rule predates the sky layer as a workaround for the pane's own gradient;
+   it survives as part of the L1 doctrine, because a panel being translucent is
+   worth nothing if its immediate child is not.
+   Scoped to direct children so nothing deeper — cards, popovers, the composer,
+   any L3 surface that must occlude what scrolls under it — loses its fill. */
 [data-slot="sidebar-inset"] > .bg-background {
   background-color: transparent;
-}
-
-.dark [data-slot="sidebar-inset"] {
-  background-image:
-    linear-gradient(
-      to bottom,
-      var(--sc-sky-top) 0%,
-      var(--sc-sky-glow) 24%,
-      color-mix(in srgb, var(--sc-sky-glow) 62%, transparent) 48%,
-      color-mix(in srgb, var(--sc-sky-glow) 26%, transparent) 74%,
-      transparent 100%
-    ),
-    var(--surface-grain);
-  background-repeat: no-repeat, repeat;
-  background-position:
-    top left,
-    top left;
-  background-size:
-    100% 100%,
-    256px 256px;
-}
-
-/* The chrome starfield.
- *
- * Last round this pane carried no stars at all, because the first attempt tiled
- * them at full strength and dropped specks on every settings row. The fix then
- * was to remove them; the fix now is to bound them. `--sc-star-chrome-max` is
- * the solved ceiling at which the brightest star in the tile still leaves
- * `muted-foreground` above AA, so a star can sit anywhere — including directly
- * behind a row of text — without being able to push it below the floor. That is
- * a stronger guarantee than "we kept them out of the way", and it is what lets
- * the sky reach into working UI instead of stopping at the empty states.
- *
- * Scaled by the phase on top of that, so the field thins through dusk and is
- * gone by midday. Idle surfaces still get the bright field — see 4b — because
- * nothing there has to stay readable. */
-.dark [data-slot="sidebar-inset"]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image: var(--sc-speck-tile);
-  background-repeat: repeat;
-  background-position: top center;
-  background-size: 660px 540px;
-  opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
-}
-
-/* Light theme gets the phase as a wash of colour at the top and no stars: specks
-   on paper read as dust, and a linen page has no sky to be dark. The wash is its
-   own colour rather than a lightened `--sc-sky-glow`; mixing the dark sky into
-   linen lands on grey at every phase, which reads as a smudge on the page rather
-   than as light. It clears well above the hero copy, so the text still sits on
-   flat linen. */
-:root:not(.dark) [data-slot="sidebar-inset"] {
-  background-image:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--sc-sky-wash) 72%, transparent) 0%,
-      color-mix(in srgb, var(--sc-sky-wash) 34%, transparent) 26%,
-      color-mix(in srgb, var(--sc-sky-wash) 12%, transparent) 55%,
-      transparent 84%
-    ),
-    var(--surface-grain);
-  background-repeat: no-repeat, repeat;
-  background-position:
-    top left,
-    top left;
-  background-size:
-    100% 100%,
-    256px 256px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1071,31 +1224,50 @@
   }
 }
 
-/* The pane's chrome starfield drifts too, at half the slowest layer's speed and
-   with no twinkle. This is the only motion in permanently-visible UI, and it is
-   here because a sky that only moves on the two screens you rarely see is not a
-   living sky. It is bounded by the same `--sc-star-chrome-max` ceiling as the
-   static field, so the moving stars are the faint ones that provably cannot
-   push text below AA.
-   The sidebar deliberately does not get this: it is a quarter the width, so the
-   same speed wraps four times as often, and it is the surface whose rows you
-   scan all day. */
-.dark [data-slot="sidebar-inset"]::before {
-  right: -660px;
-  animation: starcode-star-drift 900s linear infinite;
-  --sc-drift-cant: 0deg;
-}
+/* The chrome starfield's own drift is declared with the layer in section 4,
+   since it is now one element rather than a pseudo on each panel. Half the speed
+   of the slowest idle layer and no twinkle: this is the only motion in
+   permanently-visible UI, and it is bounded by the same `--sc-star-chrome-max`
+   ceiling, so the moving stars are the faint ones that provably cannot push text
+   below AA. */
 
 /* Reduced motion holds every layer still at its average, so the field is
-   identical to the static one it replaced — nothing is lost but the movement. */
+   identical to the static one it replaced — nothing is lost but the movement.
+   The mesh keeps its colour and loses its drift, parked halfway along its own
+   travel rather than at the start, so a still frame matches the animated
+   average instead of one end of it. */
 @media (prefers-reduced-motion: reduce) {
   .dark .starcode-star-layer,
-  .dark [data-slot="sidebar-inset"]::before {
+  .dark .starcode-sky-field {
     animation: none;
     opacity: var(--sc-twinkle-mid);
   }
 
-  .dark [data-slot="sidebar-inset"]::before {
+  .dark .starcode-sky-field {
     opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
   }
+
+  .starcode-sky-blob {
+    animation: none;
+    transform: translate3d(calc(var(--sc-blob-dx) / 2), calc(var(--sc-blob-dy) / 2), 0)
+      scale(calc(1 + (var(--sc-blob-scale) - 1) / 2));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 10. View transitions
+ *
+ * Nothing here starts one — `chat/draftHeroTransition.ts` does, for the mobile
+ * composer-to-hero move. What this holds is the sky's exemption from it.
+ *
+ * `::view-transition-old(root)` snapshots the entire viewport, sky included, so
+ * without a name of its own the sky is captured into the root group and
+ * crossfaded against an identical copy of itself: a visible double exposure, and
+ * the drift freezes for the transition's duration. Section 4 gives the layer
+ * `view-transition-name: sc-sky`, which puts it in its own group; this holds
+ * that group still. Verify with the Animations panel, not by eye.
+ * ------------------------------------------------------------------------ */
+
+::view-transition-group(sc-sky) {
+  animation: none;
 }

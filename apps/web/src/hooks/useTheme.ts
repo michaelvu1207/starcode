@@ -151,8 +151,21 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
   return value?.trim() ?? null;
 }
 
+/**
+ * The surface whose colour the browser and native titlebars should match.
+ *
+ * This used to sample the main pane. The pane is now tinted glass over the sky
+ * layer (`starcode-theme.css` section 4c), so its computed background carries an
+ * alpha channel and the titlebar would be handed a colour that means nothing on
+ * its own. `.starcode-sky` is the opaque thing behind it, and its
+ * `background-color` is the sky gradient's first stop by construction — which is
+ * the colour at the top of the window, which is exactly what a titlebar should
+ * match. The old selectors stay as the fallback chain for the moments before the
+ * layer mounts.
+ */
 function resolveBrowserChromeSurface(): HTMLElement {
   return (
+    document.querySelector<HTMLElement>(".starcode-sky") ??
     document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']") ??
     document.querySelector<HTMLElement>("[data-slot='sidebar-inner']") ??
     document.body
@@ -168,8 +181,13 @@ export function syncBrowserChromeTheme() {
   const backgroundColor = surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
+  // `html` only. Painting `body` as well used to be belt and braces; it is now
+  // actively wrong, because the sky layer is a `z-index: -1` child of body and
+  // body's own background paints over it. `html`'s colour still does the job it
+  // was added for — it is what fills an overscroll bounce — and it sits behind
+  // the sky rather than in front of it. See the `body` rule in
+  // `starcode-theme.css` section 4.
   document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 
