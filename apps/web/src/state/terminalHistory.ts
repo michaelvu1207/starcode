@@ -28,6 +28,7 @@ import type {
   HistorySessionId,
   HistorySessionsPage,
 } from "@t3tools/contracts";
+import { useAtomRefresh } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -99,6 +100,31 @@ export function useHistoryImports(
 ): EnvironmentQueryView<HistoryImportsPage | null> {
   return useEnvironmentQuery(environmentId === null ? null : importsViewAtom(environmentId));
 }
+
+/**
+ * Re-reads a machine's import registry, for the one caller that knows it just
+ * changed: the picker, immediately after an import.
+ *
+ * Deliberately not `useHistoryImports(...).refresh`. That refresh targets the
+ * derived atom these views expose, and refreshing a derivation recomputes the
+ * mapping rather than re-running the fetch underneath it — the value comes back
+ * identical and the freshly imported thread renders with no provenance line.
+ * This one targets the source.
+ */
+export function useRefreshHistoryImports(environmentId: EnvironmentId | null): () => void {
+  const refresh = useAtomRefresh(
+    environmentTerminalHistory.importsAtom(environmentId ?? PLACEHOLDER_ENVIRONMENT_ID),
+  );
+  return environmentId === null ? NOOP : refresh;
+}
+
+const NOOP = () => {};
+/**
+ * `useAtomRefresh` cannot be called conditionally, so a null environment still
+ * needs an atom to point at. This id belongs to no machine, so the atom it
+ * keys is never fetched — only ever refreshed into the void by the no-op above.
+ */
+const PLACEHOLDER_ENVIRONMENT_ID = "history-imports-no-environment" as EnvironmentId;
 
 /**
  * Runs one import. Resolves to the outcome the dialog renders — including the

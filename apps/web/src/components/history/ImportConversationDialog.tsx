@@ -20,18 +20,25 @@
  * a back button.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, HistorySessionId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HistorySessionId,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { readThreadShell } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import {
   useHistoryImports,
   useHistoryPreview,
   useHistorySessionsPage,
   useImportHistorySession,
+  useRefreshHistoryImports,
 } from "~/state/terminalHistory";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { subscribeImportPicker } from "../sidebar/importPicker";
@@ -58,6 +65,22 @@ import {
 const IMPORT_PICKER_PAGE_SIZE = 60;
 /** The server's own ceiling. Asking past it is refused, not clamped politely. */
 const IMPORT_PICKER_MAX_SESSIONS = 200;
+
+/**
+ * How long to let the websocket deliver a thread the server has already
+ * created. Generous, because the alternative to waiting is landing on the
+ * wrong route, and cheap, because it only ever elapses on a connection that
+ * has bigger problems.
+ */
+const IMPORTED_THREAD_ARRIVAL_TIMEOUT_MS = 8_000;
+const IMPORTED_THREAD_POLL_INTERVAL_MS = 100;
+
+async function waitForThreadShell(ref: ScopedThreadRef): Promise<void> {
+  const deadline = Date.now() + IMPORTED_THREAD_ARRIVAL_TIMEOUT_MS;
+  while (readThreadShell(ref) === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, IMPORTED_THREAD_POLL_INTERVAL_MS));
+  }
+}
 
 export function ImportConversationDialog(): ReactNode {
   const navigate = useNavigate();
@@ -117,7 +140,14 @@ export function ImportConversationDialog(): ReactNode {
         { environmentId, since: "", limit }
       : null,
   );
-  const importsQuery = useHistoryImports(open ? environmentId : null);
+  // Deliberately not gated on `open`, unlike the two queries above. The
+  // refresh fired after an import has to outlive the dialog that fired it: if
+  // this subscription ends when the dialog closes, the in-flight refetch is
+  // dropped, the cached page stays stale for its idle TTL, and the thread we
+  // just navigated to shows no provenance line. The cost of holding it is one
+  // small file read per machine, already paid by any imported thread on screen.
+  const importsQuery = useHistoryImports(environmentId);
+  const refreshImports = useRefreshHistoryImports(environmentId);
 
   const rows = useMemo(
     () =>
@@ -142,14 +172,23 @@ export function ImportConversationDialog(): ReactNode {
   );
 
   const openThread = useCallback(
-    (targetEnvironmentId: EnvironmentId, threadId: ThreadId) => {
+    async (targetEnvironmentId: EnvironmentId, threadId: ThreadId) => {
+      const threadRef = scopeThreadRef(targetEnvironmentId, threadId);
+      // The thread exists on the server the moment import returns, but this
+      // client learns about it over the websocket a beat later — and the thread
+      // route treats a thread it has never heard of as deleted and bounces to
+      // "/". Navigating immediately therefore lands anywhere but the thread we
+      // just made. Waiting for the projection to catch up is the whole fix; the
+      // timeout only decides whether a wedged connection gets a wrong-looking
+      // route or an indefinite spinner.
+      await waitForThreadShell(threadRef);
       setOpen(false);
       // The chat view focuses its composer whenever the active thread changes,
       // so arriving here is arriving with the cursor already blinking — which
       // is the point of the whole feature.
-      void navigate({
+      await navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(targetEnvironmentId, threadId)),
+        params: buildThreadRouteParams(threadRef),
       });
     },
     [navigate],
@@ -159,7 +198,7 @@ export function ImportConversationDialog(): ReactNode {
     async (createProject: boolean) => {
       if (environmentId === null || selectedRow === null || busy) return;
       if (selectedRow.importedThreadId !== null) {
-        openThread(environmentId, selectedRow.importedThreadId);
+        await openThread(environmentId, selectedRow.importedThreadId);
         return;
       }
       setBusy(true);
@@ -171,10 +210,20 @@ export function ImportConversationDialog(): ReactNode {
       });
       setBusy(false);
       const outcome = resolveImportAttempt(attempt);
-      if (outcome.kind === "openThread") openThread(environmentId, outcome.threadId);
-      else setPrompt(outcome.prompt);
+      if (outcome.kind !== "openThread") {
+        setPrompt(outcome.prompt);
+        return;
+      }
+      // The registry we just changed is cached per machine and never polled —
+      // a session file does not change on its own, but this one just did,
+      // because we wrote it. Without this the thread opens with no provenance
+      // line until the cache expires, which is the exact surprise the line
+      // exists to prevent. Refreshed before the dialog closes, while this hook
+      // still holds the real atom rather than the null one.
+      refreshImports();
+      await openThread(environmentId, outcome.threadId);
     },
-    [busy, environmentId, openThread, runImport, selectedRow],
+    [busy, environmentId, openThread, refreshImports, runImport, selectedRow],
   );
 
   const moveSelection = useCallback(
