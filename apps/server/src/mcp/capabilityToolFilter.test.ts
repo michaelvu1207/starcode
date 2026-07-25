@@ -53,14 +53,22 @@ const ALL_PEER_TOOLS = [
   "peer_thread_dispatch",
 ] as const;
 
-it("gates exactly the two tools that spend another machine's turn", () => {
+it("gates the tools that spend another machine's turn, and the ones that rewrite the map", () => {
   expect([...CAPABILITY_GATED_TOOLS.keys()].toSorted()).toEqual([
+    "feature_create",
+    "feature_link",
+    "feature_plan_set",
+    "feature_promote",
+    "feature_update",
     "peer_thread_create",
     "peer_thread_dispatch",
   ]);
   // Mailbox sends are universal by design; hiding them would take away the one
-  // federation write an ordinary agent is meant to have.
+  // federation write an ordinary agent is meant to have. Reading the feature
+  // map is universal for the same reason — an agent that knows which feature it
+  // is working on is a better agent.
   expect(CAPABILITY_GATED_TOOLS.has("peer_thread_send")).toBe(false);
+  expect(CAPABILITY_GATED_TOOLS.has("feature_map_list")).toBe(false);
 });
 
 it("hides the operate tools from a session without the capability", () => {

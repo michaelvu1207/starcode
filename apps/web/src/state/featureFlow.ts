@@ -2,13 +2,16 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentFeatureFlowAtoms,
   createEnvironmentFeatureFlowSnapshotsAtom,
+  createEnvironmentFeatureMapAtoms,
+  createEnvironmentFeatureMapSnapshotsAtom,
 } from "@t3tools/client-runtime/state/feature-flow";
 import { useMemo } from "react";
 
 import {
   buildFeatureFlowView,
   type FeatureFlowView,
-} from "../components/workbench/FeatureFlow.layout";
+} from "../components/workbench/FeatureFlow.model";
+import type { SkyMachineMap } from "../components/workbench/StarMap.model";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments } from "./environments";
@@ -59,4 +62,38 @@ export function useFeatureFlowView(masterThreadKey: string | null): FeatureFlowV
       ),
     [environments, masterThreadKey, serverConfigs, snapshots],
   );
+}
+
+export const environmentFeatureMap = createEnvironmentFeatureMapAtoms(connectionAtomRuntime);
+
+export const environmentFeatureMapSnapshotsAtom = createEnvironmentFeatureMapSnapshotsAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  snapshotValueAtom: environmentFeatureMap.snapshotValueAtom,
+});
+
+/**
+ * Every connected machine's feature map, keyed by the machine that served it.
+ *
+ * Kept per-machine rather than flattened because an entry's thread id is only
+ * meaningful on the server that wrote it — the same reasoning that keeps
+ * feature-flow dependencies from resolving across machines. The sky itself is
+ * connection-independent; this is the one place the origin of a row still
+ * matters, and it stops here.
+ */
+export function useFeatureMapByEnvironment(): ReadonlyMap<string, SkyMachineMap> {
+  const { environments } = useEnvironments();
+  const snapshots = useAtomValue(environmentFeatureMapSnapshotsAtom);
+
+  return useMemo(() => {
+    const byEnvironment = new Map<string, SkyMachineMap>();
+    for (const environment of environments) {
+      const snapshot = snapshots.get(environment.environmentId);
+      if (snapshot === undefined || snapshot.entries.length === 0) continue;
+      byEnvironment.set(environment.environmentId, {
+        label: environment.label,
+        entries: snapshot.entries,
+      });
+    }
+    return byEnvironment;
+  }, [environments, snapshots]);
 }

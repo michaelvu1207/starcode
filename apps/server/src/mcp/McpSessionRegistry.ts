@@ -143,7 +143,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
         capabilities: new Set<McpInvocationContext.McpCapability>(
-          isMaster ? ["preview", "peers", "peers-operate"] : ["preview", "peers"],
+          isMaster
+            ? ["preview", "peers", "peers-operate", "features-operate"]
+            : ["preview", "peers"],
         ),
         issuedAt,
         expiresAt,

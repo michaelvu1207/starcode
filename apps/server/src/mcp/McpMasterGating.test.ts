@@ -62,7 +62,12 @@ describe("workbench master gating", () => {
   it.effect("grants peers-operate to the designated master session", () =>
     Effect.gen(function* () {
       const capabilities = yield* capabilitiesFor(masterThreadId, masterThreadId);
-      assert.deepStrictEqual(capabilities, ["peers", "peers-operate", "preview"]);
+      assert.deepStrictEqual(capabilities, [
+        "features-operate",
+        "peers",
+        "peers-operate",
+        "preview",
+      ]);
     }),
   );
 

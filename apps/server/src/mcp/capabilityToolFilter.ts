@@ -42,6 +42,14 @@ export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.Mc
   new Map([
     ["peer_thread_create", "peers-operate"],
     ["peer_thread_dispatch", "peers-operate"],
+    // Same split on the feature map: reading it helps every agent orient,
+    // writing it is the orchestrator's alone. `feature_map_list` is absent for
+    // exactly the reason `peer_thread_send` is.
+    ["feature_create", "features-operate"],
+    ["feature_update", "features-operate"],
+    ["feature_promote", "features-operate"],
+    ["feature_link", "features-operate"],
+    ["feature_plan_set", "features-operate"],
   ]);
 
 interface ToolsListShape {
