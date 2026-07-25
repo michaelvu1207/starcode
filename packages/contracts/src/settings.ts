@@ -210,7 +210,8 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "CODEX_HOME path",
-        description: "Custom Codex home and config directory.",
+        description:
+          "Custom Codex home and config directory. Give each Codex account its own instance and directory so usage and rate limits are attributed per account.",
         providerSettingsForm: {
           placeholder: "~/.codex",
           clearWhenEmpty: "omit",
@@ -265,8 +266,11 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "CLAUDE_CONFIG_DIR path",
         description:
-          "Custom Claude home and config directory. Keeps .claude.json and .claude separate.",
-        providerSettingsForm: { placeholder: "~/.claude", clearWhenEmpty: "omit" },
+          "Custom Claude home and config directory. Keeps .claude.json and .claude separate. To run a second Claude account, add another instance with its own directory (e.g. ~/.claude-homes/work) and sign in there — threads stay pinned to the account whose directory they started on.",
+        providerSettingsForm: {
+          placeholder: "~/.claude-homes/<account>",
+          clearWhenEmpty: "omit",
+        },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(
