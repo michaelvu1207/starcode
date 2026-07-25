@@ -45,8 +45,8 @@ function thread(
 }
 
 const environments = [
-  { environmentId: LOCAL, label: "mac", connection: CONNECTED },
-  { environmentId: LAPTOP, label: "laptop", connection: CONNECTED },
+  { environmentId: LOCAL, label: "mac", serverLabel: "mac", connection: CONNECTED },
+  { environmentId: LAPTOP, label: "laptop", serverLabel: "laptop", connection: CONNECTED },
 ];
 
 function board(overrides?: Partial<Parameters<typeof buildWorkbenchBoard>[0]>) {

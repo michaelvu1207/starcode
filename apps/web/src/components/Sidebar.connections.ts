@@ -12,8 +12,11 @@
  * Order inside a group is the inbox's order, preserved: active first (ranked
  * by attention, or by creation when the user opted out), then the snooze shelf
  * by soonest wake, then the settled tail by when the work ended. Order OF the
- * groups is local first — it is the machine you are sitting at — then by
- * label, which never moves under you the way an activity ranking would.
+ * groups is local first — it is the machine you are sitting at — then by the
+ * name the machine announces for itself, which never moves under you the way
+ * an activity ranking would. Deliberately not the displayed name: that one is
+ * renameable in place from this very header, and ordering by it would slide
+ * the group away the instant the rename lands.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -39,12 +42,18 @@ export interface SidebarConnectionRow {
 export interface SidebarConnectionEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  /** The name the machine announces for itself. Sorts the groups, and is the
+      placeholder the rename field offers. */
+  readonly serverLabel: string;
   readonly connection: EnvironmentConnectionPresentation;
 }
 
 export interface SidebarConnectionGroup {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  /** Carried through so the header's rename field can offer it as the
+      placeholder without the view rebuilding its own id-to-label map. */
+  readonly serverLabel: string;
   /** The environment this client is itself hosted by, if any. */
   readonly isLocal: boolean;
   /** `null` when the environment is not in the catalog at all — a thread cached
@@ -87,6 +96,7 @@ export function buildSidebarConnectionGroups(
   const groups: SidebarConnectionGroup[] = input.environments.map((environment) => ({
     environmentId: environment.environmentId,
     label: environment.label,
+    serverLabel: environment.serverLabel,
     isLocal: environment.environmentId === input.primaryEnvironmentId,
     connection: environment.connection,
     rows: rowsByEnvironment.get(environment.environmentId) ?? [],
@@ -101,6 +111,7 @@ export function buildSidebarConnectionGroups(
     groups.push({
       environmentId,
       label: environmentId,
+      serverLabel: environmentId,
       isLocal: environmentId === input.primaryEnvironmentId,
       connection: null,
       rows,
@@ -115,7 +126,8 @@ export function buildSidebarConnectionGroups(
       return left.connection === null ? 1 : -1;
     }
     return (
-      left.label.localeCompare(right.label) || left.environmentId.localeCompare(right.environmentId)
+      left.serverLabel.localeCompare(right.serverLabel) ||
+      left.environmentId.localeCompare(right.environmentId)
     );
   });
 }
