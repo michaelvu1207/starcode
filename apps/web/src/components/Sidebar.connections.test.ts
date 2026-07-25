@@ -9,6 +9,7 @@ import {
   resolveSidebarConnectionGroupExpanded,
   sidebarConnectionDotClassName,
   sidebarConnectionGroupExpansionKey,
+  supportsSidebarRangeSelect,
   type SidebarConnectionRow,
 } from "./Sidebar.connections";
 
@@ -170,6 +171,14 @@ describe("connection group presentation", () => {
     expect(resolveSidebarConnectionGroupExpanded({ [key]: false }, LAPTOP)).toBe(false);
     // A collapsed project must not collapse a machine that happens to share a name.
     expect(resolveSidebarConnectionGroupExpanded({ "env-laptop": false }, LAPTOP)).toBe(true);
+  });
+
+  it("allows range-select only where the rendered order defines the range", () => {
+    expect(supportsSidebarRangeSelect("inbox")).toBe(true);
+    // Grouped rows are not in orderedThreadKeys order, so a range there would
+    // sweep in threads that are not on screen — and bulk actions would run on
+    // them.
+    expect(supportsSidebarRangeSelect("connections")).toBe(false);
   });
 
   it("colours the dot the way the connections settings rows do", () => {

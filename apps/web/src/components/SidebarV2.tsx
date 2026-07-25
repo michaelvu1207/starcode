@@ -107,6 +107,7 @@ import {
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
 } from "./Sidebar.logic";
+import { supportsSidebarRangeSelect } from "./Sidebar.connections";
 import { partitionSidebarV2Threads } from "./Sidebar.partition";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -1610,7 +1611,11 @@ export default function SidebarV2() {
       }
       if (event.shiftKey) {
         event.preventDefault();
-        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        if (supportsSidebarRangeSelect(viewMode)) {
+          rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        } else {
+          toggleThreadSelection(threadKey);
+        }
         return;
       }
       if (isTrailingDoubleClick(event.detail)) {
@@ -1618,7 +1623,7 @@ export default function SidebarV2() {
       }
       navigateToThread(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection],
+    [navigateToThread, rangeSelectTo, toggleThreadSelection, viewMode],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks

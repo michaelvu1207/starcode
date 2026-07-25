@@ -18,7 +18,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarV2ViewMode } from "@t3tools/contracts";
 
 /** How many rows a group shows before it asks. Groups are collapsible and a
     hub sees every machine's history at once, so the cap is per group. */
@@ -161,6 +161,21 @@ export function resolveSidebarConnectionGroupExpanded(
   environmentId: EnvironmentId,
 ): boolean {
   return projectExpandedById[sidebarConnectionGroupExpansionKey(environmentId)] ?? true;
+}
+
+/**
+ * Whether shift-click may select a RANGE of threads in this view.
+ *
+ * A range is computed over the flat key list the inbox renders, top to
+ * bottom. The connections view renders the same threads in a different order
+ * and pages each group separately, so a range taken there would sweep in rows
+ * that are not on screen — and the bulk actions on a selection (settle,
+ * snooze, delete) would then touch threads the user never saw. Ranges stay an
+ * inbox affordance until the rendered order is what defines them; shift-click
+ * degrades to selecting the one row it landed on.
+ */
+export function supportsSidebarRangeSelect(viewMode: SidebarV2ViewMode): boolean {
+  return viewMode === "inbox";
 }
 
 /** The status dot's colour, same mapping the Connections settings rows use. */
