@@ -135,7 +135,6 @@ import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
-import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -220,6 +219,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ChatHeaderRunContext } from "./chat/ChatHeaderRunContext";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -5605,6 +5605,37 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
+  // Fork: the run context lives in the thread header, not in a strip under the
+  // composer. Passing it as a node keeps the wiring here rather than widening
+  // ChatHeader by a dozen props; the cost is that ChatHeader's memo no longer
+  // bails, which is two cheap hooks per render because every child that does
+  // real work — run context, branch toolbar, action cluster — memoises itself.
+  const headerRunContext =
+    showComposerContextStrip && activeThread ? (
+      <ChatHeaderRunContext
+        environmentId={activeThread.environmentId}
+        threadId={activeThread.id}
+        {...(routeKind === "draft" && draftId ? { draftId } : {})}
+        onEnvModeChange={onEnvModeChange}
+        startFromOrigin={startFromOrigin}
+        onStartFromOriginChange={onStartFromOriginChange}
+        {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+        {...(canOverrideServerThreadEnvMode
+          ? {
+              activeThreadBranchOverride: activeThreadBranch,
+              onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+            }
+          : {})}
+        envLocked={envLocked}
+        onComposerFocusRequest={scheduleComposerFocus}
+        {...(canCheckoutPullRequestIntoThread
+          ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+          : {})}
+        {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+        availableEnvironments={logicalProjectEnvironments}
+      />
+    ) : null;
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
@@ -5648,6 +5679,7 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            runContext={headerRunContext}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
@@ -5774,12 +5806,7 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div
-                      className={cn(
-                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
-                      )}
-                    >
+                    <div className="chat-composer-glass-shell relative mx-auto w-full max-w-3xl">
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
@@ -5859,42 +5886,6 @@ function ChatViewContent(props: ChatViewProps) {
                             setThreadError={setThreadError}
                             onExpandImage={onExpandTimelineImage}
                           />
-                        </div>
-                      </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>

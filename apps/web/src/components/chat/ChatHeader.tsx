@@ -5,7 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -15,7 +15,6 @@ import {
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
-import { ProjectFavicon } from "../ProjectFavicon";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -35,6 +34,11 @@ interface ChatHeaderProps {
   // They stay on the interface so the ChatView call site is untouched and
   // restoring the control is a one-line change.
   gitCwd: string | null;
+  // Fork: the environment / workspace / branch cluster that upstream renders as
+  // a strip under the composer. A node rather than a dozen props, which keeps
+  // the wiring at the ChatView call site at the cost of this header's memo.
+  // See ChatHeaderRunContext.
+  runContext?: ReactNode;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -67,6 +71,7 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
+  runContext,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -84,40 +89,27 @@ export const ChatHeader = memo(function ChatHeader({
   });
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        {/* The project always leads the header: knowing which project a
-            thread lives in is priority zero, and the thread title alone
-            doesn't answer it. */}
-        {activeProjectName ? (
-          <span className="inline-flex shrink-0 items-center gap-2">
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={activeThreadEnvironmentId}
-                cwd={activeProjectCwd ?? ""}
-                className="size-3.5"
-              />
-              <span className="max-w-40 truncate text-sm font-medium text-muted-foreground">
-                {activeProjectName}
-              </span>
-            </span>
-            <span aria-hidden className="text-muted-foreground/40">
-              /
-            </span>
-          </span>
-        ) : null}
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {/* Fork: the project breadcrumb used to lead the header. The run context
+            answers "which project" better than the name did — it names the
+            machine, the checkout and the branch — and the sidebar row still
+            carries the project name, so the title leads instead. The title is
+            grow-0 so the run context stays tucked against it rather than
+            drifting into the action cluster on a wide window. */}
         <Tooltip>
           <TooltipTrigger
             render={
               <h2
                 aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+                className="min-w-0 shrink truncate text-sm font-medium text-foreground"
               >
                 {activeThreadTitle}
               </h2>
             }
           />
-          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+          <TooltipPopup side="bottom">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
+        {runContext}
       </div>
       <ChatHeaderActions
         activeThreadEnvironmentId={activeThreadEnvironmentId}
