@@ -35,6 +35,12 @@ import {
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
+import { FeatureFlowSnapshot } from "./featureFlow.ts";
+import {
+  ThreadMailboxListResult,
+  ThreadMailboxSendInput,
+  ThreadMailboxSendResult,
+} from "./mailbox.ts";
 import { EnvironmentUsageSnapshot } from "./usage.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -60,6 +66,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_peer",
+  /** A thread addressed its own mailbox, or the message exceeded its bounds. */
+  "invalid_mailbox_message",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -92,6 +100,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "peers_load_failed",
   "peer_registration_failed",
   "peer_remove_failed",
+  "mailbox_enqueue_failed",
+  "mailbox_read_failed",
+  "feature_flow_failed",
   "history_sessions_failed",
   "history_transcript_failed",
   "internal_error",
@@ -544,6 +555,54 @@ export class EnvironmentPeersHttpApi extends HttpApiGroup.make("peers")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentMailboxParams = Schema.Struct({ threadId: ThreadId });
+
+const EnvironmentMailboxSendErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
+
+/**
+ * Per-thread mailbox. `send` is the one write in the fork that deliberately
+ * does *not* reach the orchestration dispatch path: dispatching would start a
+ * turn, and the entire point of a mailbox is that it does not. It still carries
+ * `orchestration:operate`, because leaving content that a thread will later act
+ * on is an operation on that thread, not a read of it.
+ */
+export class EnvironmentMailboxHttpApi extends HttpApiGroup.make("mailbox")
+  .add(
+    HttpApiEndpoint.post("send", "/api/threads/:threadId/mailbox", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentMailboxParams,
+      payload: ThreadMailboxSendInput,
+      success: ThreadMailboxSendResult,
+      error: EnvironmentMailboxSendErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("pending", "/api/threads/:threadId/mailbox", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentMailboxParams,
+      success: ThreadMailboxListResult,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+/**
+ * Feature flow. Read-scoped: every field is derived from the projection and
+ * from `git` queries against repositories this server already watches, and
+ * nothing here mutates.
+ */
+export class EnvironmentFeatureFlowHttpApi extends HttpApiGroup.make("featureFlow").add(
+  HttpApiEndpoint.get("snapshot", "/api/feature-flow", {
+    headers: OptionalBearerHeaders,
+    success: FeatureFlowSnapshot,
+    error: EnvironmentScopedOperationErrors,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 /**
  * Read-only usage. Gated on `orchestration:read` rather than `access:read`
  * because that is the scope a normal pairing link grants — the hub must be
@@ -671,6 +730,8 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPeersHttpApi)
+  .add(EnvironmentMailboxHttpApi)
+  .add(EnvironmentFeatureFlowHttpApi)
   .add(EnvironmentUsageHttpApi)
   .add(EnvironmentHistoryHttpApi)
   .add(EnvironmentConnectHttpApi) {}

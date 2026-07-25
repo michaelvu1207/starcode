@@ -143,6 +143,9 @@ export const make = Effect.gen(function* () {
       threadSettlement: true,
       threadSnooze: true,
       peerFederation: true,
+      peerOrchestration: true,
+      threadMailbox: true,
+      featureFlow: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
     },
   };

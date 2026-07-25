@@ -8,6 +8,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
@@ -87,6 +88,28 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
       : "http://127.0.0.1/mcp";
 
+  /**
+   * A hard requirement, deliberately. This was briefly optional so the registry
+   * could be built bare in tests, and the cost was severe: a layer that never
+   * declares a dependency is never wired one, so `peers-operate` was withheld
+   * from every session including the master — silently, with no error anywhere,
+   * and the unit tests still passed because they provided the service directly.
+   * Declaring it means a wiring mistake fails at build time instead of quietly
+   * disabling the capability forever.
+   */
+  const settingsService = yield* ServerSettingsService;
+  const resolveMasterThreadId: Effect.Effect<string> = settingsService.getSettings.pipe(
+    Effect.map((settings) => settings.workbenchMasterThreadId.trim()),
+    // A settings read that fails must not block a session from starting, so it
+    // degrades to "no master" — which withholds the capability, the safe
+    // direction, and says so in the log rather than silently.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("could not resolve the workbench master thread; withholding operate", {
+        cause,
+      }).pipe(Effect.as("")),
+    ),
+  );
+
   const hashToken = (token: string) =>
     crypto
       .digest("SHA-256", new TextEncoder().encode(token))
@@ -109,12 +132,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const expiresAt = issuedAt + maximumLifetimeMs;
+      // Read at mint time, not at layer construction, so re-designating the
+      // master takes effect on the next session start rather than on the next
+      // server restart.
+      const masterThreadId = yield* resolveMasterThreadId;
+      const isMaster = masterThreadId.length > 0 && masterThreadId === request.threadId;
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set<McpInvocationContext.McpCapability>(["preview", "peers"]),
+        capabilities: new Set<McpInvocationContext.McpCapability>(
+          isMaster ? ["preview", "peers", "peers-operate"] : ["preview", "peers"],
+        ),
         issuedAt,
         expiresAt,
       };

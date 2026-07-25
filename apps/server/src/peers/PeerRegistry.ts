@@ -7,14 +7,21 @@
  * leaks carries no authority.
  *
  * Registration reuses the existing RFC 8693 token exchange; there is no second
- * auth scheme here. The exchange requests `orchestration:read` explicitly, and
- * the peer's own anti-privilege-escalation check refuses to widen it.
+ * auth scheme here. The exchange requests exactly the scopes the registration's
+ * credential class calls for, and the peer's own anti-privilege-escalation
+ * check refuses to widen that.
+ *
+ * Both directions are then re-checked locally against what the peer says it
+ * granted, so an entry's stored class and its stored authority cannot diverge:
+ * a `read` peer that somehow came back operate-capable is refused rather than
+ * silently downgraded in name only.
  *
  * @module PeerRegistry
  */
 import {
   AuthEnvironmentScope,
   PeerEnvironment,
+  type PeerCredentialClass,
   type PeerName,
   type PeerRegisterInput,
 } from "@t3tools/contracts";
@@ -39,8 +46,9 @@ import {
   exchangePeerPairingToken,
   fetchPeerDescriptor,
   fetchPeerSessionState,
+  judgePeerScopes,
   normalizePeerBaseUrl,
-  PEER_CREDENTIAL_SCOPES,
+  peerCredentialScopes,
 } from "./PeerEnvironmentClient.ts";
 
 const isAuthEnvironmentScope = Schema.is(AuthEnvironmentScope);
@@ -207,6 +215,7 @@ export const make = Effect.gen(function* () {
   const resolveCredential = Effect.fn("PeerRegistry.resolveCredential")(function* (
     baseUrl: string,
     input: PeerRegisterInput,
+    credentialClass: PeerCredentialClass,
   ): Effect.fn.Return<ResolvedCredential, PeerRegistrationError> {
     const now = yield* DateTime.now;
     if ("token" in input.credential) {
@@ -248,6 +257,7 @@ export const make = Effect.gen(function* () {
       baseUrl,
       pairingToken: input.credential.pairingToken,
       label: `t3 peer ${input.name}`,
+      credentialClass,
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.mapError(
@@ -284,31 +294,25 @@ export const make = Effect.gen(function* () {
         return yield* new PeerRegistrationError({ reason: "duplicate_name", name: input.name });
       }
 
-      const resolved = yield* resolveCredential(baseUrl, input);
+      const credentialClass = input.credentialClass ?? "read";
+      const requiredScopes = peerCredentialScopes(credentialClass);
+      const resolved = yield* resolveCredential(baseUrl, input, credentialClass);
 
       // Least privilege is enforced here rather than trusted from the caller:
-      // both paths report the scopes the *peer* says the credential carries.
-      // A token that can also operate the peer is refused outright, so a
-      // mis-issued administrative token cannot quietly become a federation
-      // credential with write authority over another machine.
-      const missing = PEER_CREDENTIAL_SCOPES.filter(
-        (scope) => !resolved.grantedScopes.includes(scope),
-      );
-      if (missing.length > 0) {
+      // both paths report the scopes the *peer* says the credential carries,
+      // and the required set is exact rather than a floor. A read registration
+      // handed an operate-capable token is refused just as firmly as an
+      // operate registration handed an administrative one — the class the
+      // operator asked for is the authority the entry ends up holding.
+      const verdict = judgePeerScopes(credentialClass, resolved.grantedScopes);
+      if (!verdict.ok) {
         return yield* new PeerRegistrationError({
-          reason: "scope_not_granted",
+          reason: verdict.reason,
           name: input.name,
-          detail: `Peer granted "${resolved.grantedScopes.join(" ")}" but federation requires ${missing.join(", ")}.`,
-        });
-      }
-      const excess = resolved.grantedScopes.filter(
-        (scope) => !(PEER_CREDENTIAL_SCOPES as ReadonlyArray<string>).includes(scope),
-      );
-      if (excess.length > 0) {
-        return yield* new PeerRegistrationError({
-          reason: "scope_too_broad",
-          name: input.name,
-          detail: `Peer credential also grants ${excess.join(", ")}. Issue a read-only token with \`t3 auth session issue --token-only --read-only\`.`,
+          detail:
+            verdict.reason === "scope_not_granted"
+              ? `Peer granted "${resolved.grantedScopes.join(" ")}" but a ${credentialClass} peer requires ${verdict.missing.join(", ")}.`
+              : `Peer credential also grants ${verdict.excess.join(", ")}, which a ${credentialClass} peer must not hold. Issue a token scoped to exactly ${requiredScopes.join(", ")}.`,
         });
       }
 
@@ -326,6 +330,7 @@ export const make = Effect.gen(function* () {
       const peer: PeerEnvironment = {
         name: input.name,
         baseUrl,
+        credentialClass,
         environmentId: Option.match(descriptor, {
           onNone: () => null,
           onSome: (value) => value.environmentId,

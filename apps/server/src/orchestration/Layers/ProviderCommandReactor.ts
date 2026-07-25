@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ThreadMailboxEntry,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -38,6 +39,8 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { applyMailboxToPrompt } from "../../mailbox/envelope.ts";
+import { ThreadMailbox } from "../../mailbox/ThreadMailbox.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
@@ -196,6 +199,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const threadMailbox = yield* ThreadMailbox;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -861,9 +865,23 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // Mailbox delivery rides on a turn the thread was taking anyway. Claimed
+    // here, after every guard above has passed and immediately before the
+    // prompt is built, so a turn that never reaches the provider is also a
+    // turn that never claimed anything. A claim failure is logged and dropped:
+    // losing a notification must not cost the operator their turn.
+    const mailboxEntries = yield* threadMailbox.claimForTurn(event.payload.threadId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to claim mailbox entries for turn", {
+          threadId: event.payload.threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([] as ReadonlyArray<ThreadMailboxEntry>)),
+      ),
+    );
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: applyMailboxToPrompt(message.text, mailboxEntries),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

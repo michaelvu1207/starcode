@@ -96,6 +96,7 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -726,7 +727,13 @@ const buildAppUnderTest = (options?: {
         // Merged into this `Layer.provide` because the surrounding `pipe` is at
         // its 20-argument overload limit.
         Layer.merge(
-          SqlitePersistenceMemory,
+          Layer.merge(
+            SqlitePersistenceMemory,
+            // Fork: the mailbox routes need the store. Effect memoizes layers
+            // by identity within one build, so this shares the single
+            // in-memory database above rather than opening a second one.
+            ThreadMailbox.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+          ),
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>
               Effect.succeed({

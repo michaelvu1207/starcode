@@ -99,6 +99,10 @@ export const summarizePeerThread = (
   lastActivityAt: peerThreadLastActivityAt(thread),
   createdAt: thread.createdAt,
   branch: thread.branch,
+  // Forwarded only when the source thread reported one, so an absent key keeps
+  // meaning "this server does not compute plan summaries" rather than "this
+  // thread has no plan".
+  ...(thread.planSummary === undefined ? {} : { planSummary: thread.planSummary }),
 });
 
 const descendingBy = (
