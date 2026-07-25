@@ -65,17 +65,6 @@ export function SidebarConnectionsView(props: {
   >({});
   // One group at a time is being renamed, and the edit dies with the view.
   const [renamingEnvironmentId, setRenamingEnvironmentId] = useState<EnvironmentId | null>(null);
-  // Groups carry only their display name; the rename field also needs the name
-  // the machine announces for itself, to offer as the placeholder — that is
-  // what clearing the field returns to.
-  const serverLabelById = useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [environment.environmentId, environment.serverLabel]),
-      ),
-    [environments],
-  );
-
   const groups = useMemo(
     () =>
       buildSidebarConnectionGroups({
@@ -142,7 +131,7 @@ export function SidebarConnectionsView(props: {
                     />
                     <ConnectionNameInput
                       environmentId={group.environmentId}
-                      serverLabel={serverLabelById.get(group.environmentId) ?? group.label}
+                      serverLabel={group.serverLabel}
                       className="h-6 text-xs"
                       onDone={() => setRenamingEnvironmentId(null)}
                     />

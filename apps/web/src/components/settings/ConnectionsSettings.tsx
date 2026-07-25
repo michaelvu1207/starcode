@@ -41,7 +41,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import { applyWslEnableSelection, compareSavedConnectionRows } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -1753,7 +1753,7 @@ export function ConnectionsSettings() {
     () =>
       environments
         .filter((environment) => environment.entry.target._tag !== "PrimaryConnectionTarget")
-        .toSorted((left, right) => left.label.localeCompare(right.label)),
+        .toSorted(compareSavedConnectionRows),
     [environments],
   );
   const savedDesktopSshEnvironmentsByAlias = useMemo(

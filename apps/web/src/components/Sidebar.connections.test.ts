@@ -59,9 +59,14 @@ function makeRows(count: number, environmentId: EnvironmentId): SidebarConnectio
 }
 
 const ENVIRONMENTS = [
-  { environmentId: SERVER, label: "simforge1", connection: CONNECTED },
-  { environmentId: LOCAL, label: "This machine", connection: CONNECTED },
-  { environmentId: LAPTOP, label: "laptop", connection: OFFLINE },
+  { environmentId: SERVER, label: "simforge1", serverLabel: "simforge1", connection: CONNECTED },
+  {
+    environmentId: LOCAL,
+    label: "This machine",
+    serverLabel: "This machine",
+    connection: CONNECTED,
+  },
+  { environmentId: LAPTOP, label: "laptop", serverLabel: "laptop", connection: OFFLINE },
 ];
 
 describe("buildSidebarConnectionGroups", () => {
@@ -136,9 +141,29 @@ describe("buildSidebarConnectionGroups", () => {
       primaryEnvironmentId: null,
     });
 
-    // Nothing to pin to the top, so the whole list falls back to label order.
+    // Nothing to pin to the top, so the whole list falls back to server-label order.
     expect(groups.some((group) => group.isLocal)).toBe(false);
     expect(groups.map((group) => group.label)).toEqual(["laptop", "simforge1", "This machine"]);
+  });
+
+  it("keeps a renamed group where it was, and carries the server label for the rename field", () => {
+    // The pencil on this header writes an alias, so ordering by the displayed
+    // name would slide the group away the moment the rename lands.
+    const renamed = ENVIRONMENTS.map((environment) =>
+      environment.environmentId === SERVER ? { ...environment, label: "aardvark" } : environment,
+    );
+    const groups = buildSidebarConnectionGroups({
+      activeThreads: [],
+      snoozedThreads: [],
+      settledThreads: [],
+      environments: renamed,
+      primaryEnvironmentId: LOCAL,
+    });
+
+    expect(groups.map((group) => group.environmentId)).toEqual([LOCAL, LAPTOP, SERVER]);
+    expect(groups.map((group) => group.label)).toEqual(["This machine", "laptop", "aardvark"]);
+    // Clearing the field has to get back to the machine's own name.
+    expect(groups.at(-1)?.serverLabel).toBe("simforge1");
   });
 });
 
