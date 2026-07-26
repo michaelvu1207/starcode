@@ -186,7 +186,19 @@ export function SidebarConnectionsView(props: {
                       <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
                         {group.label}
                       </span>
-                      {group.isLocal ? (
+                      {group.isOwnBackend ? (
+                        // Not "Local": the paired hub on this same laptop is
+                        // local too, and telling them apart is the whole point.
+                        // Threads here are reachable from this app and nothing
+                        // else — no browser tab, no other machine.
+                        <span
+                          data-testid="connection-own-backend"
+                          title="This app's own backend — threads here are visible only in this app"
+                          className="shrink-0 rounded-sm bg-muted/60 px-1 text-[10px] text-muted-foreground/70"
+                        >
+                          this app
+                        </span>
+                      ) : group.isLocal ? (
                         <span className="shrink-0 text-[10px] text-muted-foreground/60">Local</span>
                       ) : null}
                       <span className="shrink-0 font-mono text-[11px] text-muted-foreground/45">

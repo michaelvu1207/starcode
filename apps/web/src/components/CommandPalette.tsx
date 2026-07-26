@@ -1086,7 +1086,7 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to browse projects",
+          title: "Unable to browse folders",
           description: "No environment is available.",
         }),
       );
@@ -1207,7 +1207,7 @@ function OpenCommandPaletteDialog(props: {
       "url",
       "environment",
     ],
-    title: "Add project",
+    title: "Add folder",
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
@@ -1275,7 +1275,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
+            title: "Failed to add folder",
             description: "Windows-style paths are only supported on Windows.",
           }),
         );
@@ -1286,8 +1286,8 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
-            description: "Relative paths require an active project.",
+            title: "Failed to add folder",
+            description: "Relative paths require an active folder.",
           }),
         );
         return;
@@ -1322,7 +1322,7 @@ function OpenCommandPaletteDialog(props: {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to open project",
+                title: "Failed to open folder",
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
@@ -1357,7 +1357,7 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to add project",
+              title: "Failed to add folder",
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
@@ -1373,7 +1373,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
+            title: "Failed to add folder",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -1503,7 +1503,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: "Clone failed",
-          description: "Relative paths require an active project.",
+          description: "Relative paths require an active folder.",
         }),
       );
       return;
@@ -1833,7 +1833,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add WSL project",
+            title: "Could not add WSL folder",
             description: "Start the matching WSL backend, then choose the folder again.",
           }),
         );
@@ -2032,11 +2032,10 @@ function OpenCommandPaletteDialog(props: {
               : addProjectCloneFlow?.step === "confirm"
                 ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
                 : relativePathNeedsActiveProject
-                  ? { emptyStateMessage: "Relative paths require an active project." }
+                  ? { emptyStateMessage: "Relative paths require an active folder." }
                   : willCreateProjectPath
                     ? {
-                        emptyStateMessage:
-                          "Press Enter to create this folder and add it as a project.",
+                        emptyStateMessage: "Press Enter to create this folder and register it.",
                       }
                     : {})}
           />

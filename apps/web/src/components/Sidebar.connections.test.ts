@@ -59,14 +59,27 @@ function makeRows(count: number, environmentId: EnvironmentId): SidebarConnectio
 }
 
 const ENVIRONMENTS = [
-  { environmentId: SERVER, label: "simforge1", serverLabel: "simforge1", connection: CONNECTED },
+  {
+    environmentId: SERVER,
+    label: "simforge1",
+    serverLabel: "simforge1",
+    isOwnBackend: false,
+    connection: CONNECTED,
+  },
   {
     environmentId: LOCAL,
     label: "This machine",
     serverLabel: "This machine",
+    isOwnBackend: false,
     connection: CONNECTED,
   },
-  { environmentId: LAPTOP, label: "laptop", serverLabel: "laptop", connection: OFFLINE },
+  {
+    environmentId: LAPTOP,
+    label: "laptop",
+    serverLabel: "laptop",
+    isOwnBackend: false,
+    connection: OFFLINE,
+  },
 ];
 
 describe("buildSidebarConnectionGroups", () => {

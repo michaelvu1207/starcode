@@ -32,7 +32,7 @@ import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { readThreadShell } from "~/state/entities";
+import { readThreadShell, useProjects } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import {
   useHistoryImports,
@@ -89,6 +89,7 @@ export function ImportConversationDialog(): ReactNode {
   const navigate = useNavigate();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverProjects = useProjects();
   const runImport = useImportHistorySession();
 
   const [open, setOpen] = useState(false);
@@ -97,6 +98,31 @@ export function ImportConversationDialog(): ReactNode {
   const [filter, setFilter] = useState("");
   const [limit, setLimit] = useState(IMPORT_PICKER_PAGE_SIZE);
   const [prompt, setPrompt] = useState<ImportPrompt | null>(null);
+
+  /**
+   * Another connection that already has the folder this prompt wants to
+   * register.
+   *
+   * Only ever a suggestion — the operator may genuinely mean to run here — but
+   * it is the difference between a thread the whole fleet can see and one that
+   * lives inside a single app process. Matched on `workspaceRoot`, which is the
+   * same path the prompt is quoting, and excluding the connection we are on so
+   * it cannot recommend itself.
+   */
+  const folderElsewhere = useMemo(() => {
+    if (prompt?.kind !== "needsProject") return null;
+    const match = serverProjects.find(
+      (candidate) =>
+        candidate.workspaceRoot === prompt.cwd && candidate.environmentId !== environmentId,
+    );
+    if (match === undefined) return null;
+    const environment = environments.find(
+      (candidate) => candidate.environmentId === match.environmentId,
+    );
+    return environment === undefined
+      ? null
+      : { environmentId: environment.environmentId, label: environment.label };
+  }, [environmentId, environments, prompt, serverProjects]);
   const [busy, setBusy] = useState(false);
   // Ages are relative, and a clock that ticks mid-list would reorder nothing
   // but rewrite every row. Frozen when the dialog opens.
@@ -289,6 +315,18 @@ export function ImportConversationDialog(): ReactNode {
                     )}
                   >
                     {environment.label}
+                    {environment.isOwnBackend ? (
+                      // Two connections on one laptop announce the same machine
+                      // name — the app's embedded server and the hub it is
+                      // paired with. Picking the wrong one lands the resumed
+                      // thread somewhere no other client can ever see it.
+                      <span
+                        data-testid="import-picker-own-backend"
+                        className="ml-1 text-[10px] text-muted-foreground/60"
+                      >
+                        · this app
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -374,14 +412,42 @@ export function ImportConversationDialog(): ReactNode {
                 </p>
               ) : null}
               {prompt?.kind === "needsProject" ? (
-                <p
+                <div
                   data-testid="import-picker-needs-project"
-                  className="mb-2 text-xs text-muted-foreground"
+                  className="mb-2 space-y-1 text-xs text-muted-foreground"
                 >
-                  No project is rooted at{" "}
-                  <span className="font-mono text-foreground">{prompt.cwd}</span>. Create{" "}
-                  <span className="text-foreground">{prompt.projectTitle}</span> and resume there?
-                </p>
+                  <p>
+                    starcode isn't set up to run threads in{" "}
+                    <span className="font-mono text-foreground">{prompt.cwd}</span> on this machine
+                    yet. Register it and resume there?{" "}
+                    <span className="text-muted-foreground/70">
+                      Nothing is copied — the conversation continues in place.
+                    </span>
+                  </p>
+                  {/* The trap this line exists for: on the desktop app the
+                      embedded backend has no folders registered at all, so it
+                      always offers to register one — while the hub paired on
+                      the same laptop already has that exact folder. Taking the
+                      offer puts the thread somewhere only this app can see. */}
+                  {folderElsewhere === null ? null : (
+                    <p data-testid="import-picker-folder-elsewhere" className="text-warning">
+                      <span className="font-medium">{folderElsewhere.label}</span> already has this
+                      folder.{" "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEnvironmentId(folderElsewhere.environmentId);
+                          setSelectedSessionId(null);
+                          setPrompt(null);
+                          setLimit(IMPORT_PICKER_PAGE_SIZE);
+                        }}
+                        className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                      >
+                        Resume there instead
+                      </button>
+                    </p>
+                  )}
+                </div>
               ) : null}
               <div className="flex items-center justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
@@ -397,7 +463,7 @@ export function ImportConversationDialog(): ReactNode {
                   {selectedRow?.importedThreadId != null
                     ? "Open thread"
                     : prompt?.kind === "needsProject"
-                      ? "Create project and resume"
+                      ? "Register folder and resume"
                       : "Resume in starcode"}
                 </Button>
               </div>

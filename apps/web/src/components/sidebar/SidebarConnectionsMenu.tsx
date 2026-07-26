@@ -134,7 +134,15 @@ function ConnectionRow({
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-foreground">
           {row.label}
         </span>
-        {row.isLocal ? (
+        {row.isOwnBackend ? (
+          <span
+            data-testid="connection-own-backend"
+            title="This app's own backend — threads here are visible only in this app"
+            className="shrink-0 rounded-sm bg-muted/60 px-1 text-[10px] text-muted-foreground/70"
+          >
+            this app
+          </span>
+        ) : row.isLocal ? (
           <span className="shrink-0 text-[10px] text-muted-foreground/60">Local</span>
         ) : null}
         <span
@@ -210,6 +218,7 @@ export function SidebarConnectionsMenu(): ReactNode {
               // "Local" means this machine, matching what the sidebar's
               // connection groups badge.
               isLocal: environment.environmentId === primaryEnvironmentId,
+              isOwnBackend: environment.isOwnBackend,
               displayUrl: environment.displayUrl,
               state: connectionStates.get(environment.environmentId) ?? null,
               usage: usageSnapshots.get(environment.environmentId) ?? null,

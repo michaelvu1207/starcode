@@ -79,6 +79,7 @@ function rowInput(overrides: Partial<ConnectionMenuRowInput> = {}): ConnectionMe
     environmentId: "env-1",
     label: "Mac",
     isLocal: false,
+    isOwnBackend: false,
     displayUrl: null,
     state: state(),
     usage: null,

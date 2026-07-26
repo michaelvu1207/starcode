@@ -52,7 +52,7 @@ interface RightPanelTabsProps {
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the starcode desktop app.",
-  files: "Files are only available when a project is open.",
+  files: "Files are only available when a folder is open.",
   diff: "Diff is only available for server threads in Git repositories.",
 } as const;
 

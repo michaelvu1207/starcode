@@ -45,6 +45,8 @@ export interface SidebarConnectionEnvironment {
   /** The name the machine announces for itself. Sorts the groups, and is the
       placeholder the rename field offers. */
   readonly serverLabel: string;
+  /** This client's own embedded backend; see `EnvironmentPresentation`. */
+  readonly isOwnBackend: boolean;
   readonly connection: EnvironmentConnectionPresentation;
 }
 
@@ -56,6 +58,8 @@ export interface SidebarConnectionGroup {
   readonly serverLabel: string;
   /** The environment this client is itself hosted by, if any. */
   readonly isLocal: boolean;
+  /** This client's own embedded backend; see `EnvironmentPresentation`. */
+  readonly isOwnBackend: boolean;
   /** `null` when the environment is not in the catalog at all — a thread cached
       from a connection that has since been removed. Its rows still render:
       hiding threads is the one thing this view must never do. */
@@ -98,6 +102,7 @@ export function buildSidebarConnectionGroups(
     label: environment.label,
     serverLabel: environment.serverLabel,
     isLocal: environment.environmentId === input.primaryEnvironmentId,
+    isOwnBackend: environment.isOwnBackend,
     connection: environment.connection,
     rows: rowsByEnvironment.get(environment.environmentId) ?? [],
   }));
@@ -113,6 +118,7 @@ export function buildSidebarConnectionGroups(
       label: environmentId,
       serverLabel: environmentId,
       isLocal: environmentId === input.primaryEnvironmentId,
+      isOwnBackend: false,
       connection: null,
       rows,
     });

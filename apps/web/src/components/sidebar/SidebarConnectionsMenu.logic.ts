@@ -24,6 +24,7 @@ export interface ConnectionMenuRowInput {
   readonly environmentId: string;
   readonly label: string;
   readonly isLocal: boolean;
+  readonly isOwnBackend: boolean;
   readonly displayUrl: string | null;
   readonly state: SupervisorConnectionState | null;
   readonly usage: EnvironmentUsageSnapshot | null;
@@ -35,6 +36,7 @@ export interface ConnectionMenuRow {
   readonly environmentId: string;
   readonly label: string;
   readonly isLocal: boolean;
+  readonly isOwnBackend: boolean;
   readonly displayUrl: string | null;
   readonly health: ConnectionHealth;
   /** One short line under the label: phase, plus what it is waiting on. */
@@ -172,6 +174,7 @@ export function buildConnectionMenuRow(
     environmentId: input.environmentId,
     label: input.label,
     isLocal: input.isLocal,
+    isOwnBackend: input.isOwnBackend,
     displayUrl: input.displayUrl,
     health: connectionHealthOf(input.state),
     statusLabel: connectionStatusLabel(input.state, nowMs),
