@@ -39,6 +39,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
+  Columns2Icon,
   EllipsisIcon,
   Undo2Icon,
 } from "lucide-react";
@@ -136,6 +137,8 @@ function ThreadRowMenu({
   settlementSupported,
   snoozeAllowed,
   snoozeSupported,
+  canOpenInSplit,
+  onOpenInSplit,
   onSettle,
   onUnsettle,
   onUnsnooze,
@@ -147,6 +150,9 @@ function ThreadRowMenu({
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
   readonly snoozeSupported: boolean;
+  /** False where a split cannot hold this thread — see `openInSplit`. */
+  readonly canOpenInSplit: boolean;
+  readonly onOpenInSplit: () => void;
   readonly onSettle: (event: ReactMouseEvent) => void;
   readonly onUnsettle: (event: ReactMouseEvent) => void;
   readonly onUnsnooze: (event: ReactMouseEvent) => void;
@@ -173,6 +179,21 @@ function ThreadRowMenu({
         <EllipsisIcon aria-hidden className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-48">
+        {/* First, and above the separator: this is the only entry that opens
+            something rather than filing it away, and it is the reason the row
+            menu earns a look on a thread that needs no triage at all. */}
+        {canOpenInSplit ? (
+          <>
+            <MenuItem closeOnClick onClick={onOpenInSplit} className="sm:text-xs">
+              <Columns2Icon aria-hidden className="size-3.5" />
+              Open in split
+            </MenuItem>
+            {rowAction === "unsnooze" ? snoozeSupported ? <MenuSeparator /> : null : null}
+            {rowAction !== "unsnooze" && (settlementSupported || snoozeAllowed) ? (
+              <MenuSeparator />
+            ) : null}
+          </>
+        ) : null}
         {rowAction === "unsnooze" ? (
           snoozeSupported ? (
             <MenuItem closeOnClick onClick={onUnsnooze} className="sm:text-xs">
@@ -232,7 +253,9 @@ function hasRowActions(input: {
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
   readonly snoozeSupported: boolean;
+  readonly canOpenInSplit: boolean;
 }): boolean {
+  if (input.canOpenInSplit) return true;
   if (input.rowAction === "unsnooze") return input.snoozeSupported;
   return input.settlementSupported || input.snoozeAllowed;
 }
@@ -272,11 +295,13 @@ export function SidebarThreadRow({
   settlementSupported,
   snoozeSupported,
   snoozeAllowed,
+  canOpenInSplit,
   driverKind,
   providerDisplayName,
   jumpLabel,
   renamingTitle,
   tooltip,
+  onOpenInSplit,
 }: {
   readonly thread: SidebarThreadSummary;
   readonly status: SidebarV2Status;
@@ -294,11 +319,18 @@ export function SidebarThreadRow({
   readonly snoozeSupported: boolean;
   /** Snooze is also refused on blocked or queued work, so it has its own gate. */
   readonly snoozeAllowed: boolean;
+  /**
+   * Whether this thread can go in the second pane. A property of the window and
+   * of what is already open, not of the thread — resolved by `useCanOpenInSplit`
+   * in `SidebarV2Row` and handed down, like every other decision this row makes.
+   */
+  readonly canOpenInSplit: boolean;
   readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
   readonly providerDisplayName: string;
   readonly jumpLabel: string | null;
   readonly renamingTitle: string;
   readonly tooltip: ReactNode;
+  readonly onOpenInSplit: () => void;
 }): ReactNode {
   const chip = resolveThreadRowStatusChip({
     status,
@@ -314,6 +346,7 @@ export function SidebarThreadRow({
     settlementSupported,
     snoozeAllowed,
     snoozeSupported,
+    canOpenInSplit,
   });
   const hasProgress = hasThreadTaskProgress(thread.planSummary);
   // A snoozed row shows when it comes BACK rather than when it was last
@@ -446,6 +479,8 @@ export function SidebarThreadRow({
                     settlementSupported={settlementSupported}
                     snoozeAllowed={snoozeAllowed}
                     snoozeSupported={snoozeSupported}
+                    canOpenInSplit={canOpenInSplit}
+                    onOpenInSplit={onOpenInSplit}
                     onSettle={actions.onSettle}
                     onUnsettle={actions.onUnsettle}
                     onUnsnooze={actions.onUnsnooze}

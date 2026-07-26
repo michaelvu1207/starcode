@@ -81,6 +81,11 @@ function render(
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
+    // Off by default: whether a split can hold this thread is a property of the
+    // window, and letting it default to true would let every assertion about
+    // settlement and snooze pass for the wrong reason.
+    canOpenInSplit: false,
+    onOpenInSplit: noop,
     ...overrides,
   } as Parameters<typeof SidebarThreadRow>[0];
   return renderToStaticMarkup(<SidebarThreadRow {...props} />);
@@ -205,6 +210,26 @@ describe("SidebarThreadRow", () => {
     expect(markup).not.toContain('data-testid="sidebar-v2-row-menu"');
     // The time then never fades, because nothing is coming to replace it.
     expect(markup).not.toContain("group-hover/v2-row:opacity-0");
+  });
+
+  it("earns the menu on the split alone, where the row has no other action", () => {
+    // The split entry is the only thing in this menu that opens something
+    // rather than filing it away, so it has to be able to put the `···` there
+    // by itself — on a server too old for settlement, on a row that cannot be
+    // snoozed, on any row at all. Whether it *may* is decided upstream; all the
+    // row does is count it as an action.
+    const noOtherActions = {
+      settlementSupported: false,
+      snoozeAllowed: false,
+      snoozeSupported: false,
+    };
+
+    expect(render({ ...noOtherActions, canOpenInSplit: true })).toContain(
+      'data-testid="sidebar-v2-row-menu"',
+    );
+    expect(render({ ...noOtherActions, canOpenInSplit: false })).not.toContain(
+      'data-testid="sidebar-v2-row-menu"',
+    );
   });
 
   it("offers the menu on a snoozed row only where waking is supported", () => {

@@ -35,6 +35,9 @@ import { ComposerOptionRow } from "./ComposerOptionsPopover";
 import { OpenInPicker } from "./OpenInPicker";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./PanelLayoutControls";
 import { SplitPaneMenuControls } from "../split/SplitPaneMenuControls";
+import { resolveSplitControlPlacement } from "../split/openInSplit";
+import { usePaneId } from "../split/SplitPaneContext";
+import { useSplitStore } from "../split/splitStore";
 
 /**
  * "Open in editor" shells out on the machine running the server, so it is only
@@ -116,95 +119,113 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  // The split's controls sit *beside* this glyph rather than under it wherever
+  // there is room for a split at all. Everything else in this popover is a
+  // between-turns action; the split is a layout you flip mid-thought, and one
+  // buried row was enough for nobody to find it. See `resolveSplitControlPlacement`.
+  const paneId = usePaneId();
+  const splitContainerWidth = useSplitStore((state) => state.containerWidth);
+  const splitPlacement = resolveSplitControlPlacement({
+    paneId,
+    containerWidth: splitContainerWidth,
+  });
 
   return (
-    <Popover>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  data-chat-composer-pane-trigger="true"
-                  aria-label="Workspace and panels"
-                  className={cn(
-                    "shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80",
-                    "data-[popup-open]:bg-accent data-[popup-open]:text-foreground",
-                  )}
+    <>
+      {splitPlacement === "footer" ? <SplitPaneMenuControls /> : null}
+      <Popover>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-chat-composer-pane-trigger="true"
+                    aria-label="Workspace and panels"
+                    className={cn(
+                      "shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80",
+                      "data-[popup-open]:bg-accent data-[popup-open]:text-foreground",
+                    )}
+                  />
+                }
+              >
+                <EllipsisIcon aria-hidden="true" className="size-3.5" />
+              </PopoverTrigger>
+            }
+          />
+          <TooltipPopup side="top">Workspace and panels</TooltipPopup>
+        </Tooltip>
+        <PopoverPopup
+          align="end"
+          side="bottom"
+          sideOffset={8}
+          data-chat-composer-pane-popup="true"
+          // Editor names and script names both vary a lot; a fixed width clips
+          // them against the viewport's overflow-clip.
+          className="!w-auto min-w-64 max-w-[min(26rem,calc(100vw-2rem))]"
+          viewportClassName="py-3"
+        >
+          <div className="grid gap-2.5">
+            {showOpenInPicker ? (
+              <ComposerOptionRow label="Open in">
+                <OpenInPicker
+                  environmentId={activeThreadEnvironmentId}
+                  keybindings={keybindings}
+                  availableEditors={availableEditors}
+                  openInCwd={openInCwd}
                 />
-              }
-            >
-              <EllipsisIcon aria-hidden="true" className="size-3.5" />
-            </PopoverTrigger>
-          }
-        />
-        <TooltipPopup side="top">Workspace and panels</TooltipPopup>
-      </Tooltip>
-      <PopoverPopup
-        align="end"
-        side="bottom"
-        sideOffset={8}
-        data-chat-composer-pane-popup="true"
-        // Editor names and script names both vary a lot; a fixed width clips
-        // them against the viewport's overflow-clip.
-        className="!w-auto min-w-64 max-w-[min(26rem,calc(100vw-2rem))]"
-        viewportClassName="py-3"
-      >
-        <div className="grid gap-2.5">
-          {showOpenInPicker ? (
-            <ComposerOptionRow label="Open in">
-              <OpenInPicker
-                environmentId={activeThreadEnvironmentId}
-                keybindings={keybindings}
-                availableEditors={availableEditors}
-                openInCwd={openInCwd}
-              />
-            </ComposerOptionRow>
-          ) : null}
+              </ComposerOptionRow>
+            ) : null}
 
-          {activeProjectScripts ? (
-            <ComposerOptionRow label="Actions" hint="Project scripts">
-              <ProjectScriptsControl
-                scripts={activeProjectScripts}
-                fileScripts={fileScripts}
-                keybindings={keybindings}
-                preferredScriptId={preferredScriptId}
-                onRunScript={onRunProjectScript}
-                onAddScript={onAddProjectScript}
-                onUpdateScript={onUpdateProjectScript}
-                onDeleteScript={onDeleteProjectScript}
-              />
-            </ComposerOptionRow>
-          ) : null}
-
-          <ComposerOptionRow label="Split" hint="Two threads at once">
-            <SplitPaneMenuControls />
-          </ComposerOptionRow>
-
-          <ComposerOptionRow label="Panels">
-            <div className="flex items-center gap-1">
-              {showRightPanelMaximize ? (
-                <RightPanelMaximizeControl
-                  maximized={rightPanelMaximized}
-                  onToggle={onToggleRightPanelMaximized}
+            {activeProjectScripts ? (
+              <ComposerOptionRow label="Actions" hint="Project scripts">
+                <ProjectScriptsControl
+                  scripts={activeProjectScripts}
+                  fileScripts={fileScripts}
+                  keybindings={keybindings}
+                  preferredScriptId={preferredScriptId}
+                  onRunScript={onRunProjectScript}
+                  onAddScript={onAddProjectScript}
+                  onUpdateScript={onUpdateProjectScript}
+                  onDeleteScript={onDeleteProjectScript}
                 />
-              ) : null}
-              <PanelLayoutControls
-                terminalAvailable={terminalAvailable}
-                terminalOpen={terminalOpen}
-                terminalShortcutLabel={terminalShortcutLabel}
-                rightPanelAvailable={rightPanelAvailable}
-                rightPanelOpen={rightPanelOpen}
-                rightPanelShortcutLabel={rightPanelShortcutLabel}
-                onToggleTerminal={onToggleTerminal}
-                onToggleRightPanel={onToggleRightPanel}
-              />
-            </div>
-          </ComposerOptionRow>
-        </div>
-      </PopoverPopup>
-    </Popover>
+              </ComposerOptionRow>
+            ) : null}
+
+            {/* Only where the footer cannot carry it — a window too narrow for two
+              panes. The row survives for that case alone because it can spell
+              out why the button is disabled, which a lone icon cannot. */}
+            {splitPlacement === "menu" ? (
+              <ComposerOptionRow label="Split" hint="Two threads at once">
+                <SplitPaneMenuControls />
+              </ComposerOptionRow>
+            ) : null}
+
+            <ComposerOptionRow label="Panels">
+              <div className="flex items-center gap-1">
+                {showRightPanelMaximize ? (
+                  <RightPanelMaximizeControl
+                    maximized={rightPanelMaximized}
+                    onToggle={onToggleRightPanelMaximized}
+                  />
+                ) : null}
+                <PanelLayoutControls
+                  terminalAvailable={terminalAvailable}
+                  terminalOpen={terminalOpen}
+                  terminalShortcutLabel={terminalShortcutLabel}
+                  rightPanelAvailable={rightPanelAvailable}
+                  rightPanelOpen={rightPanelOpen}
+                  rightPanelShortcutLabel={rightPanelShortcutLabel}
+                  onToggleTerminal={onToggleTerminal}
+                  onToggleRightPanel={onToggleRightPanel}
+                />
+              </div>
+            </ComposerOptionRow>
+          </div>
+        </PopoverPopup>
+      </Popover>
+    </>
   );
 });
