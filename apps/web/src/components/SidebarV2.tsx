@@ -493,22 +493,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onSnooze, threadRef],
   );
-  // While the snooze popover is open the pointer leaves the row, which
-  // would fade the hover actions out from under the open menu; pin them.
-  const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
   // Snooze is offered only where it can succeed: capability-gated and never
-  // on blocked-on-you work or queued turns (the server rejects both).
-  const showSnoozeButton =
+  // on blocked-on-you work or queued turns (the server rejects both). Whether
+  // the row's menu is open is the row's own business.
+  const snoozeAllowed =
     props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
-  // If the thread becomes blocked while the popover is open, the button
-  // unmounts without firing onOpenChange(false). Deriving the flag keeps a
-  // stale true from permanently hiding the status label / pinning the
-  // hover actions, and the effect clears the raw state so the popover
-  // doesn't resurrect if the button later remounts.
-  const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
-  useEffect(() => {
-    if (!showSnoozeButton) setSnoozeMenuOpen(false);
-  }, [showSnoozeButton]);
   return (
     <SidebarThreadRow
       thread={thread}
@@ -520,7 +509,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         isWoke,
         shouldRecede,
         isRenaming,
-        snoozeMenuOpen,
       }}
       actions={{
         onClick: handleClick,
@@ -534,7 +522,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         onUnsettle: handleUnsettleClick,
         onUnsnooze: handleUnsnoozeClick,
         onSnooze: handleSnoozePreset,
-        onSnoozeMenuOpenChange: setSnoozeMenuOpen,
       }}
       // Settled rows read "how long ago did this wrap up", matching their sort
       // key; every other row reads when the thread last spoke.
@@ -543,7 +530,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       rowAction={variantAction}
       settlementSupported={props.settlementSupported}
       snoozeSupported={props.snoozeSupported}
-      showSnoozeButton={showSnoozeButton}
+      snoozeAllowed={snoozeAllowed}
       driverKind={driverKind}
       providerDisplayName={thread.session?.providerName ?? modelInstanceId}
       jumpLabel={props.jumpLabel}
@@ -792,8 +779,8 @@ export default function SidebarV2() {
                   : [`This removes ${members.length} grouped project entries.`]),
                 "This permanently clears conversation history for those threads.",
                 isWholeGroup
-                  ? "This removes only the project entries, not the files on disk."
-                  : "Other entries in this grouped project are unaffected.",
+                  ? "This removes only the folder entries, not the files on disk."
+                  : "Other entries in this grouped folder are unaffected.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
@@ -807,8 +794,8 @@ export default function SidebarV2() {
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
                 isWholeGroup
-                  ? "This removes only the project entries, not the files on disk."
-                  : "Other entries in this grouped project are unaffected.",
+                  ? "This removes only the folder entries, not the files on disk."
+                  : "Other entries in this grouped folder are unaffected.",
               ].join("\n"),
         ),
       );
@@ -884,7 +871,7 @@ export default function SidebarV2() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to rename project",
+            title: "Failed to rename folder",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -1932,7 +1919,7 @@ export default function SidebarV2() {
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
-                  <span>No projects yet</span>
+                  <span>No folders yet</span>
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
@@ -1962,8 +1949,8 @@ export default function SidebarV2() {
             <DialogTitle className="text-balance">Project settings</DialogTitle>
             <DialogDescription>
               {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
-                ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
-                : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
+                ? `${projectActionsTarget.displayName} has an entry on each machine. Changes apply only to the entry you choose.`
+                : `Manage ${projectActionsTarget?.displayName ?? "this folder"} on this machine.`}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="p-0">
@@ -2000,7 +1987,7 @@ export default function SidebarV2() {
                       <Input
                         key={`${member.physicalProjectKey}:${member.title}`}
                         size="sm"
-                        aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
+                        aria-label={`Folder name on ${member.environmentLabel ?? "this machine"}`}
                         defaultValue={member.title}
                         onBlur={(event) => {
                           void renameProjectMember(member, event.currentTarget.value);

@@ -25,7 +25,6 @@ const actions: SidebarThreadRowActions = {
   onUnsettle: noop,
   onUnsnooze: noop,
   onSnooze: noop,
-  onSnoozeMenuOpenChange: noop,
 };
 
 function makeThread(overrides?: Partial<EnvironmentThreadShell>): EnvironmentThreadShell {
@@ -59,34 +58,32 @@ function render(
   overrides?: Partial<Parameters<typeof SidebarThreadRow>[0]>,
   threadOverrides?: Partial<EnvironmentThreadShell>,
 ): string {
-  return renderToStaticMarkup(
-    SidebarThreadRow({
-      thread: makeThread(threadOverrides),
-      status: "ready",
-      flags: {
-        isActive: false,
-        isSelected: false,
-        isUnread: false,
-        isWoke: false,
-        shouldRecede: false,
-        isRenaming: false,
-        snoozeMenuOpen: false,
-      },
-      actions,
-      timeLabel: "4h",
-      snoozeWakeLabelText: null,
-      rowAction: "settle",
-      settlementSupported: true,
-      snoozeSupported: true,
-      showSnoozeButton: true,
-      driverKind: null,
-      providerDisplayName: "Codex",
-      jumpLabel: null,
-      renamingTitle: "",
-      tooltip: null,
-      ...overrides,
-    }) as never,
-  );
+  const props = {
+    thread: makeThread(threadOverrides),
+    status: "ready",
+    flags: {
+      isActive: false,
+      isSelected: false,
+      isUnread: false,
+      isWoke: false,
+      shouldRecede: false,
+      isRenaming: false,
+    },
+    actions,
+    timeLabel: "4h",
+    snoozeWakeLabelText: null,
+    rowAction: "settle",
+    settlementSupported: true,
+    snoozeSupported: true,
+    snoozeAllowed: true,
+    driverKind: null,
+    providerDisplayName: "Codex",
+    jumpLabel: null,
+    renamingTitle: "",
+    tooltip: null,
+    ...overrides,
+  } as Parameters<typeof SidebarThreadRow>[0];
+  return renderToStaticMarkup(<SidebarThreadRow {...props} />);
 }
 
 describe("SidebarThreadRow", () => {
@@ -171,6 +168,59 @@ describe("SidebarThreadRow", () => {
     expect(render()).not.toContain('role="progressbar"');
   });
 
+  it("holds still under the pointer — only the time gives way to the menu", () => {
+    // The regression this guards: hover used to fade out the machine, the
+    // agent and the status alongside the time and slide a strip of icon
+    // buttons in over them. Four things moved every time the pointer crossed a
+    // row, which in a list you skim is most of the time.
+    const markup = render();
+    const hoverFades = markup.match(/group-hover\/v2-row:opacity-0/g) ?? [];
+
+    expect(hoverFades).toHaveLength(1);
+    // …and the one that does fade is the time, so the icons keep their place.
+    const timeSlot = markup.slice(markup.lastIndexOf("group-hover/v2-row:opacity-0"));
+    expect(timeSlot).toContain("4h");
+    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
+  });
+
+  it("puts the row's actions behind the menu rather than on the row", () => {
+    const markup = render();
+
+    // The old hover strip's buttons are gone from the row itself; what they did
+    // now lives in the menu, which SSR does not open.
+    expect(markup).not.toContain('aria-label="Settle thread"');
+    expect(markup).not.toContain('aria-label="Snooze thread"');
+    expect(markup).toContain('aria-label="Thread actions"');
+  });
+
+  it("shows no menu button when the row has nothing to offer", () => {
+    // An empty ··· is a lie, and on a server that predates settlement every
+    // row would have worn one.
+    const markup = render({
+      settlementSupported: false,
+      snoozeAllowed: false,
+      snoozeSupported: false,
+    });
+
+    expect(markup).not.toContain('data-testid="sidebar-v2-row-menu"');
+    // The time then never fades, because nothing is coming to replace it.
+    expect(markup).not.toContain("group-hover/v2-row:opacity-0");
+  });
+
+  it("offers the menu on a snoozed row only where waking is supported", () => {
+    expect(
+      render({ rowAction: "unsnooze", snoozeWakeLabelText: "2h", snoozeSupported: true }),
+    ).toContain('data-testid="sidebar-v2-row-menu"');
+    expect(
+      render({
+        rowAction: "unsnooze",
+        snoozeWakeLabelText: "2h",
+        snoozeSupported: false,
+        snoozeAllowed: false,
+      }),
+    ).not.toContain('data-testid="sidebar-v2-row-menu"');
+  });
+
   it("swaps the title for an input while renaming", () => {
     const markup = render({
       flags: { ...renderFlags, isRenaming: true },
@@ -189,5 +239,4 @@ const renderFlags = {
   isWoke: false,
   shouldRecede: false,
   isRenaming: false,
-  snoozeMenuOpen: false,
 };

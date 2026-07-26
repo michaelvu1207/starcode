@@ -39,11 +39,12 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
-  ClockIcon,
+  EllipsisIcon,
   Undo2Icon,
 } from "lucide-react";
 import {
   useMemo,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -52,7 +53,7 @@ import {
 import { cn } from "~/lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { resolveSnoozePresets } from "../Sidebar.snooze";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Menu, MenuGroup, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { ConnectionMark } from "./ConnectionMark";
 import { ThreadTaskProgress } from "./ThreadTaskProgress";
@@ -108,58 +109,132 @@ function JumpHintBadge({ label }: { readonly label: string }): ReactNode {
 }
 
 /**
- * Hover entry point for snooze: a clock button opening the preset menu.
- * Controlled by the caller, which also uses the open state to pin the hover
- * actions while the menu is up.
+ * Everything you can do to a row, behind one button.
+ *
+ * The row used to swap its own content on hover: the machine, the agent and
+ * the time faded out and a strip of icon buttons faded in over them. Four
+ * things moved every time the pointer crossed a row, which in a list you skim
+ * is most of the time, and none of the four was what you were looking at.
+ *
+ * Now the row holds still and a single `···` appears in the time's place — the
+ * one swap worth making, because the time is the least load-bearing thing on
+ * the row and the alternative is either a permanently visible button on every
+ * row or no room for one at all.
+ *
+ * The presets are menu items rather than a nested popover. Snooze used to be
+ * its own button opening its own surface, which meant two clicks and two
+ * dismiss targets for something that is one decision; a labelled group in the
+ * menu that is already open costs neither.
+ *
+ * `stopPropagation` on the trigger is not defensive: the whole row is a click
+ * target that navigates, so without it opening the menu also opens the thread.
  */
-function SnoozePopoverButton({
+function ThreadRowMenu({
   open,
   onOpenChange,
+  rowAction,
+  settlementSupported,
+  snoozeAllowed,
+  snoozeSupported,
+  onSettle,
+  onUnsettle,
+  onUnsnooze,
   onSnooze,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly rowAction: "settle" | "unsettle" | "unsnooze";
+  readonly settlementSupported: boolean;
+  readonly snoozeAllowed: boolean;
+  readonly snoozeSupported: boolean;
+  readonly onSettle: (event: ReactMouseEvent) => void;
+  readonly onUnsettle: (event: ReactMouseEvent) => void;
+  readonly onUnsnooze: (event: ReactMouseEvent) => void;
   readonly onSnooze: (preset: SnoozePreset) => void;
 }): ReactNode {
-  // Presets resolve at open time so "In 1 hour" is relative to the click, not
-  // to when the row mounted.
+  // Resolved at open time so "In 1 hour" is an hour from the click rather than
+  // from whenever this row mounted.
   const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
+
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
+    <Menu open={open} onOpenChange={onOpenChange}>
+      <MenuTrigger
         render={
           <button
             type="button"
-            aria-label="Snooze thread"
+            aria-label="Thread actions"
+            data-testid="sidebar-v2-row-menu"
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             className="inline-flex h-full cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground hover:text-foreground"
           />
         }
       >
-        <ClockIcon className="size-3" />
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" className="w-56" viewportClassName="p-1">
-        {presets.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenChange(false);
-              onSnooze(preset);
-            }}
-            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
-          >
-            <span className="flex-1">{preset.label}</span>
-            <span className="font-mono text-[10px] text-muted-foreground/60 tabular-nums">
-              {preset.whenLabel}
-            </span>
-          </button>
-        ))}
-      </PopoverPopup>
-    </Popover>
+        <EllipsisIcon aria-hidden className="size-3.5" />
+      </MenuTrigger>
+      <MenuPopup align="end" side="bottom" className="min-w-48">
+        {rowAction === "unsnooze" ? (
+          snoozeSupported ? (
+            <MenuItem closeOnClick onClick={onUnsnooze} className="sm:text-xs">
+              <AlarmClockOffIcon aria-hidden className="size-3.5" />
+              Wake now
+            </MenuItem>
+          ) : null
+        ) : (
+          <>
+            {settlementSupported ? (
+              <MenuItem
+                closeOnClick
+                onClick={rowAction === "unsettle" ? onUnsettle : onSettle}
+                className="sm:text-xs"
+              >
+                {rowAction === "unsettle" ? (
+                  <Undo2Icon aria-hidden className="size-3.5" />
+                ) : (
+                  <CheckIcon aria-hidden className="size-3.5" />
+                )}
+                {rowAction === "unsettle" ? "Un-settle" : "Settle"}
+              </MenuItem>
+            ) : null}
+            {snoozeAllowed ? (
+              <>
+                {settlementSupported ? <MenuSeparator /> : null}
+                <MenuGroup>
+                  <div className="px-2 py-1 font-medium text-muted-foreground sm:text-xs">
+                    Snooze
+                  </div>
+                  {presets.map((preset) => (
+                    <MenuItem
+                      key={preset.id}
+                      closeOnClick
+                      onClick={() => onSnooze(preset)}
+                      className="sm:text-xs"
+                    >
+                      <span className="flex-1">{preset.label}</span>
+                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/60">
+                        {preset.whenLabel}
+                      </span>
+                    </MenuItem>
+                  ))}
+                </MenuGroup>
+              </>
+            ) : null}
+          </>
+        )}
+      </MenuPopup>
+    </Menu>
   );
+}
+
+/** Whether the menu would have anything in it. An empty `···` is a lie. */
+function hasRowActions(input: {
+  readonly rowAction: "settle" | "unsettle" | "unsnooze";
+  readonly settlementSupported: boolean;
+  readonly snoozeAllowed: boolean;
+  readonly snoozeSupported: boolean;
+}): boolean {
+  if (input.rowAction === "unsnooze") return input.snoozeSupported;
+  return input.settlementSupported || input.snoozeAllowed;
 }
 
 export interface SidebarThreadRowFlags {
@@ -170,7 +245,6 @@ export interface SidebarThreadRowFlags {
   /** Read, quiet, or merely in flight: recedes so the list's loud rows lead. */
   readonly shouldRecede: boolean;
   readonly isRenaming: boolean;
-  readonly snoozeMenuOpen: boolean;
 }
 
 export interface SidebarThreadRowActions {
@@ -185,7 +259,6 @@ export interface SidebarThreadRowActions {
   readonly onUnsettle: (event: ReactMouseEvent) => void;
   readonly onUnsnooze: (event: ReactMouseEvent) => void;
   readonly onSnooze: (preset: SnoozePreset) => void;
-  readonly onSnoozeMenuOpenChange: (open: boolean) => void;
 }
 
 export function SidebarThreadRow({
@@ -198,7 +271,7 @@ export function SidebarThreadRow({
   rowAction,
   settlementSupported,
   snoozeSupported,
-  showSnoozeButton,
+  snoozeAllowed,
   driverKind,
   providerDisplayName,
   jumpLabel,
@@ -220,7 +293,7 @@ export function SidebarThreadRow({
   /** Same contract for thread.snooze/unsnooze — gates the wake button. */
   readonly snoozeSupported: boolean;
   /** Snooze is also refused on blocked or queued work, so it has its own gate. */
-  readonly showSnoozeButton: boolean;
+  readonly snoozeAllowed: boolean;
   readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
   readonly providerDisplayName: string;
   readonly jumpLabel: string | null;
@@ -231,6 +304,16 @@ export function SidebarThreadRow({
     status,
     isUnread: flags.isUnread,
     isWoke: flags.isWoke,
+  });
+  // Owned here rather than by the caller: which menu is open is presentation,
+  // and keeping it in the row is what lets the `···` stay pinned while the
+  // pointer is off in the menu.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const showMenu = hasRowActions({
+    rowAction,
+    settlementSupported,
+    snoozeAllowed,
+    snoozeSupported,
   });
   const hasProgress = hasThreadTaskProgress(thread.planSummary);
   // A snoozed row shows when it comes BACK rather than when it was last
@@ -300,47 +383,45 @@ export function SidebarThreadRow({
             </span>
           )}
 
-          {/* One trailing block: status, machine, agent, time. It fades as a
-              unit on hover and the row's actions take its place — the actions
-              need more width than the time label alone occupies, and sliding
-              the icons sideways to make room would make the right edge of the
-              list twitch under the pointer. */}
-          <span className="relative flex h-6 shrink-0 items-center justify-end">
-            <span
-              className={cn(
-                "flex items-center gap-2 transition-opacity group-hover/v2-row:opacity-0",
-                flags.snoozeMenuOpen && "opacity-0",
-              )}
-            >
-              {chip === null ? null : (
-                <span
-                  role="status"
-                  aria-label={chip.label}
-                  title={chip.label}
-                  data-testid="sidebar-v2-row-status"
-                  data-tone={chip.tone}
-                  className={cn("inline-flex shrink-0 items-center", STATUS_TONE_CLASS[chip.tone])}
-                >
-                  <StatusGlyph tone={chip.tone} />
-                </span>
-              )}
-              <ConnectionMark environmentId={thread.environmentId} className="size-3.5" />
-              {driverKind === null ? null : (
-                <span
-                  data-testid="sidebar-v2-row-provider"
-                  data-driver-kind={driverKind}
-                  className="inline-flex shrink-0 items-center opacity-70"
-                >
-                  <ProviderInstanceIcon
-                    driverKind={driverKind}
-                    displayName={providerDisplayName}
-                    iconClassName="size-3.5"
-                  />
-                </span>
-              )}
+          {/* The trailing block holds still. Status, machine and agent are
+              fixed-width and never move, so nothing about the row changes shape
+              when the pointer crosses it — the thing that made a list of these
+              unreadable to skim. Only the time slot swaps, and only for the
+              menu: it is the least load-bearing thing on the row, and the
+              alternative is a `···` sitting permanently on every row. */}
+          <span className="flex h-6 shrink-0 items-center justify-end gap-2">
+            {chip === null ? null : (
+              <span
+                role="status"
+                aria-label={chip.label}
+                title={chip.label}
+                data-testid="sidebar-v2-row-status"
+                data-tone={chip.tone}
+                className={cn("inline-flex shrink-0 items-center", STATUS_TONE_CLASS[chip.tone])}
+              >
+                <StatusGlyph tone={chip.tone} />
+              </span>
+            )}
+            <ConnectionMark environmentId={thread.environmentId} className="size-3.5" />
+            {driverKind === null ? null : (
+              <span
+                data-testid="sidebar-v2-row-provider"
+                data-driver-kind={driverKind}
+                className="inline-flex shrink-0 items-center opacity-70"
+              >
+                <ProviderInstanceIcon
+                  driverKind={driverKind}
+                  displayName={providerDisplayName}
+                  iconClassName="size-3.5"
+                />
+              </span>
+            )}
+            <span className="relative flex h-6 min-w-7 shrink-0 items-center justify-end">
               <span
                 className={cn(
-                  "min-w-7 text-right text-xs tabular-nums text-muted-foreground/55",
+                  "text-xs tabular-nums text-muted-foreground/55",
+                  showMenu && "transition-opacity group-hover/v2-row:opacity-0",
+                  showMenu && menuOpen && "opacity-0",
                   rowAction === "unsnooze" &&
                     snoozeWakeLabelText !== null &&
                     "text-blue-600 dark:text-blue-400",
@@ -348,50 +429,30 @@ export function SidebarThreadRow({
               >
                 {trailingLabel}
               </span>
-            </span>
-            <span
-              className={cn(
-                "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
-                flags.snoozeMenuOpen && "opacity-100",
-              )}
-            >
-              {rowAction === "unsnooze" ? (
-                // A snoozed row offers exactly one thing: come back now.
-                snoozeSupported ? (
-                  <button
-                    type="button"
-                    aria-label="Wake thread now"
-                    onClick={actions.onUnsnooze}
-                    className="inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground hover:text-foreground"
-                  >
-                    <AlarmClockOffIcon className="size-3" />
-                  </button>
-                ) : null
-              ) : (
-                <>
-                  {showSnoozeButton ? (
-                    <SnoozePopoverButton
-                      open={flags.snoozeMenuOpen}
-                      onOpenChange={actions.onSnoozeMenuOpenChange}
-                      onSnooze={actions.onSnooze}
-                    />
-                  ) : null}
-                  {settlementSupported ? (
-                    <button
-                      type="button"
-                      aria-label={rowAction === "unsettle" ? "Un-settle thread" : "Settle thread"}
-                      onClick={rowAction === "unsettle" ? actions.onUnsettle : actions.onSettle}
-                      className="inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground hover:text-foreground"
-                    >
-                      {rowAction === "unsettle" ? (
-                        <Undo2Icon className="size-3" />
-                      ) : (
-                        <CheckIcon className="size-3" />
-                      )}
-                    </button>
-                  ) : null}
-                </>
-              )}
+              {showMenu ? (
+                // Focus-reachable, not hover-only: the row is tabbable and this
+                // is the next stop after it, so the menu opens from the
+                // keyboard without a pointer ever touching the row.
+                <span
+                  className={cn(
+                    "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                    menuOpen && "opacity-100",
+                  )}
+                >
+                  <ThreadRowMenu
+                    open={menuOpen}
+                    onOpenChange={setMenuOpen}
+                    rowAction={rowAction}
+                    settlementSupported={settlementSupported}
+                    snoozeAllowed={snoozeAllowed}
+                    snoozeSupported={snoozeSupported}
+                    onSettle={actions.onSettle}
+                    onUnsettle={actions.onUnsettle}
+                    onUnsnooze={actions.onUnsnooze}
+                    onSnooze={actions.onSnooze}
+                  />
+                </span>
+              ) : null}
             </span>
           </span>
 
