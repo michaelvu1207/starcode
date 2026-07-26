@@ -28,6 +28,7 @@
  * shows, and the machine a thread runs on stays a detail on the row.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { ProjectCategorySlug } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon, MapIcon } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
@@ -44,7 +45,16 @@ import { ProjectGlyph } from "../projects/ProjectGlyph";
 import { ProjectSeedDialog } from "../projects/ProjectSeedDialog";
 import { projectAccentHue } from "../projects/ProjectsIndex.model";
 import { useProjectWriter } from "../projects/useProjectWriter";
+import { useProjectThreadStarter } from "../projects/useProjectThreadStarter";
+import {
+  resolveProjectStartLocations,
+  type ProjectStartFolder,
+  type ProjectStartLocation,
+} from "../projects/ProjectThreadStart.model";
 import type { ProjectSeedProposal } from "../projects/ProjectCatalog.model";
+import { useProjects } from "../../state/entities";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { SidebarProjectNewThread } from "./SidebarProjectNewThread";
 import {
   SIDEBAR_PROJECT_ROWS_INITIAL_COUNT,
   SIDEBAR_PROJECT_ROWS_PAGE_COUNT,
@@ -76,6 +86,9 @@ export function SidebarProjectsView(props: {
   const seedPlan = useProjectSeedPlan(view);
   const writer = useProjectWriter();
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverProjects = useProjects();
+  const startThread = useProjectThreadStarter();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   // Paging is per group and lives in component state for the same reason the
@@ -109,6 +122,25 @@ export function SidebarProjectsView(props: {
   // next render, which is not what "file this here" is asking for.
   const fileableProjects = groups;
 
+  // Every folder every machine reports, in the shape the start-location ranking
+  // wants. Built once for the view rather than once per project group: the list
+  // is the same for all of them and only the ranking differs.
+  const startFolders = useMemo(
+    (): ReadonlyArray<ProjectStartFolder> =>
+      serverProjects.map((serverProject) => ({
+        environmentId: serverProject.environmentId,
+        projectId: serverProject.id,
+        title: serverProject.title,
+        machineLabel: environmentLabelById.get(serverProject.environmentId) ?? "",
+        isLocalMachine: serverProject.environmentId === primaryEnvironmentId,
+      })),
+    [environmentLabelById, primaryEnvironmentId, serverProjects],
+  );
+  const projectBySlug = useMemo(
+    () => new Map(view.projects.map((project) => [project.slug, project])),
+    [view.projects],
+  );
+
   const toggleGroup = useCallback(
     (groupKey: string, expanded: boolean) => {
       setProjectExpanded(sidebarProjectGroupExpansionKey(groupKey), !expanded);
@@ -135,6 +167,12 @@ export function SidebarProjectsView(props: {
     },
     [writer],
   );
+
+  const startLocationsFor = (slug: ProjectCategorySlug): ReadonlyArray<ProjectStartLocation> => {
+    const project = projectBySlug.get(slug);
+    if (project === undefined) return [];
+    return resolveProjectStartLocations({ project, folders: startFolders });
+  };
 
   const renderGroup = (group: SidebarProjectGroup): ReactNode => {
     const expanded = resolveSidebarProjectGroupExpanded(projectExpandedById, group.key);
@@ -210,16 +248,24 @@ export function SidebarProjectsView(props: {
                 environmentLabelById={environmentLabelById}
               />
             ) : (
-              <Link
-                to="/projects/$slug"
-                params={{ slug: group.slug }}
-                aria-label={`Open ${group.title}`}
-                title={`Open ${group.title}`}
-                data-testid="sidebar-v2-project-group-open"
-                className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100"
-              >
-                <MapIcon aria-hidden className="size-3" />
-              </Link>
+              <>
+                <SidebarProjectNewThread
+                  slug={group.slug}
+                  title={group.title}
+                  locations={startLocationsFor(group.slug)}
+                  onStart={(slug, location) => void startThread(slug, location)}
+                />
+                <Link
+                  to="/projects/$slug"
+                  params={{ slug: group.slug }}
+                  aria-label={`Open ${group.title}`}
+                  title={`Open ${group.title}`}
+                  data-testid="sidebar-v2-project-group-open"
+                  className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100"
+                >
+                  <MapIcon aria-hidden className="size-3" />
+                </Link>
+              </>
             )}
           </div>
         </li>
