@@ -24,7 +24,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { LayoutGridIcon, SearchIcon, SquarePenIcon } from "lucide-react";
+import { MapIcon, SearchIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { isElectron } from "../../env";
@@ -165,7 +165,10 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
           </Tooltip>
           {/* Outside the `showProjectActions` gate: the Workbench is how an
               operator sees every machine at once, and it must not disappear
-              with the project buttons on a client that has no projects yet. */}
+              with the project buttons on a client that has no projects yet.
+              A map, not a grid: what is behind this button is the star map, and
+              a grid glyph promised a dashboard of tiles that has not been there
+              since F14. */}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -179,7 +182,7 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
                 />
               }
             >
-              <LayoutGridIcon className={HEADER_ACTION_ICON_CLASS} />
+              <MapIcon className={HEADER_ACTION_ICON_CLASS} />
               <TouchTarget />
             </TooltipTrigger>
             <TooltipPopup side="bottom">Workbench</TooltipPopup>
