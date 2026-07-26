@@ -40,21 +40,21 @@ There is also one semantic landmine, in §3.5, that should be settled before any
 
 The whole multi-connection spine is built and in use.
 
-| Layer               | Path                                                        | State                                                                         |
-| ------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Connection registry | `packages/client-runtime/src/connection/registry.ts`        | N supervisors, all connect at boot with `concurrency: "unbounded"` (:317-334) |
-| Per-env supervisor  | `packages/client-runtime/src/connection/supervisor.ts:199`  | own state, own retry, own prepared connection                                 |
-| Catalog atoms       | `packages/client-runtime/src/state/connections.ts:29`       | `Map<EnvironmentId, …>`                                                       |
-| Shell projection    | `packages/client-runtime/src/state/shell.ts:366`            | `Atom.family(environmentId)`                                                  |
-| Merged thread list  | `packages/client-runtime/src/state/threadShell.ts:150-173`  | iterates every catalog key                                                    |
-| Router              | `apps/web/src/routes/_chat.$environmentId.$threadId.tsx:86` | env is already in the URL                                                     |
-| Cache               | `apps/web/src/connection/storage.ts:36-43`                  | env-keyed IndexedDB (not localStorage)                                        |
+| Layer | Path | State |
+|---|---|---|
+| Connection registry | `packages/client-runtime/src/connection/registry.ts` | N supervisors, all connect at boot with `concurrency: "unbounded"` (:317-334) |
+| Per-env supervisor | `packages/client-runtime/src/connection/supervisor.ts:199` | own state, own retry, own prepared connection |
+| Catalog atoms | `packages/client-runtime/src/state/connections.ts:29` | `Map<EnvironmentId, …>` |
+| Shell projection | `packages/client-runtime/src/state/shell.ts:366` | `Atom.family(environmentId)` |
+| Merged thread list | `packages/client-runtime/src/state/threadShell.ts:150-173` | iterates every catalog key |
+| Router | `apps/web/src/routes/_chat.$environmentId.$threadId.tsx:86` | env is already in the URL |
+| Cache | `apps/web/src/connection/storage.ts:36-43` | env-keyed IndexedDB (not localStorage) |
 
 `ScopedThreadRef = {environmentId, threadId}` (`packages/contracts/src/environment.ts:95`)
 is the addressing scheme, and it is threaded through everywhere already.
 
 `apps/server/src/ws.ts` contains **zero** references to `environmentId`. The server does
-not know other environments exist — it _is_ one environment. Federation of the _view_ is
+not know other environments exist — it *is* one environment. Federation of the *view* is
 entirely client-side, so the dashboard needs no server changes at all.
 
 The existing unified partition lives at `apps/web/src/components/SidebarV2.tsx:1362-1420`
@@ -64,14 +64,13 @@ into active / snoozed / settled.
 ### What is actually missing
 
 - **A ranked selector.** `sortThreadsForSidebarV2` (`apps/web/src/components/Sidebar.logic.ts:464`)
-  sorts by static `createdAt` _on purpose_ — the comment at :460 says activity must never
+  sorts by static `createdAt` *on purpose* — the comment at :460 says activity must never
   reorder rows so the screen only moves at lifecycle transitions. A dashboard sorted by
   activity is a deliberate divergence from that taste, not a bug fix. Decide explicitly.
 - **A route.** There is none; the sidebar is the only surface.
 - **Un-gating.** `sidebarV2Enabled` (`packages/contracts/src/settings.ts:117`) defaults `false`.
 
 The ingredients for ranking are already written:
-
 - `resolveSidebarV2Status` (`Sidebar.logic.ts:411`) → `approval | input | working | failed | ready`
 - `threadLastActivityAt` (`apps/web/src/components/Sidebar.snooze.ts:7`)
 - `effectiveSettled` / `effectiveSnoozed` / `threadRaisedHandWhileSnoozed`
@@ -130,12 +129,12 @@ between two reads would hand the client a sequence ahead of its data and drop ev
 Contract group `EnvironmentOrchestrationHttpApi`
 (`packages/contracts/src/environmentHttp.ts:460`):
 
-| Method | Route                                  | Scope                   |
-| ------ | -------------------------------------- | ----------------------- |
-| GET    | `/api/orchestration/snapshot`          | `orchestration:read`    |
-| GET    | `/api/orchestration/shell`             | `orchestration:read`    |
-| GET    | `/api/orchestration/threads/:threadId` | `orchestration:read`    |
-| POST   | `/api/orchestration/dispatch`          | `orchestration:operate` |
+| Method | Route | Scope |
+|---|---|---|
+| GET | `/api/orchestration/snapshot` | `orchestration:read` |
+| GET | `/api/orchestration/shell` | `orchestration:read` |
+| GET | `/api/orchestration/threads/:threadId` | `orchestration:read` |
+| POST | `/api/orchestration/dispatch` | `orchestration:operate` |
 
 Handlers in `apps/server/src/orchestration/http.ts` (thread detail at :57). Live tail
 exists too via WS `subscribeThread` (`apps/server/src/ws.ts:1350`).
@@ -172,13 +171,13 @@ auth (`apps/server/src/mcp/McpSessionRegistry.ts:105`) that binds each tool call
 
 All five adapters already mount that single `t3-code` server:
 
-| Provider | File:line                                        |
-| -------- | ------------------------------------------------ |
-| Claude   | `provider/Layers/ClaudeAdapter.ts:3521,3549`     |
-| Codex    | `provider/Layers/CodexAdapter.ts:1397,1414-1425` |
-| Cursor   | `provider/Layers/CursorAdapter.ts:534,542-556`   |
-| Grok     | `provider/Layers/GrokAdapter.ts:572,582`         |
-| OpenCode | `provider/Layers/OpenCodeAdapter.ts:1217-1232`   |
+| Provider | File:line |
+|---|---|
+| Claude | `provider/Layers/ClaudeAdapter.ts:3521,3549` |
+| Codex | `provider/Layers/CodexAdapter.ts:1397,1414-1425` |
+| Cursor | `provider/Layers/CursorAdapter.ts:534,542-556` |
+| Grok | `provider/Layers/GrokAdapter.ts:572,582` |
+| OpenCode | `provider/Layers/OpenCodeAdapter.ts:1217-1232` |
 
 **Adding a tool to that server makes it appear in every running agent session. Zero
 adapter changes.**
@@ -219,7 +218,7 @@ Schema `ClaudeSettings.homePath` at `packages/contracts/src/settings.ts:252-260`
 
 Codex is richer: `homePath` (`CODEX_HOME`) **plus** `shadowHomePath`
 (`settings.ts:208-219`) which keeps `auth.json` separate while sharing state — so two
-Codex accounts sharing a home get the same continuation key and _can_ be swapped mid-thread.
+Codex accounts sharing a home get the same continuation key and *can* be swapped mid-thread.
 Claude cannot (`docs/providers/claude.md:78-89`).
 
 Per-thread binding is `OrchestrationSession.providerInstanceId`
@@ -227,7 +226,7 @@ Per-thread binding is `OrchestrationSession.providerInstanceId`
 `provider_session_runtime.provider_instance_id` (migration 027) and
 `projection_thread_sessions.provider_instance_id` (migration 028).
 
-### 3.2 The probe already knows _which_ account
+### 3.2 The probe already knows *which* account
 
 `ServerProviderAuth = {status, type?, label?, email?}` (`packages/contracts/src/server.ts:52-58`),
 carried on `ServerProvider` (:157-194).
@@ -251,7 +250,6 @@ email> · <plan>" at `ProviderInstanceCard.tsx:580-596`.
 ### 3.3 Usage / rate limits / spend — produced, then dropped
 
 Contracts define it all (`packages/contracts/src/providerRuntime.ts`):
-
 - `ThreadTokenUsageSnapshot` (:307-324) — input/cached/output/reasoning tokens, tool uses, duration
 - `TurnCompletedPayload` (:361-370) — includes `usage`, `modelUsage`, and
   **`totalCostUsd`** (:367)
@@ -270,7 +268,7 @@ as a thread-scoped context-window activity (:596-614). `totalCostUsd` has **no c
 anywhere**. The only durable trace is the NDJSON provider log
 (`EventNdjsonLogger.ts:35,248-260` → `<baseDir>/userdata/logs/provider/events.log`).
 
-Codex even has a _pull_ RPC `account/rateLimits/read` generated but **never called** in
+Codex even has a *pull* RPC `account/rateLimits/read` generated but **never called** in
 `apps/server`.
 
 Existing usage UI: one thread-scoped `ContextWindowMeter.tsx`. No rate-limit UI, no spend
@@ -325,7 +323,6 @@ its own design intends to prevent (the model picker filters candidates by group 
 `ModelPickerContent.tsx:169-173`).
 
 Two ways out:
-
 - **(a)** Map each CCC account to a distinct `homePath` instance, so t3's model stays honest.
   This is PLAN.md open decision #2 resolved in favour of per-thread pinning, and it is the
   recommended path.
@@ -337,11 +334,11 @@ Two ways out:
 
 PLAN.md estimates Phase 2 at ~1–2 weeks part-time. Given the above:
 
-| Feature           | Revised                                                                                                                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unified dashboard | Much smaller — one route + one pure ranking module + one refactor. No core edits.                                                                           |
-| Thread federation | Small–medium — peer registry + one MCP toolkit. No auth work, no adapter work.                                                                              |
-| Accounts + usage  | Medium — the accounts half is largely done; usage/spend needs projection work (possibly no sidecar for spend), and account _actions_ are genuinely net-new. |
+| Feature | Revised |
+|---|---|
+| Unified dashboard | Much smaller — one route + one pure ranking module + one refactor. No core edits. |
+| Thread federation | Small–medium — peer registry + one MCP toolkit. No auth work, no adapter work. |
+| Accounts + usage | Medium — the accounts half is largely done; usage/spend needs projection work (possibly no sidecar for spend), and account *actions* are genuinely net-new. |
 
 The fork's additive-diff discipline (PLAN.md line 51) looks very achievable: the three
 features touch mostly new files plus a handful of one-line registrations.
