@@ -48,6 +48,7 @@ const machine = (input: {
     usageAvailable: true,
     configAvailable: true,
     accounts: [],
+    dormantAccounts: [],
     today: {
       turns: 0,
       costUsd: 0,

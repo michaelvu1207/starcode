@@ -559,6 +559,11 @@ function EnvironmentGroup({
   group: AccountsUsageEnvironmentGroup;
   nowMs: number;
 }) {
+  // Providers this machine has never used and cannot use are folded away by
+  // default. Not dropped: the server hydrates a default instance for every
+  // driver it ships, so what is hidden here is a list of things the user does
+  // not have — which is worth one line, not five cards.
+  const [showDormant, setShowDormant] = useState(false);
   const headerAction: ReactNode = (
     <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
       {group.timeZone ? <span>{group.timeZone}</span> : null}
@@ -574,15 +579,41 @@ function EnvironmentGroup({
     >
       {group.accounts.length === 0 ? (
         <p className="px-3 py-3 text-[13px] text-muted-foreground/80 sm:px-4">
-          {group.configAvailable
-            ? "No provider instances are configured on this machine."
-            : "Not connected — nothing to report yet."}
+          {!group.configAvailable
+            ? "Not connected — nothing to report yet."
+            : group.dormantAccounts.length > 0
+              ? "No provider is signed in on this machine."
+              : "No provider instances are configured on this machine."}
         </p>
       ) : (
         group.accounts.map((account) => (
           <AccountCard key={account.instanceId} account={account} nowMs={nowMs} />
         ))
       )}
+
+      {group.dormantAccounts.length > 0 ? (
+        showDormant ? (
+          <>
+            <p className="px-3 pt-1 text-[11px] text-muted-foreground/60 sm:px-4">
+              Not installed or switched off on this machine, and never used.
+            </p>
+            {group.dormantAccounts.map((account) => (
+              <AccountCard account={account} key={account.instanceId} nowMs={nowMs} />
+            ))}
+          </>
+        ) : (
+          <button
+            className="mx-3 w-fit rounded-md text-[11px] text-muted-foreground/60 underline-offset-2 hover:text-foreground hover:underline sm:mx-4"
+            onClick={() => {
+              setShowDormant(true);
+            }}
+            type="button"
+          >
+            {group.dormantAccounts.length} unused{" "}
+            {group.dormantAccounts.length === 1 ? "provider" : "providers"} hidden
+          </button>
+        )
+      ) : null}
 
       {group.accounts.length > 0 && !group.usageAvailable ? (
         <p className="flex items-center gap-1.5 px-3 pt-1 text-xs text-muted-foreground/70 sm:px-4">

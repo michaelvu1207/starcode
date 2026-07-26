@@ -14,9 +14,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type AccountUsageRow,
   buildAccountsUsageView,
   buildCliHistoryView,
   foldCliModelRows,
+  isDormantAccount,
   formatCount,
   formatDayRange,
   formatResetCountdown,
@@ -630,3 +632,140 @@ describe("formatting", () => {
   });
 });
 
+describe("isDormantAccount", () => {
+  const account = (overrides: Partial<AccountUsageRow> = {}): AccountUsageRow => ({
+    instanceId: "grok",
+    displayName: "Grok",
+    driver: "grok",
+    accentColor: null,
+    authStatus: "unauthenticated",
+    email: null,
+    planLabel: null,
+    enabled: true,
+    installed: false,
+    orphanedUsage: false,
+    rateLimits: null,
+    today: EMPTY_USAGE_TOTALS,
+    week: EMPTY_USAGE_TOTALS,
+    lastTurnAt: null,
+    ...overrides,
+  });
+
+  it("hides a default instance for a driver this machine does not have", () => {
+    expect(isDormantAccount(account())).toBe(true);
+  });
+
+  it("hides a driver that is installed but switched off and never used", () => {
+    expect(isDormantAccount(account({ installed: true, enabled: false }))).toBe(true);
+  });
+
+  it("keeps an installed, enabled instance even with nothing spent yet", () => {
+    expect(isDormantAccount(account({ installed: true, enabled: true }))).toBe(false);
+  });
+
+  it("keeps an uninstalled instance that has spend recorded against it", () => {
+    expect(isDormantAccount(account({ week: totals({ turns: 3, costUsd: 1.2 }) }))).toBe(false);
+  });
+
+  it("keeps an uninstalled instance that ran a turn, even at zero cost", () => {
+    // Subscription providers report no dollars; the turn count is the signal.
+    expect(isDormantAccount(account({ today: totals({ turns: 1 }) }))).toBe(false);
+  });
+
+  it("keeps an instance the provider has reported rate limits for", () => {
+    const rateLimits = {
+      status: "allowed",
+      planLabel: null,
+      windows: [],
+      observedAt: "2026-07-24T00:00:00.000Z",
+    } as unknown as AccountUsageRow["rateLimits"];
+    expect(isDormantAccount(account({ rateLimits }))).toBe(false);
+  });
+
+  it("keeps an instance that has ever run a turn", () => {
+    expect(isDormantAccount(account({ lastTurnAt: "2026-05-01T00:00:00.000Z" }))).toBe(false);
+  });
+
+  it("keeps a signed-in account whose binary has gone missing", () => {
+    expect(isDormantAccount(account({ authStatus: "authenticated" }))).toBe(false);
+  });
+
+  it("never hides orphaned usage — spent money must not disappear", () => {
+    expect(isDormantAccount(account({ orphanedUsage: true }))).toBe(false);
+  });
+});
+
+describe("buildAccountsUsageView provider visibility", () => {
+  it("splits the dormant defaults out of the rendered account list", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([
+          provider({ instanceId: "claude-personal" as never }),
+          provider({
+            instanceId: "grok",
+            driver: "grok",
+            displayName: "Grok",
+            installed: false,
+            auth: { status: "unauthenticated" },
+          } as Partial<ServerProvider>),
+        ]),
+        usage: usage(),
+      },
+    ]);
+    const group = view.groups[0];
+    expect(group?.accounts.map((entry) => entry.instanceId)).toEqual(["claude-personal"]);
+    expect(group?.dormantAccounts.map((entry) => entry.instanceId)).toEqual(["grok"]);
+    // The headline account count follows what is shown.
+    expect(view.accountCount).toBe(1);
+  });
+
+  it("keeps the machine totals over every account, hidden or not", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([
+          provider({
+            instanceId: "grok",
+            driver: "grok",
+            installed: false,
+            auth: { status: "unauthenticated" },
+          } as Partial<ServerProvider>),
+        ]),
+        usage: usage({
+          instances: [
+            {
+              providerInstanceId: "grok",
+              driver: "grok",
+              rateLimits: null,
+              today: totals({ turns: 2, costUsd: 5 }),
+              week: totals({ turns: 2, costUsd: 5 }),
+              days: [],
+              lastTurnAt: null,
+            },
+          ] as unknown as EnvironmentUsageSnapshot["instances"],
+        }),
+      },
+    ]);
+    const group = view.groups[0];
+    // It had spend, so it is not dormant and it is rendered.
+    expect(group?.dormantAccounts).toHaveLength(0);
+    expect(group?.today.costUsd).toBe(5);
+  });
+
+  it("carries each machine's own local day for the chart's right edge", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([]),
+        usage: usage({ today: "2026-07-24" }),
+      },
+      { environmentId: environmentId("box"), label: "box", config: config([]), usage: null },
+    ]);
+    expect(view.groups.find((group) => group.label === "mac")?.localDay).toBe("2026-07-24");
+    expect(view.groups.find((group) => group.label === "box")?.localDay).toBe(null);
+  });
+});

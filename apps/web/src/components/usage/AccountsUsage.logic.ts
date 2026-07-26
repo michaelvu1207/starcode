@@ -173,6 +173,14 @@ export interface AccountsUsageEnvironmentGroup {
   readonly usageAvailable: boolean;
   readonly configAvailable: boolean;
   readonly accounts: ReadonlyArray<AccountUsageRow>;
+  /**
+   * Configured provider instances this machine has never used and cannot use —
+   * not installed, or switched off. Counted rather than listed: they are the
+   * built-in defaults for every driver this build ships, so on a machine that
+   * runs two of them the other rows are noise that pushes the real accounts
+   * off the screen. See `isDormantAccount`.
+   */
+  readonly dormantAccounts: ReadonlyArray<AccountUsageRow>;
   readonly today: UsageTotals;
   readonly week: UsageTotals;
   /**
@@ -411,6 +419,33 @@ function providerDisplayName(provider: ServerProvider): string {
   return provider.displayName ?? provider.instanceId;
 }
 
+/**
+ * A provider instance this machine has never used and could not use today.
+ *
+ * The server hydrates a default instance for **every** built-in driver, from
+ * the schema's defaults, whether or not the machine has that CLI. So a laptop
+ * that runs Claude and Codex still reports five accounts, three of them
+ * permanently empty. Those three are what this predicate names.
+ *
+ * The bar is deliberately conjunctive, and the usage half of it comes first:
+ * spend that was recorded must never disappear from the panel because a config
+ * entry was switched off or a binary was moved. Only an instance with no
+ * spend, no rate-limit report, and no way to run is hidden — and even then it
+ * is counted and one click away, never silently dropped.
+ */
+export function isDormantAccount(account: AccountUsageRow): boolean {
+  if (account.orphanedUsage) return false;
+  if (account.installed && account.enabled) return false;
+  if (account.rateLimits !== null || account.lastTurnAt !== null) return false;
+  if (account.authStatus === "authenticated") return false;
+  return (
+    account.today.turns === 0 &&
+    account.week.turns === 0 &&
+    account.today.costUsd === 0 &&
+    account.week.costUsd === 0
+  );
+}
+
 function buildEnvironmentGroup(
   input: AccountsUsageEnvironmentInput,
 ): AccountsUsageEnvironmentGroup {
@@ -474,6 +509,12 @@ function buildEnvironmentGroup(
       left.instanceId.localeCompare(right.instanceId),
   );
 
+  // The split is presentational only: both halves stay in the group and the
+  // machine's totals are summed over all of them, so hiding a row never
+  // changes a number.
+  const dormantAccounts = accounts.filter(isDormantAccount);
+  const activeAccounts = accounts.filter((account) => !isDormantAccount(account));
+
   return {
     environmentId: input.environmentId,
     label: input.label,
@@ -481,7 +522,8 @@ function buildEnvironmentGroup(
     localDay: input.usage?.today ?? null,
     usageAvailable: input.usage !== null,
     configAvailable: input.config !== null,
-    accounts,
+    accounts: activeAccounts,
+    dormantAccounts,
     today: sumTotals(accounts.map((account) => account.today)),
     week: sumTotals(accounts.map((account) => account.week)),
     cliHistory: buildCliHistoryView(input.usage?.cliHistory),
