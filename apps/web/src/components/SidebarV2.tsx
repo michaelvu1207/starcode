@@ -1731,23 +1731,31 @@ export default function SidebarV2() {
         onNewProject={openAddProjectCommandPalette}
         showProjectActions={projectGroups.length > 0}
       />
-      <SidebarContent className="gap-0">
-        <SidebarGroup className="min-h-0 flex-1 overflow-y-auto px-2 pb-1 pt-2 [scrollbar-gutter:stable]">
+      {/* `min-h-full` reaches the scroll viewport, which is the only element in
+          this chain with a height to speak of: `SidebarContent` is a
+          `ScrollArea`, and its viewport is `h-full` while everything inside it
+          is sized by its content. Without this the whole chain is content-height
+          and a percentage inside it resolves against nothing. */}
+      <SidebarContent className="min-h-full gap-0">
+        {/* No `overflow-y-auto` here. It never scrolled — the ScrollArea
+            viewport above is the sidebar's scroller — but an `overflow` value
+            other than `visible` makes this element the scrollport that any
+            `position: sticky` descendant sticks *within*, and this box has no
+            scroll range, so it silently cancelled the docked Chats section. */}
+        <SidebarGroup className="min-h-0 flex-1 px-2 pb-1 pt-2 [scrollbar-gutter:stable]">
           <TooltipProvider
             key="sidebar-thread-tooltips-150"
             delay={150}
             closeDelay={0}
             timeout={400}
           >
-            {/* `min-h-full` so a section can dock itself to the bottom of the
-                scroller with `mt-auto` (the projects view's Chats) rather than
-                sitting wherever the content happens to end. No effect on the
-                views that do not use it. */}
-            <ul
-              ref={attachListAutoAnimateRef}
-              role="list"
-              className="flex min-h-full flex-col gap-px"
-            >
+            {/* `flex-1` rather than a percentage minimum, so a section can dock
+                itself to the bottom of the scroller with `mt-auto` (the projects
+                view's Chats) rather than sitting wherever the content happens to
+                end. Flex items keep `min-height: auto`, so a list taller than the
+                sidebar still grows past it. No effect on the views that do not
+                dock anything. */}
+            <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-1 flex-col gap-px">
               {(() => {
                 const renderThreadRow = (
                   thread: EnvironmentThreadShell,

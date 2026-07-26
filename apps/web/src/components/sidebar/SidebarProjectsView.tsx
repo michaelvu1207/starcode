@@ -70,6 +70,7 @@ import {
 import { SidebarUnfiledTriage } from "./SidebarUnfiledTriage";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 import "../projects/Projects.css";
+import "./ChatsDock.css";
 
 export function SidebarProjectsView(props: {
   readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
@@ -304,19 +305,25 @@ export function SidebarProjectsView(props: {
    * Chats, docked to the bottom of the sidebar.
    *
    * Not the last item in the list — the bottom of the *viewport*. `mt-auto`
-   * hugs it to the floor when the projects are short (the list is given a
-   * full-height minimum for exactly this), and `sticky bottom-0` holds it there
-   * once they are long enough to scroll. Threads with no home are the pile you
-   * work off, so it has to be somewhere your eye can always find without
-   * scrolling to the end of everything else.
+   * hugs it to the floor when the projects are short, and `sticky bottom-0`
+   * holds it there once they are long enough to scroll. Both need the list to
+   * be as tall as the scroller, which is what `flex-1` on the `<ul>` in
+   * `SidebarV2` buys. Threads with no home are the pile you work off, so it has
+   * to be somewhere your eye can always find without scrolling to the end of
+   * everything else.
    *
    * The rows go in a nested list with its own scroll, capped so a hundred loose
    * threads cannot eat the projects above them. Nesting is safe here: thread
    * selection resolves through `closest()`, not through direct children.
    *
-   * It needs the sidebar's own background AND its grain — rows scroll under
-   * this, and a plain `bg-sidebar` panel over a grained surface leaves a seam
-   * exactly at the line where the texture stops.
+   * The `<li>` is the dock; the `<div>` inside it is the opaque panel. They are
+   * separate so the gap above the panel can belong to the sticky element — it
+   * has to travel with the panel while it is pinned — without being painted
+   * over. See `ChatsDock.css` for the gap and the fade that fills it.
+   *
+   * The panel needs the sidebar's own background AND its grain — rows scroll
+   * under this, and a plain `bg-sidebar` panel over a grained surface leaves a
+   * seam exactly at the line where the texture stops.
    */
   const renderChatsSection = (group: SidebarProjectGroup): ReactNode => {
     const { expanded, rows, hiddenCount } = visibleRowsFor(group);
@@ -324,39 +331,41 @@ export function SidebarProjectsView(props: {
       <li
         data-thread-selection-safe
         data-testid="sidebar-v2-chats-dock"
-        className="sticky bottom-0 z-10 mt-auto list-none bg-sidebar surface-grain pb-1"
+        className="sc-chats-dock sticky bottom-0 z-10 mt-auto list-none"
       >
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => toggleGroup(group.key, expanded)}
-            aria-expanded={expanded}
-            title={expanded ? "Collapse Chats" : "Expand Chats"}
-            data-testid="sidebar-v2-chats-toggle"
-            className="starcode-section-rule w-full cursor-pointer px-2.5 pb-1.5 pt-3 text-center"
-          >
-            <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
-              Chats
+        <div data-testid="sidebar-v2-chats-panel" className="bg-sidebar surface-grain pb-1">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => toggleGroup(group.key, expanded)}
+              aria-expanded={expanded}
+              title={expanded ? "Collapse Chats" : "Expand Chats"}
+              data-testid="sidebar-v2-chats-toggle"
+              className="starcode-section-rule w-full cursor-pointer px-2.5 pb-1.5 pt-2 text-center"
+            >
+              <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
+                Chats
+              </span>
+            </button>
+            {/* Absolutely placed so the engraved rule stays centred on the title
+                rather than on the title plus a button. */}
+            <span className="absolute bottom-1.5 right-2.5">
+              <SidebarUnfiledTriage
+                threads={group.rows.map((row) => row.thread)}
+                projects={fileableProjects}
+                environmentLabelById={environmentLabelById}
+              />
             </span>
-          </button>
-          {/* Absolutely placed so the engraved rule stays centred on the title
-              rather than on the title plus a button. */}
-          <span className="absolute bottom-1.5 right-2.5">
-            <SidebarUnfiledTriage
-              threads={group.rows.map((row) => row.thread)}
-              projects={fileableProjects}
-              environmentLabelById={environmentLabelById}
-            />
-          </span>
-        </div>
-        {expanded ? (
-          <div className="max-h-[38vh] overflow-y-auto">
-            <ul role="list" className="flex flex-col gap-px">
-              {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
-              {hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
-            </ul>
           </div>
-        ) : null}
+          {expanded ? (
+            <div className="max-h-[38vh] overflow-y-auto">
+              <ul role="list" className="flex flex-col gap-px">
+                {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
+                {hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       </li>
     );
   };
