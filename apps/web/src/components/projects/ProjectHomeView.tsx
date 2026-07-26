@@ -28,6 +28,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadActivities, useThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+import { useFeatureMapByEnvironment } from "../../state/featureFlow";
 import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../../threadRoutes";
 import { resolveSidebarV2Status } from "../Sidebar.logic";
@@ -45,6 +46,7 @@ import {
   toneForThreadStatus,
 } from "../workbench/Workbench.tone";
 import { projectMasterCandidates, projectSectionFor } from "./ProjectCatalog.model";
+import { describeProjectFeatures, foldProjectFeatures } from "./ProjectFeatures.model";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectGlyph } from "./ProjectGlyph";
@@ -191,6 +193,25 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     [includeThreadKey, slug],
   );
 
+  /**
+   * What this project is building, gathered from every machine.
+   *
+   * The sky beside it draws the shape; this says the count. Both read the same
+   * union, because the map is one file per server and folding them is the
+   * client's job — a server that answered for another machine would be
+   * inventing.
+   */
+  const mapEntriesByEnvironment = useFeatureMapByEnvironment();
+  const featureRollup = useMemo(
+    () => foldProjectFeatures({ mapEntriesByEnvironment, scope }),
+    [mapEntriesByEnvironment, scope],
+  );
+  const featureSummary = describeProjectFeatures(featureRollup);
+  const featureCountByEnvironment = useMemo(
+    () => new Map(featureRollup.machines.map((machine) => [machine.environmentId, machine.count])),
+    [featureRollup.machines],
+  );
+
   const rows = useMemo(
     () =>
       threads
@@ -256,23 +277,41 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
               </p>
             ) : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {project.sections.map((section) => (
+              {project.sections.map((section) => {
+                // Which connections carry this project, and how much of it each
+                // one holds. Machines stay chips rather than becoming geography
+                // — the sky beside this is deliberately connection-independent.
+                const features = featureCountByEnvironment.get(section.environmentId) ?? 0;
+                return (
+                  <span
+                    key={section.environmentId}
+                    className={cn(
+                      "rounded border border-border/50 px-1.5 py-px text-[10px] text-muted-foreground/70",
+                      section.isLocal && "border-border text-foreground/80",
+                    )}
+                    title={[
+                      section.local.bindings.length === 0
+                        ? "Knows this project, but no folder bound here"
+                        : `${section.local.bindings.length} folder(s) bound here`,
+                      features === 0
+                        ? "no features on this machine"
+                        : `${features} feature(s) on this machine`,
+                    ].join(" · ")}
+                  >
+                    {section.label}
+                    {section.local.bindings.length === 0 ? " · no folder" : ""}
+                    {features === 0 ? "" : ` · ${features}`}
+                  </span>
+                );
+              })}
+              {featureSummary === null ? null : (
                 <span
-                  key={section.environmentId}
-                  className={cn(
-                    "rounded border border-border/50 px-1.5 py-px text-[10px] text-muted-foreground/70",
-                    section.isLocal && "border-border text-foreground/80",
-                  )}
-                  title={
-                    section.local.bindings.length === 0
-                      ? "Knows this project, but no folder bound here"
-                      : `${section.local.bindings.length} folder(s) bound here`
-                  }
+                  data-testid="project-feature-rollup"
+                  className="text-[10px] text-muted-foreground/60"
                 >
-                  {section.label}
-                  {section.local.bindings.length === 0 ? " · no folder" : ""}
+                  {featureSummary}
                 </span>
-              ))}
+              )}
               {/* Drift, stated. A machine that missed a rename is not an error
                   — it heals on the next write — but silently showing one title
                   while another machine shows a different one is worse. */}
