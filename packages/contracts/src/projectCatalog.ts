@@ -363,11 +363,24 @@ export function resolveLocalProjectMembership(input: {
   return bySlug;
 }
 
-/** Slug order, so "first claim wins" above means "smallest slug wins". */
+/**
+ * Slug order, so "first claim wins" above means "smallest slug wins".
+ *
+ * Code-point comparison, deliberately, and not `localeCompare`: with no locale
+ * argument that resolves against the *process's* default locale, which Node
+ * takes from the environment. A server running under `da_DK` orders `aa-sim`
+ * after `zz-sim`, so the same double claim would be broken one way by this
+ * resolver and the other way by the client's cross-machine fold — which
+ * compares with `<` — and the two halves of one screen would disagree about
+ * which project a thread is in. "Never by file order" is not enough; it has to
+ * be the same answer everywhere, and only a locale-free comparison is.
+ */
 const orderedBySlug = (
   categories: ReadonlyArray<ProjectCategoryRecord>,
 ): ReadonlyArray<ProjectCategoryRecord> =>
-  categories.toSorted((left, right) => left.slug.localeCompare(right.slug));
+  categories.toSorted((left, right) =>
+    left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0,
+  );
 
 /**
  * The project tools, as an agent sees them.

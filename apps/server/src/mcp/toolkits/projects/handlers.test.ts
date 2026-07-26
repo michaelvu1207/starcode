@@ -383,7 +383,10 @@ describe("project tools", () => {
       });
 
       const got = yield* call("project_get", { slug: "hub" });
-      assert.deepStrictEqual(got.features?.map((feature) => feature.name), []);
+      assert.deepStrictEqual(
+        got.features?.map((feature) => feature.name),
+        [],
+      );
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 

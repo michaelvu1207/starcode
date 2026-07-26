@@ -82,9 +82,10 @@ describe("choosePeerProjectLocation", () => {
   });
 
   it("refuses to guess between several folders when nothing prefers one", () => {
-    expect(
-      choosePeerProjectLocation(category({ bindings: ["p-1", "p-2"] })),
-    ).toEqual({ kind: "ambiguous", projectIds: ["p-1", "p-2"] });
+    expect(choosePeerProjectLocation(category({ bindings: ["p-1", "p-2"] }))).toEqual({
+      kind: "ambiguous",
+      projectIds: ["p-1", "p-2"],
+    });
   });
 
   it("ignores a preference naming a folder the project no longer binds", () => {

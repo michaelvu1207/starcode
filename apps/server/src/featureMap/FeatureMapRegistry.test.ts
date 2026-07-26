@@ -260,14 +260,14 @@ it.effect("scopes a project's plan replacement to that project", () =>
     });
 
     assert.strictEqual(second.removedCount, 0);
-    assert.deepEqual(
-      [...(yield* registry.list)].map((entry) => entry.name).toSorted(),
-      ["Atlas step", "Beacon step"],
-    );
-    assert.deepEqual(
-      [...(yield* registry.list)].map((entry) => entry.slug).toSorted(),
-      [atlas, beacon],
-    );
+    assert.deepEqual([...(yield* registry.list)].map((entry) => entry.name).toSorted(), [
+      "Atlas step",
+      "Beacon step",
+    ]);
+    assert.deepEqual([...(yield* registry.list)].map((entry) => entry.slug).toSorted(), [
+      atlas,
+      beacon,
+    ]);
   }).pipe(Effect.provide(makeLayer())),
 );
 
@@ -282,10 +282,10 @@ it.effect("replaces only its own project's plan on a re-plan", () =>
       features: [{ key: "c", name: "Atlas step two" }],
     });
     assert.strictEqual(replanned.removedCount, 1);
-    assert.deepEqual(
-      [...(yield* registry.list)].map((entry) => entry.name).toSorted(),
-      ["Atlas step two", "Beacon step"],
-    );
+    assert.deepEqual([...(yield* registry.list)].map((entry) => entry.name).toSorted(), [
+      "Atlas step two",
+      "Beacon step",
+    ]);
   }).pipe(Effect.provide(makeLayer())),
 );
 

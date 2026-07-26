@@ -73,6 +73,15 @@ const uniqueThreadIds = (ids: ReadonlyArray<ThreadId>): ReadonlyArray<ThreadId> 
 ];
 
 /**
+ * The stamp on a display half nobody authored.
+ *
+ * The fold resolves display conflicts on newest `updatedAt`, so a placeholder
+ * has to carry a time that cannot beat a real write. The epoch is the honest
+ * value: this half is not an opinion about the title, it is the absence of one.
+ */
+export const PROVISIONAL_DISPLAY_UPDATED_AT = "1970-01-01T00:00:00.000Z";
+
+/**
  * Applies one upsert to a set of categories.
  *
  * Pure, and separate from the file handling, because every interesting rule
@@ -110,7 +119,20 @@ export function applyUpsert(input: {
       links: [],
       notes: "",
       archivedAt: null,
-      updatedAt: displayUpdatedAt,
+      // Deliberately the weakest stamp there is, not the write's own clock.
+      //
+      // A *local* write can create this record — binding a folder, or naming a
+      // master, on a machine that missed the category's creation — and the
+      // record it creates needs a display half to be well-formed. Stamping that
+      // half with "now" made the placeholder the newest opinion in the fleet,
+      // so the fold picked it and the project's title reverted to its raw slug
+      // on every machine, listing the machines that had the real title as the
+      // stale ones. A placeholder must lose to every real display write,
+      // including one made a year ago.
+      //
+      // If it turns out to be the only copy anywhere, it still wins by being
+      // the only one, which is the "reads as its slug" behaviour above.
+      updatedAt: PROVISIONAL_DISPLAY_UPDATED_AT,
     },
     local: {
       bindings: [],

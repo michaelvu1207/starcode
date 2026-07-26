@@ -150,15 +150,27 @@ export function foldProjectFeatures(input: {
  * Prose rather than a row of badges because this sits beside the sky, and the
  * sky is already the picture. A second, smaller picture of the same thing would
  * compete with it; a sentence does not.
+ *
+ * `silentMachineLabels` names machines carrying this project that did not say
+ * what they hold. They make the count a floor rather than a total, and a count
+ * that is quietly short is worse than one that admits it — so a silent machine
+ * is enough to say something even when the fold found nothing at all.
  */
-export function describeProjectFeatures(rollup: ProjectFeatureRollup): string | null {
-  if (rollup.features.length === 0) return null;
-  const parts: Array<string> = [
-    `${rollup.realCount} feature${rollup.realCount === 1 ? "" : "s"}`,
-  ];
+export function describeProjectFeatures(
+  rollup: ProjectFeatureRollup,
+  silentMachineLabels: ReadonlyArray<string> = [],
+): string | null {
+  const silence =
+    silentMachineLabels.length === 0
+      ? null
+      : `could not read ${[...silentMachineLabels].toSorted((left, right) => left.localeCompare(right)).join(", ")}`;
+  if (rollup.features.length === 0) return silence;
+
+  const parts: Array<string> = [`${rollup.realCount} feature${rollup.realCount === 1 ? "" : "s"}`];
   for (const { stage, count } of rollup.byStage) {
     parts.push(`${count} ${PROJECT_FEATURE_STAGE_LABEL[stage]}`);
   }
   if (rollup.plannedCount > 0) parts.push(`${rollup.plannedCount} planned`);
+  if (silence !== null) parts.push(silence);
   return parts.join(" · ");
 }

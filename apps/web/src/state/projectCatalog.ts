@@ -184,9 +184,19 @@ export function useProjectCatalogLocations(): ReadonlyArray<ProjectSeedLocation>
 /** What first-open should propose, and what a later open should suggest. */
 export function useProjectSeedPlan(view: ProjectCatalogView): ProjectSeedPlan {
   const locations = useProjectCatalogLocations();
+  // The locations page and the catalog are separate polls at different
+  // intervals, so a machine can be serving its last good location list while
+  // its catalog read is failing. Both outputs of the seed plan lead to a
+  // whole-set binding write, so a machine whose catalog we could not read is
+  // one we must not offer to write to — see `silentEnvironmentIds`.
   return useMemo(
-    () => buildProjectSeedPlan({ projects: view.projects, locations }),
-    [locations, view.projects],
+    () =>
+      buildProjectSeedPlan({
+        projects: view.projects,
+        locations,
+        silentEnvironmentIds: view.notes.map((note) => note.environmentId),
+      }),
+    [locations, view.notes, view.projects],
   );
 }
 

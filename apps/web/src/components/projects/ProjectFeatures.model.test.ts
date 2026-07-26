@@ -188,6 +188,34 @@ describe("describeProjectFeatures", () => {
     expect(describeProjectFeatures(rollup)).toBe("2 features · 1 landed · 1 shipped · 1 planned");
   });
 
+  it("admits when a machine did not say what it holds", () => {
+    // A count that is quietly short is worse than one that says so. "Did not
+    // answer" is not "answered none".
+    const rollup = foldProjectFeatures({
+      mapEntriesByEnvironment: machines([
+        "env-mac",
+        "mac",
+        [entry("aaaaaaaaaaaa", { slug: atlas })],
+      ]),
+      scope: scopeOver(),
+    });
+
+    expect(describeProjectFeatures(rollup, ["simforge1"])).toBe(
+      "1 feature · 1 in flight · could not read simforge1",
+    );
+  });
+
+  it("says so even when the fold found nothing at all", () => {
+    const rollup = foldProjectFeatures({
+      mapEntriesByEnvironment: machines(["env-mac", "mac", []]),
+      scope: scopeOver(),
+    });
+
+    expect(describeProjectFeatures(rollup, ["simforge1", "path-pc"])).toBe(
+      "could not read path-pc, simforge1",
+    );
+  });
+
   it("keeps the singular singular", () => {
     const rollup = foldProjectFeatures({
       mapEntriesByEnvironment: machines([

@@ -219,6 +219,7 @@ export function buildSkyDemoModel(): SkyModel {
     },
     realCount: features.filter((entry) => !entry.planned).length,
     plannedCount: features.filter((entry) => entry.planned).length,
+    stageUnreadableLabels: [],
     stageUnsupportedLabels: ["path-pc"],
     diagnostics: [],
   };

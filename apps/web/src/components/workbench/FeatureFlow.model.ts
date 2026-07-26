@@ -66,6 +66,12 @@ export interface FeatureFlowView {
   /** Machines whose server cannot report stages, named so the gap is visible. */
   readonly unsupportedLabels: ReadonlyArray<string>;
   readonly pendingLabels: ReadonlyArray<string>;
+  /**
+   * Machines that are connected, claim the capability, and still did not
+   * answer. The only one of the three silences worth looking into, and the one
+   * that used to be invisible.
+   */
+  readonly unreadableLabels: ReadonlyArray<string>;
   /** Machine-attributed reasons a project could not be read. */
   readonly diagnostics: ReadonlyArray<string>;
 }
@@ -132,12 +138,22 @@ export function buildFeatureFlowView(
   }> = [];
   const unsupportedLabels: string[] = [];
   const pendingLabels: string[] = [];
+  const unreadableLabels: string[] = [];
   const diagnostics: string[] = [];
 
   for (const environment of environments) {
     if (environment.snapshot === null) {
+      // Three different silences, and the view has to say which — the same
+      // three the project catalog's fold names. The third was missing here: a
+      // machine that is connected *and* advertises the capability and still did
+      // not answer used to fall through with no label at all, so a single
+      // timed-out poll (the route shells out to git per project) took that
+      // machine's whole set of features off the sky and out of every count,
+      // silently. Silence about a machine you are connected to is the one
+      // answer this must never give.
       if (environment.pending) pendingLabels.push(environment.label);
       else if (!environment.supported) unsupportedLabels.push(environment.label);
+      else unreadableLabels.push(environment.label);
       continue;
     }
     for (const project of environment.snapshot.projects) {
@@ -164,7 +180,7 @@ export function buildFeatureFlowView(
     return { ...entry.node, dependsOnKeys };
   });
 
-  return { features, unsupportedLabels, pendingLabels, diagnostics };
+  return { features, unsupportedLabels, pendingLabels, unreadableLabels, diagnostics };
 }
 
 /** Ordered stage progression, for reading "how far has this got" without git. */

@@ -206,11 +206,26 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     () => foldProjectFeatures({ mapEntriesByEnvironment, scope }),
     [mapEntriesByEnvironment, scope],
   );
-  const featureSummary = describeProjectFeatures(featureRollup);
   const featureCountByEnvironment = useMemo(
     () => new Map(featureRollup.machines.map((machine) => [machine.environmentId, machine.count])),
     [featureRollup.machines],
   );
+  /**
+   * Machines that never told us what they hold.
+   *
+   * A machine present in the map answered, even with nothing; one that is
+   * absent did not. Keeping the two apart is what stops the summary below
+   * asserting a count it cannot support, and the chips claiming "no features
+   * here" about a machine nobody heard from. Unavailable is not empty.
+   */
+  const silentMachines = useMemo(
+    () =>
+      (project?.sections ?? [])
+        .filter((section) => !mapEntriesByEnvironment.has(section.environmentId))
+        .map((section) => section.label),
+    [mapEntriesByEnvironment, project?.sections],
+  );
+  const featureSummary = describeProjectFeatures(featureRollup, silentMachines);
 
   const rows = useMemo(
     () =>
@@ -281,6 +296,7 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
                 // Which connections carry this project, and how much of it each
                 // one holds. Machines stay chips rather than becoming geography
                 // — the sky beside this is deliberately connection-independent.
+                const answered = mapEntriesByEnvironment.has(section.environmentId);
                 const features = featureCountByEnvironment.get(section.environmentId) ?? 0;
                 return (
                   <span
@@ -293,14 +309,19 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
                       section.local.bindings.length === 0
                         ? "Knows this project, but no folder bound here"
                         : `${section.local.bindings.length} folder(s) bound here`,
-                      features === 0
-                        ? "no features on this machine"
-                        : `${features} feature(s) on this machine`,
+                      // "Did not say" is not "said none". Asserting the second
+                      // about a machine that never answered is the lie this
+                      // distinction exists to prevent.
+                      !answered
+                        ? "could not read what this machine is building"
+                        : features === 0
+                          ? "no features on this machine"
+                          : `${features} feature(s) on this machine`,
                     ].join(" · ")}
                   >
                     {section.label}
                     {section.local.bindings.length === 0 ? " · no folder" : ""}
-                    {features === 0 ? "" : ` · ${features}`}
+                    {answered ? (features === 0 ? "" : ` · ${features}`) : " · ?"}
                   </span>
                 );
               })}

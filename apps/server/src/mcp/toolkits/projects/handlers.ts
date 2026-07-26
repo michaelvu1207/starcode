@@ -102,7 +102,19 @@ const readMachineState = (operation: "list" | "get" | "file_thread") =>
 
     const [categories, shell] = yield* Effect.all(
       [
-        registry.list.pipe(Effect.mapError(storageFailed(operation))),
+        // An unreadable catalog is no projects, not a failed read (invariant
+        // 11). Refusing the read instead left an orchestrator on that machine
+        // unable to see its project or even file its own thread, over a file
+        // it could have been told was unreadable. The write path below still
+        // fails loudly, because a write against a catalog nobody could read
+        // would overwrite whatever is in it.
+        registry.list.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not read the project catalog; reporting no projects", {
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        ),
         projectionSnapshotQuery.getShellSnapshot().pipe(Effect.mapError(storageFailed(operation))),
       ],
       { concurrency: 2 },

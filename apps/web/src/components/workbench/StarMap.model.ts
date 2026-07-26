@@ -88,6 +88,12 @@ export interface SkyModel {
   readonly plannedCount: number;
   /** Connected machines that cannot report stages, named once, plainly. */
   readonly stageUnsupportedLabels: ReadonlyArray<string>;
+  /**
+   * Connected machines that claim they can and did not. Distinct from the
+   * above because the remedy is different — one needs a server update, the
+   * other needs looking into — and because this one means the counts are short.
+   */
+  readonly stageUnreadableLabels: ReadonlyArray<string>;
   readonly diagnostics: ReadonlyArray<string>;
 }
 
@@ -325,6 +331,7 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
     realCount: features.filter((feature) => !feature.planned).length,
     plannedCount: features.filter((feature) => feature.planned).length,
     stageUnsupportedLabels: input.flow.unsupportedLabels,
+    stageUnreadableLabels: input.flow.unreadableLabels,
     diagnostics: input.flow.diagnostics,
   };
 }

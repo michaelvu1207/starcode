@@ -17,6 +17,7 @@ import {
   applyUpsert,
   ProjectCatalogRegistry,
   layer as projectCatalogRegistryLayer,
+  PROVISIONAL_DISPLAY_UPDATED_AT,
 } from "./ProjectCatalogRegistry.ts";
 
 const makeLayer = () =>
@@ -179,6 +180,38 @@ it.effect("treats removing an unknown slug as a no-op, not a failure", () =>
   }).pipe(Effect.provide(makeLayer())),
 );
 
+it.effect("removes the record and nothing else — no thread, no folder, no other category", () =>
+  Effect.gen(function* () {
+    // Invariant 1, pinned where it is cheapest to pin: the registry writes one
+    // file, so "deleting a project touches nothing else" is observable as the
+    // rest of that file surviving intact, ids and all.
+    const registry = yield* ProjectCatalogRegistry;
+    yield* registry.upsert(
+      upsert({
+        slug: slug("alpamayo"),
+        local: {
+          bindings: [project("project-1")],
+          threadIds: [thread("t1")],
+          masterThreadId: "thread-master",
+        },
+      }),
+    );
+    const survivor = yield* registry.upsert(
+      upsert({
+        slug: slug("simcloud"),
+        display: { title: "SimCloud" },
+        local: { bindings: [project("project-2")], threadIds: [thread("t2")] },
+      }),
+    );
+
+    assert.isTrue(yield* registry.remove(slug("alpamayo")));
+
+    const remaining = yield* registry.list;
+    assert.lengthOf(remaining, 1);
+    assert.deepEqual(remaining[0], survivor.category);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
 it.effect("moves a thread between categories in one write", () =>
   Effect.gen(function* () {
     const registry = yield* ProjectCatalogRegistry;
@@ -275,3 +308,47 @@ it("preserves boundAt for a location that survives a bindings rewrite", () => {
   assert.equal(bindings.get(project("p1")), "2026-07-25T00:00:00.000Z");
   assert.equal(bindings.get(project("p2")), "2026-07-26T00:00:00.000Z");
 });
+
+it.effect("stamps a placeholder display so it cannot outrank a real title", () =>
+  Effect.gen(function* () {
+    const registry = yield* ProjectCatalogRegistry;
+
+    // A machine that missed the project's creation, binding a folder to it for
+    // the first time. The record it creates needs a display half to be
+    // well-formed — but stamping that half with "now" made the placeholder the
+    // newest opinion in the fleet, so the fold picked it and the project's
+    // title reverted to its raw slug on every machine.
+    const bound = yield* registry.upsert(
+      upsert({
+        slug: slug("alpamayo"),
+        local: { bindings: [project("project-1")] },
+        displayUpdatedAt: "2026-07-25T00:00:00.000Z",
+      }),
+    );
+
+    assert.isTrue(bound.created);
+    assert.strictEqual(bound.category.display.title, "alpamayo");
+    assert.strictEqual(bound.category.display.updatedAt, PROVISIONAL_DISPLAY_UPDATED_AT);
+    // The property that matters is the comparison the fold makes: a placeholder
+    // must lose to any real display write, including one from years ago.
+    assert.isTrue(bound.category.display.updatedAt < "2026-07-25T00:00:00.000Z");
+    // The write it was made for still landed.
+    assert.lengthOf(bound.category.local.bindings, 1);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("still stamps a real display write with the authoring clock", () =>
+  Effect.gen(function* () {
+    const registry = yield* ProjectCatalogRegistry;
+    const created = yield* registry.upsert(
+      upsert({
+        slug: slug("alpamayo"),
+        display: { title: "Alpamayo Pipeline" },
+        displayUpdatedAt: "2026-07-25T00:00:00.000Z",
+      }),
+    );
+
+    assert.strictEqual(created.category.display.updatedAt, "2026-07-25T00:00:00.000Z");
+    assert.strictEqual(created.category.display.title, "Alpamayo Pipeline");
+  }).pipe(Effect.provide(makeLayer())),
+);

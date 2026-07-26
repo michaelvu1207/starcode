@@ -657,7 +657,14 @@ export function WorkbenchStarMap({
       // not by a toggle.
       showSettled: true,
     });
-    return buildSkyModel({ board, flow, mapEntriesByEnvironment, master, projectTitleByKey, scope });
+    return buildSkyModel({
+      board,
+      flow,
+      mapEntriesByEnvironment,
+      master,
+      projectTitleByKey,
+      scope,
+    });
   }, [
     autoSettleAfterDays,
     environments,
@@ -705,10 +712,15 @@ export function WorkbenchStarMap({
 
   const measured = size.width > 0 && size.height > 0;
   const empty = model.features.length === 0;
+  // A machine that is connected and simply did not answer outranks the others:
+  // the count above is wrong by however much that machine was carrying, and
+  // saying nothing was how that went unnoticed.
   const footnote =
-    model.stageUnsupportedLabels.length > 0
-      ? `Stages need a server update on ${model.stageUnsupportedLabels.join(", ")}`
-      : (model.diagnostics[0] ?? "");
+    model.stageUnreadableLabels.length > 0
+      ? `Could not read work on ${model.stageUnreadableLabels.join(", ")} — the count above is short`
+      : model.stageUnsupportedLabels.length > 0
+        ? `Stages need a server update on ${model.stageUnsupportedLabels.join(", ")}`
+        : (model.diagnostics[0] ?? "");
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

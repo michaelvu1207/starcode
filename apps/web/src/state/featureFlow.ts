@@ -92,7 +92,12 @@ export function useFeatureMapByEnvironment(): ReadonlyMap<string, SkyMachineMap>
     const byEnvironment = new Map<string, SkyMachineMap>();
     for (const environment of environments) {
       const snapshot = snapshots.get(environment.environmentId);
-      if (snapshot === undefined || snapshot.entries.length === 0) continue;
+      // A machine that answered with nothing is kept, with an empty list. It
+      // used to be dropped alongside the machines that did not answer at all,
+      // which made the two indistinguishable downstream — and a caller that
+      // cannot tell them apart ends up asserting "no features here" about a
+      // machine it never heard from. Unavailable is not empty (invariant 12).
+      if (snapshot === undefined) continue;
       byEnvironment.set(environment.environmentId, {
         label: environment.label,
         entries: snapshot.entries,

@@ -457,6 +457,40 @@ describe("buildProjectSeedPlan", () => {
     boundSlug: input.boundSlug == null ? null : slug(input.boundSlug),
   });
 
+  it("withholds every suggestion for a machine whose catalog could not be read", () => {
+    // Both outputs lead to a write that replaces a machine's whole binding set,
+    // and the set to preserve is read from the fold. A machine that did not
+    // answer contributes no section, so that read returns empty — and an empty
+    // "existing" set is an erase. The locations page is a slower, separate
+    // poll, so it happily keeps serving a machine whose catalog is failing.
+    const plan = buildProjectSeedPlan({
+      projects: [],
+      locations: [
+        location({ environmentId: "mac", projectId: "p1", workspaceRoot: "/Users/m/api" }),
+        location({ environmentId: "laptop", projectId: "p2", workspaceRoot: "/home/m/api" }),
+      ],
+      silentEnvironmentIds: [env("laptop")],
+    });
+
+    expect(plan.proposals).toHaveLength(1);
+    expect(plan.proposals[0]!.locations.map((entry) => entry.environmentId)).toEqual(["mac"]);
+  });
+
+  it("withholds a bind suggestion for a machine whose catalog could not be read", () => {
+    const plan = buildProjectSeedPlan({
+      projects: buildProjectCatalogView([
+        machine({ environmentId: "mac", categories: [record({ slug: "api" })] }),
+      ]).projects,
+      locations: [
+        location({ environmentId: "laptop", projectId: "p2", workspaceRoot: "/home/m/api" }),
+      ],
+      silentEnvironmentIds: [env("laptop")],
+    });
+
+    expect(plan.bindSuggestions).toEqual([]);
+    expect(plan.proposals).toEqual([]);
+  });
+
   it("proposes one project per repository across every machine that has it", () => {
     const plan = buildProjectSeedPlan({
       projects: [],

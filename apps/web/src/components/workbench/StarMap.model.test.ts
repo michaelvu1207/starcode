@@ -111,7 +111,14 @@ function featureNode(
 }
 
 function flow(overrides?: Partial<FeatureFlowView>): FeatureFlowView {
-  return { features: [], unsupportedLabels: [], pendingLabels: [], diagnostics: [], ...overrides };
+  return {
+    features: [],
+    unsupportedLabels: [],
+    pendingLabels: [],
+    unreadableLabels: [],
+    diagnostics: [],
+    ...overrides,
+  };
 }
 
 function mapEntry(id: string, overrides?: Partial<FeatureMapEntry>): FeatureMapEntry {
