@@ -125,7 +125,38 @@ export function useProjectCatalogView(): ProjectCatalogView {
     [environments, primaryEnvironmentId, serverConfigs, snapshots],
   );
 
-  return useMemo(() => applyPendingProjectDisplays(read, pending), [pending, read]);
+  // A coarse clock, because the created-overlay now expires and something has
+  // to move for it to notice. Quantised rather than read per render: a fresh
+  // `Date.now()` in the deps would rebuild this object on every render and
+  // invalidate every memo downstream of it, and the expiry does not need
+  // millisecond resolution. When nothing is pending — the usual case — the fold
+  // returns `read` untouched and this costs nothing at all.
+  const nowBucketMs =
+    Math.floor(Date.now() / PENDING_PROJECT_CLOCK_BUCKET_MS) * PENDING_PROJECT_CLOCK_BUCKET_MS;
+
+  return useMemo(
+    () => applyPendingProjectDisplays(read, pending, nowBucketMs),
+    [nowBucketMs, pending, read],
+  );
+}
+
+/** Resolution of the clock the pending overlay expires against. */
+const PENDING_PROJECT_CLOCK_BUCKET_MS = 30_000;
+
+/**
+ * Drops a pending display entry without touching any machine.
+ *
+ * For the one case the overlay cannot resolve on its own: a create that no
+ * machine accepted. Leaving it to time out would show a project that does not
+ * exist for two minutes; forgetting it as soon as the fan-out comes back empty
+ * makes the failure immediate and honest.
+ */
+export function useForgetPendingProjectDisplay(): (slug: ProjectCategorySlug) => void {
+  const setPending = useAtomSet(pendingProjectDisplaysAtom);
+  return useCallback(
+    (slug) => setPending((entries) => entries.filter((entry) => entry.slug !== slug)),
+    [setPending],
+  );
 }
 
 /** Every machine's bindable locations, flattened and labelled by machine. */

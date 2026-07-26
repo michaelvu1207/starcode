@@ -608,19 +608,41 @@ export interface PendingProjectDisplay {
 }
 
 /**
+ * How long a *created* project may be claimed by the overlay and by no machine.
+ *
+ * The catalog is polled roughly every 45 seconds, so this is two polls plus
+ * slack: long enough that a create which landed is never blinked out from under
+ * the operator, short enough that a create which did not land stops pretending.
+ */
+export const PENDING_PROJECT_CREATE_GRACE_MS = 120_000;
+
+/**
  * Folds pending writes over the last read.
  *
- * Self-clearing by construction rather than on a timer: an entry survives only
- * while the folded record is *older* than the write that produced it, so the
- * first poll that returns the new title drops the overlay in the same pass. A
- * write that never landed anywhere expires the moment a newer one does, and a
- * write to a machine that is permanently gone shows the operator's own text
- * until they reload — which is better than showing them a rename that silently
- * did not take.
+ * A write *against an existing project* is self-clearing by construction: the
+ * entry survives only while the folded record is older than the write that
+ * produced it, so the first poll returning the new title drops the overlay in
+ * the same pass.
+ *
+ * A write that CREATED a project has no such anchor, and that asymmetry was a
+ * bug worth naming, because it produced ghosts. If no machine ever accepts the
+ * create — every machine refused it, or none was reachable, or the capability
+ * was missing — there is no record for the fold to catch up to, so the
+ * synthesized card below rendered for the rest of the session and no reload of
+ * the projects view could clear it. A project that exists nowhere but on the
+ * operator's screen is worse than a create that visibly failed, so a created
+ * entry is now given `PENDING_PROJECT_CREATE_GRACE_MS` to be confirmed by
+ * somebody and is dropped after that.
+ *
+ * Note what still holds after the grace: a *rename* to a machine that is
+ * permanently gone keeps showing the operator's own text, because there the
+ * project genuinely exists and the alternative is silently reverting an edit
+ * they made.
  */
 export function applyPendingProjectDisplays(
   view: ProjectCatalogView,
   pending: ReadonlyArray<PendingProjectDisplay>,
+  nowMs: number = Date.now(),
 ): ProjectCatalogView {
   if (pending.length === 0) return view;
 
@@ -642,9 +664,13 @@ export function applyPendingProjectDisplays(
 
   // Anything still in the map is a category created a moment ago that no
   // machine has reported back yet. Rendering it immediately is the difference
-  // between "new project" feeling instant and feeling broken.
+  // between "new project" feeling instant and feeling broken — but only for as
+  // long as "a moment ago" is true. Past the grace, nobody took it, and the
+  // honest answer is that the project is not there.
   const created = [...bySlug.values()]
-    .filter((entry) => entry.created)
+    .filter(
+      (entry) => entry.created && nowMs - Date.parse(entry.stamp) < PENDING_PROJECT_CREATE_GRACE_MS,
+    )
     .map(
       (entry): ProjectCategoryView => ({
         slug: entry.slug,

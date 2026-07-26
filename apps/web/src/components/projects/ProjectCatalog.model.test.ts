@@ -12,6 +12,7 @@ import { resolveWorkbenchMaster } from "../workbench/Workbench.master";
 import {
   applyPendingProjectDisplays,
   buildProjectCatalogView,
+  PENDING_PROJECT_CREATE_GRACE_MS,
   buildProjectSeedPlan,
   projectMasterCandidates,
   projectThreadKey,
@@ -682,16 +683,82 @@ describe("applyPendingProjectDisplays", () => {
   });
 
   it("renders a just-created category no machine has reported yet", () => {
-    const view = applyPendingProjectDisplays(viewOf([]), [
-      {
-        slug: slug("new-thing"),
-        display: { title: "New Thing" },
-        stamp: "2026-07-26T00:00:00.000Z",
-        created: true,
-      },
-    ]);
+    // "Just created" is now literal — the overlay expires — so the clock is
+    // passed rather than left ambient. Without it this test asserted a
+    // just-created project while the stamp sat in whatever relation to the
+    // wall clock the calendar happened to put it.
+    const stamp = "2026-07-26T00:00:00.000Z";
+    const view = applyPendingProjectDisplays(
+      viewOf([]),
+      [{ slug: slug("new-thing"), display: { title: "New Thing" }, stamp, created: true }],
+      Date.parse(stamp) + 1_000,
+    );
     expect(view.projects.map((project) => project.display.title)).toEqual(["New Thing"]);
     expect(view.projects[0]!.sections).toEqual([]);
+  });
+
+  it("stops rendering a created category no machine ever accepted", () => {
+    // The ghost. A create that every machine refused (or that reached none of
+    // them) has no record for the fold to catch up to, so before the grace it
+    // rendered for the rest of the session: a project you could open, name and
+    // file threads into, none of which went anywhere.
+    const stamp = "2026-07-26T00:00:00.000Z";
+    const pending = [
+      { slug: slug("never-landed"), display: { title: "Ghost" }, stamp, created: true },
+    ];
+    const stampMs = Date.parse(stamp);
+
+    expect(
+      applyPendingProjectDisplays(
+        viewOf([]),
+        pending,
+        stampMs + PENDING_PROJECT_CREATE_GRACE_MS - 1,
+      ).projects,
+    ).toHaveLength(1);
+    expect(
+      applyPendingProjectDisplays(viewOf([]), pending, stampMs + PENDING_PROJECT_CREATE_GRACE_MS)
+        .projects,
+    ).toEqual([]);
+  });
+
+  it("keeps showing a create that a machine did accept, however old", () => {
+    // Past the grace the overlay is gone, but the machine's own record is what
+    // renders now — expiring the overlay must not expire the project.
+    const view = applyPendingProjectDisplays(
+      viewOf([record({ slug: "landed", title: "Landed" })]),
+      [
+        {
+          slug: slug("landed"),
+          display: { title: "Landed" },
+          stamp: "2026-07-26T00:00:00.000Z",
+          created: true,
+        },
+      ],
+      Date.parse("2026-08-01T00:00:00.000Z"),
+    );
+
+    expect(view.projects.map((project) => project.slug)).toEqual(["landed"]);
+  });
+
+  it("never expires a rename, because that project exists", () => {
+    // The asymmetry is deliberate: reverting an edit the operator made, on a
+    // project that is really there, is worse than showing it a while longer.
+    const view = applyPendingProjectDisplays(
+      viewOf([
+        record({ slug: "alpamayo", title: "Alpamayo", updatedAt: "2026-07-25T00:00:00.000Z" }),
+      ]),
+      [
+        {
+          slug: slug("alpamayo"),
+          display: { title: "Alpamayo Pipeline" },
+          stamp: "2026-07-26T00:00:00.000Z",
+          created: false,
+        },
+      ],
+      Date.parse("2026-09-01T00:00:00.000Z"),
+    );
+
+    expect(view.projects[0]!.display.title).toBe("Alpamayo Pipeline");
   });
 
   it("does not invent a category for a write that was not a create", () => {
