@@ -32,7 +32,7 @@ import { useProjectCatalogView, useProjectMembership } from "../../state/project
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../../threadRoutes";
 import { resolveSidebarV2Status } from "../Sidebar.logic";
 import { Button } from "../ui/button";
-import type { SkyMaster } from "../workbench/StarMap.model";
+import type { SkyMaster, SkyProjectScope } from "../workbench/StarMap.model";
 import {
   collectMasterCreatedThreadIds,
   resolveWorkbenchMaster,
@@ -186,6 +186,10 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     [membership.threadKeysBySlug, slug],
   );
   const includeThreadKey = useCallback((key: string) => threadKeys.has(key), [threadKeys]);
+  const scope = useMemo(
+    (): SkyProjectScope => ({ slug: slug as ProjectCategorySlug, includeThreadKey }),
+    [includeThreadKey, slug],
+  );
 
   const rows = useMemo(
     () =>
@@ -367,7 +371,7 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
             masterThreadKey={masterThreadKey}
             master={skyMaster}
             masterCreatedThreadIds={masterCreatedThreadIds}
-            includeThreadKey={includeThreadKey}
+            scope={scope}
             emptyLabel="Nothing is filed here yet. Bind a folder to this project and its threads appear, or file one from the thread itself."
           />
         </div>

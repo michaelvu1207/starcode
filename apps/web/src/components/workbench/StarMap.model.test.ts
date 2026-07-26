@@ -1,5 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectCategorySlug,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { FeatureMapEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -114,6 +120,7 @@ function mapEntry(id: string, overrides?: Partial<FeatureMapEntry>): FeatureMapE
     name: id,
     description: null,
     threadId: null,
+    slug: null,
     stage: "in-progress",
     dependsOn: [],
     planned: false,
@@ -270,6 +277,108 @@ describe("buildSkyModel", () => {
     });
 
     expect(built.features.map((feature) => feature.name)).toEqual(["t-alpha", "t-zulu"]);
+  });
+});
+
+describe("buildSkyModel, scoped to a project", () => {
+  const atlas = ProjectCategorySlug.make("atlas");
+
+  /** A scope that claims exactly the given `environmentId:threadId` keys. */
+  const scopeOver = (...keys: ReadonlyArray<string>) => {
+    const claimed = new Set(keys);
+    return { slug: atlas, includeThreadKey: (key: string) => claimed.has(key) };
+  };
+
+  it("leaves another project's features off this project's sky", () => {
+    // The bug this scope exists for: `includeThreadKey` reached the board and
+    // the flow, and the map entries walked straight past it, so /projects/$slug
+    // rendered every machine's entire feature map.
+    const built = model({
+      mapEntriesByEnvironment: machineMap([
+        mapEntry("aaaaaaaaaaaa", { name: "Ours", slug: atlas }),
+        mapEntry("bbbbbbbbbbbb", {
+          name: "Theirs",
+          slug: ProjectCategorySlug.make("beacon"),
+        }),
+      ]),
+      scope: scopeOver(),
+    });
+
+    expect(built.features.map((feature) => feature.name)).toEqual(["Ours"]);
+  });
+
+  it("keeps a planned feature, which has no thread to be filtered by", () => {
+    const built = model({
+      mapEntriesByEnvironment: machineMap([
+        mapEntry("aaaaaaaaaaaa", { name: "Intended", planned: true, slug: atlas }),
+      ]),
+      scope: scopeOver(),
+    });
+
+    expect(built.features.map((feature) => feature.name)).toEqual(["Intended"]);
+    expect(built.plannedCount).toBe(1);
+  });
+
+  it("keeps an unfiled feature whose thread the project claims", () => {
+    const built = model({
+      board: board([group([card("t-1")])]),
+      mapEntriesByEnvironment: machineMap([
+        mapEntry("aaaaaaaaaaaa", { name: "Inherited", threadId: ThreadId.make("t-1") }),
+      ]),
+      scope: scopeOver("env-mac:t-1"),
+    });
+
+    expect(built.features.map((feature) => feature.name)).toEqual(["Inherited"]);
+  });
+
+  it("drops an unfiled feature whose thread belongs to somebody else", () => {
+    // No board entry for t-2: `buildWorkbenchBoard` takes the same scope's
+    // thread predicate, so a thread this project does not claim never reaches
+    // the sky as a card either. This is the map half of that filter.
+    const built = model({
+      mapEntriesByEnvironment: machineMap([
+        mapEntry("aaaaaaaaaaaa", { name: "Elsewhere", threadId: ThreadId.make("t-2") }),
+      ]),
+      scope: scopeOver("env-mac:t-1"),
+    });
+
+    expect(built.features).toEqual([]);
+  });
+
+  it("folds a project's features across machines", () => {
+    // The rollup, and the reason it is the client's job: each server answered
+    // only about itself, and the union of those answers is this.
+    const built = model({
+      mapEntriesByEnvironment: new Map([
+        ["env-mac", { label: "mac", entries: [mapEntry("aaaaaaaaaaaa", { slug: atlas })] }],
+        [
+          "env-laptop",
+          { label: "simforgelaptop", entries: [mapEntry("bbbbbbbbbbbb", { slug: atlas })] },
+        ],
+      ]),
+      scope: scopeOver(),
+    });
+
+    expect(built.features.map((feature) => feature.machineLabel)).toEqual([
+      "simforgelaptop",
+      "mac",
+    ]);
+  });
+
+  it("shows the whole fleet's map when no project scopes it", () => {
+    const built = model({
+      mapEntriesByEnvironment: machineMap([
+        mapEntry("aaaaaaaaaaaa", { name: "Ours", slug: atlas }),
+        mapEntry("bbbbbbbbbbbb", { name: "Theirs", slug: ProjectCategorySlug.make("beacon") }),
+        mapEntry("cccccccccccc", { name: "Unfiled" }),
+      ]),
+    });
+
+    expect(built.features.map((feature) => feature.name).toSorted()).toEqual([
+      "Ours",
+      "Theirs",
+      "Unfiled",
+    ]);
   });
 });
 
