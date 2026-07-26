@@ -1,4 +1,9 @@
 import {
+  type CliHistoricalUsage,
+  type CliProviderUsage,
+  type CliUsageModelTotals,
+  type CliUsageTotals,
+  EMPTY_CLI_USAGE_TOTALS,
   EMPTY_USAGE_TOTALS,
   type EnvironmentId,
   type EnvironmentUsageSnapshot,
@@ -10,10 +15,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildAccountsUsageView,
+  buildCliHistoryView,
+  foldCliModelRows,
+  formatCount,
+  formatDayRange,
   formatResetCountdown,
   formatTokens,
   formatUsd,
   peakUsedPercent,
+  unpricedShare,
 } from "./AccountsUsage.logic";
 
 const environmentId = (value: string) => value as EnvironmentId;
@@ -51,6 +61,59 @@ const usage = (overrides: Partial<EnvironmentUsageSnapshot> = {}): EnvironmentUs
   totalsToday: EMPTY_USAGE_TOTALS,
   totalsWeek: EMPTY_USAGE_TOTALS,
   ...overrides,
+});
+
+const cliTotals = (overrides: Partial<CliUsageTotals> = {}): CliUsageTotals => ({
+  ...EMPTY_CLI_USAGE_TOTALS,
+  ...overrides,
+});
+
+const cliProvider = (overrides: Partial<CliProviderUsage> = {}): CliProviderUsage => ({
+  provider: "claude",
+  allTime: cliTotals(),
+  last30Days: cliTotals(),
+  last7Days: cliTotals(),
+  today: cliTotals(),
+  models: [],
+  firstDay: null,
+  lastDay: null,
+  sessionFiles: 0,
+  ...overrides,
+});
+
+const cliHistory = (overrides: Partial<CliHistoricalUsage> = {}): CliHistoricalUsage => ({
+  status: "ready",
+  computedAt: "2026-07-25T18:00:00.000Z",
+  providers: [],
+  totals: EMPTY_CLI_USAGE_TOTALS,
+  filesScanned: 0,
+  ...overrides,
+});
+
+/** A provider whose four cumulative windows all carry the same figures. */
+const flatProvider = (
+  provider: CliProviderUsage["provider"],
+  totals: Partial<CliUsageTotals>,
+  rest: Partial<CliProviderUsage> = {},
+): CliProviderUsage =>
+  cliProvider({
+    provider,
+    allTime: cliTotals(totals),
+    last30Days: cliTotals(totals),
+    last7Days: cliTotals(totals),
+    today: cliTotals(totals),
+    ...rest,
+  });
+
+const model = (
+  name: string,
+  costUsd: number,
+  overrides: Partial<CliUsageTotals> = {},
+  priced = true,
+): CliUsageModelTotals => ({
+  model: name,
+  priced,
+  totals: cliTotals({ costUsd, messages: 1, ...overrides }),
 });
 
 describe("buildAccountsUsageView", () => {
@@ -224,6 +287,247 @@ describe("buildAccountsUsageView", () => {
   });
 });
 
+describe("buildCliHistoryView", () => {
+  it("treats an old server's missing key and an explicit null the same way", () => {
+    for (const history of [undefined, null]) {
+      const view = buildCliHistoryView(history);
+      expect(view.reported).toBe(false);
+      expect(view.status).toBeNull();
+      expect(view.pending).toBe(false);
+      expect(view.scanning).toBe(false);
+      expect(view.hasUsage).toBe(false);
+      expect(view.windows.allTime).toEqual(EMPTY_CLI_USAGE_TOTALS);
+    }
+  });
+
+  it("marks a first pass as pending so nothing renders it as zero spend", () => {
+    const view = buildCliHistoryView(
+      cliHistory({ status: "scanning", computedAt: null, filesScanned: 0 }),
+    );
+    expect(view.reported).toBe(true);
+    expect(view.scanning).toBe(true);
+    expect(view.pending).toBe(true);
+    expect(view.hasUsage).toBe(false);
+  });
+
+  it("keeps the last completed pass on screen while a rescan runs", () => {
+    const view = buildCliHistoryView(
+      cliHistory({
+        status: "scanning",
+        computedAt: "2026-07-25T17:00:00.000Z",
+        providers: [flatProvider("claude", { costUsd: 12, messages: 30 })],
+      }),
+    );
+    expect(view.scanning).toBe(true);
+    expect(view.pending).toBe(false);
+    expect(view.windows.allTime.costUsd).toBe(12);
+  });
+
+  it("reports a failed read rather than an empty one", () => {
+    const view = buildCliHistoryView(cliHistory({ status: "failed", computedAt: null }));
+    expect(view.failed).toBe(true);
+    expect(view.pending).toBe(false);
+    expect(view.hasUsage).toBe(false);
+  });
+
+  it("sums every window from the providers it is going to show", () => {
+    const view = buildCliHistoryView(
+      cliHistory({
+        filesScanned: 5_536,
+        providers: [
+          cliProvider({
+            provider: "claude",
+            allTime: cliTotals({ costUsd: 19_389.62, messages: 68_295 }),
+            last30Days: cliTotals({ costUsd: 15_000, messages: 50_000 }),
+            last7Days: cliTotals({ costUsd: 4_000, messages: 12_000 }),
+            today: cliTotals({ costUsd: 500, messages: 1_500 }),
+          }),
+          cliProvider({
+            provider: "codex",
+            allTime: cliTotals({ costUsd: 158_197.9, messages: 1_352_296 }),
+            last30Days: cliTotals({ costUsd: 40_000, messages: 300_000 }),
+            last7Days: cliTotals({ costUsd: 9_000, messages: 70_000 }),
+            today: cliTotals({ costUsd: 1_200, messages: 9_000 }),
+          }),
+        ],
+      }),
+    );
+
+    expect(view.windows.allTime.costUsd).toBeCloseTo(177_587.52, 2);
+    expect(view.windows.allTime.messages).toBe(1_420_591);
+    expect(view.windows.last30Days.costUsd).toBe(55_000);
+    expect(view.windows.today.messages).toBe(10_500);
+    expect(view.filesScanned).toBe(5_536);
+    expect(view.hasUsage).toBe(true);
+  });
+});
+
+describe("fleet CLI history", () => {
+  const environment = (
+    id: string,
+    history: CliHistoricalUsage | null | undefined,
+  ): Parameters<typeof buildAccountsUsageView>[0][number] => ({
+    environmentId: environmentId(id),
+    label: id,
+    config: config([]),
+    // `cliHistory` is an optional key: omitting it is what an old server does.
+    usage: history === undefined ? usage() : usage({ cliHistory: history }),
+  });
+
+  it("stays silent when no machine's server knows about CLI history", () => {
+    const view = buildAccountsUsageView([environment("mac", undefined), environment("box", null)]);
+    expect(view.cliHistory.reported).toBe(false);
+    expect(view.cliHistory.machines).toBe(0);
+    expect(view.groups.every((group) => !group.cliHistory.reported)).toBe(true);
+  });
+
+  it("rolls two machines into one per-provider total, costliest provider first", () => {
+    const view = buildAccountsUsageView([
+      environment(
+        "mac",
+        cliHistory({
+          filesScanned: 100,
+          providers: [
+            flatProvider("claude", { costUsd: 10, messages: 4 }),
+            flatProvider("codex", { costUsd: 90, messages: 40 }),
+          ],
+        }),
+      ),
+      environment(
+        "box",
+        cliHistory({
+          filesScanned: 50,
+          providers: [flatProvider("claude", { costUsd: 5, messages: 2 })],
+        }),
+      ),
+    ]);
+
+    expect(view.cliHistory.reported).toBe(true);
+    expect(view.cliHistory.machines).toBe(2);
+    expect(view.cliHistory.filesScanned).toBe(150);
+    expect(view.cliHistory.windows.allTime.costUsd).toBe(105);
+    expect(view.cliHistory.providers.map((entry) => entry.provider)).toEqual(["codex", "claude"]);
+    expect(view.cliHistory.providers[0]?.machines).toBe(1);
+    expect(view.cliHistory.providers[1]?.machines).toBe(2);
+    expect(view.cliHistory.providers[1]?.windows.allTime.costUsd).toBe(15);
+  });
+
+  it("is scanning while any machine is, and pending only while all of them are", () => {
+    const scanningOnly = buildAccountsUsageView([
+      environment("mac", cliHistory({ status: "scanning", computedAt: null })),
+      environment("box", cliHistory({ status: "scanning", computedAt: null })),
+    ]);
+    expect(scanningOnly.cliHistory.scanning).toBe(true);
+    expect(scanningOnly.cliHistory.pending).toBe(true);
+
+    const mixed = buildAccountsUsageView([
+      environment("mac", cliHistory({ status: "scanning", computedAt: null })),
+      environment(
+        "box",
+        cliHistory({ providers: [flatProvider("codex", { costUsd: 3, messages: 1 })] }),
+      ),
+    ]);
+    expect(mixed.cliHistory.scanning).toBe(true);
+    expect(mixed.cliHistory.pending).toBe(false);
+    expect(mixed.cliHistory.windows.allTime.costUsd).toBe(3);
+  });
+
+  it("flags a failed machine without dropping the machines that answered", () => {
+    const view = buildAccountsUsageView([
+      environment("mac", cliHistory({ status: "failed", computedAt: null })),
+      environment(
+        "box",
+        cliHistory({ providers: [flatProvider("claude", { costUsd: 7, messages: 2 })] }),
+      ),
+    ]);
+    expect(view.cliHistory.failed).toBe(true);
+    expect(view.cliHistory.windows.allTime.costUsd).toBe(7);
+  });
+
+  it("carries unpriced messages up to the fleet, marking the cost a floor", () => {
+    const view = buildAccountsUsageView([
+      environment(
+        "mac",
+        cliHistory({
+          providers: [
+            flatProvider("codex", {
+              costUsd: 158_197.9,
+              messages: 1_352_296,
+              unpricedMessages: 584_734,
+            }),
+            flatProvider("claude", { costUsd: 19_389.62, messages: 68_295 }),
+          ],
+        }),
+      ),
+    ]);
+
+    expect(view.cliHistory.costIsFloor).toBe(true);
+    expect(view.cliHistory.windows.allTime.unpricedMessages).toBe(584_734);
+    expect(unpricedShare(view.cliHistory.windows.allTime)).toBeCloseTo(0.412, 3);
+  });
+
+  it("does not call a fully priced history a floor", () => {
+    const view = buildAccountsUsageView([
+      environment(
+        "mac",
+        cliHistory({ providers: [flatProvider("claude", { costUsd: 4, messages: 9 })] }),
+      ),
+    ]);
+    expect(view.cliHistory.costIsFloor).toBe(false);
+    expect(unpricedShare(cliTotals())).toBeNull();
+  });
+
+  it("leaves the fork-recorded totals untouched by CLI history", () => {
+    const view = buildAccountsUsageView([
+      environment(
+        "mac",
+        cliHistory({ providers: [flatProvider("claude", { costUsd: 19_389.62, messages: 5 })] }),
+      ),
+    ]);
+    expect(view.today).toEqual(EMPTY_USAGE_TOTALS);
+    expect(view.week).toEqual(EMPTY_USAGE_TOTALS);
+  });
+});
+
+describe("foldCliModelRows", () => {
+  it("scales bars against the costliest model", () => {
+    const { rows, shareBasis } = foldCliModelRows([
+      model("claude-fable-5", 11_413.28),
+      model("claude-opus-4-8", 4_841.81),
+    ]);
+    expect(shareBasis).toBe("cost");
+    expect(rows[0]?.share).toBe(1);
+    expect(rows[1]?.share).toBeCloseTo(0.424, 3);
+  });
+
+  it("folds the tail into one row so the rows still add up to the total", () => {
+    const models = Array.from({ length: 11 }, (_, index) => model(`model-${index}`, 11 - index));
+    const { rows } = foldCliModelRows(models, 8);
+
+    expect(rows).toHaveLength(9);
+    const tail = rows[8];
+    expect(tail?.model).toBe("3 more models");
+    expect(tail?.modelCount).toBe(3);
+    expect(tail?.totals.costUsd).toBe(3 + 2 + 1);
+    expect(rows.reduce((total, row) => total + row.totals.costUsd, 0)).toBe(66);
+  });
+
+  it("ranks by messages when nothing in the list has a price", () => {
+    const { rows, shareBasis } = foldCliModelRows([
+      model("gpt-5.6-sol", 0, { messages: 400_000 }, false),
+      model("unknown", 0, { messages: 100_000 }, false),
+    ]);
+    expect(shareBasis).toBe("messages");
+    expect(rows[0]?.priced).toBe(false);
+    expect(rows[0]?.share).toBe(1);
+    expect(rows[1]?.share).toBeCloseTo(0.25, 5);
+  });
+
+  it("has nothing to draw for a provider with no models", () => {
+    expect(foldCliModelRows([]).rows).toEqual([]);
+  });
+});
+
 describe("peakUsedPercent", () => {
   const window = (usedPercent: number | null) => ({
     key: "primary",
@@ -298,6 +602,21 @@ describe("formatting", () => {
     expect(formatTokens(48_000)).toBe("48k");
     expect(formatTokens(2_400_000)).toBe("2.4M");
     expect(formatTokens(31_000_000)).toBe("31M");
+  });
+
+  it("spells message counts out in full", () => {
+    expect(formatCount(0)).toBe("0");
+    expect(formatCount(584_734)).toBe("584,734");
+    expect(formatCount(1_352_296)).toBe("1,352,296");
+  });
+
+  it("describes the span a CLI's history covers", () => {
+    expect(formatDayRange("2026-06-10", "2026-07-25")).toBe("Jun 10 – Jul 25, 2026");
+    expect(formatDayRange("2025-09-15", "2026-07-25")).toBe("Sep 15, 2025 – Jul 25, 2026");
+    expect(formatDayRange("2026-07-25", "2026-07-25")).toBe("Jul 25, 2026");
+    expect(formatDayRange(null, "2026-07-25")).toBeNull();
+    expect(formatDayRange("2026-07-25", null)).toBeNull();
+    expect(formatDayRange("yesterday", "2026-07-25")).toBeNull();
   });
 
   it("counts down to a reset and stays quiet once it has passed", () => {

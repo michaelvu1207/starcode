@@ -1,5 +1,11 @@
 import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
-import type { EnvironmentUsageSnapshot, UsageTotals } from "@t3tools/contracts";
+import {
+  type CliHistoricalUsage,
+  type CliUsageTotals,
+  EMPTY_CLI_USAGE_TOTALS,
+  type EnvironmentUsageSnapshot,
+  type UsageTotals,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -53,6 +59,42 @@ function usage(
     totalsToday: totals(todayCostUsd),
     totalsWeek: totals(todayCostUsd),
   };
+}
+
+/** A finished scan whose whole day's spend sits on one CLI. */
+function cliHistory(todayCostUsd: number): CliHistoricalUsage {
+  const totals: CliUsageTotals = {
+    ...EMPTY_CLI_USAGE_TOTALS,
+    costUsd: todayCostUsd,
+    messages: 1,
+  };
+  return {
+    status: "ready",
+    computedAt: "2026-07-25T11:00:00.000Z",
+    providers: [
+      {
+        provider: "codex",
+        allTime: totals,
+        last30Days: totals,
+        last7Days: totals,
+        today: totals,
+        models: [],
+        firstDay: "2026-07-25",
+        lastDay: "2026-07-25",
+        sessionFiles: 1,
+      },
+    ],
+    totals,
+    filesScanned: 1,
+  };
+}
+
+/** `cliHistory` is an optional key, so it is attached rather than defaulted. */
+function withCliHistory(
+  snapshot: EnvironmentUsageSnapshot,
+  history: CliHistoricalUsage | null,
+): EnvironmentUsageSnapshot {
+  return { ...snapshot, cliHistory: history };
 }
 
 type InstanceUsage = EnvironmentUsageSnapshot["instances"][number];
@@ -336,6 +378,35 @@ describe("buildConnectionMenuRow", () => {
     expect(
       buildConnectionMenuRow(rowInput({ usage: usage([instance()], 4.2) }), NOW).spendTodayUsd,
     ).toBe(4.2);
+  });
+
+  it("reports CLI-store spend beside fork-recorded spend, never merged into it", () => {
+    const row = buildConnectionMenuRow(
+      rowInput({ usage: withCliHistory(usage([instance()], 0), cliHistory(12.5)) }),
+      NOW,
+    );
+    expect(row.spendTodayUsd).toBe(0);
+    expect(row.cliSpendTodayUsd).toBe(12.5);
+  });
+
+  it("has no CLI figure for an old server, or for a scan that has never finished", () => {
+    expect(buildConnectionMenuRow(rowInput({ usage: usage([]) }), NOW).cliSpendTodayUsd).toBeNull();
+    expect(
+      buildConnectionMenuRow(rowInput({ usage: withCliHistory(usage([]), null) }), NOW)
+        .cliSpendTodayUsd,
+    ).toBeNull();
+    expect(
+      buildConnectionMenuRow(
+        rowInput({
+          usage: withCliHistory(usage([]), {
+            ...cliHistory(0),
+            status: "scanning",
+            computedAt: null,
+          }),
+        }),
+        NOW,
+      ).cliSpendTodayUsd,
+    ).toBeNull();
   });
 });
 

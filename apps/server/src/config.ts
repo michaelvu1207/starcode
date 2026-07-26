@@ -33,6 +33,8 @@ export interface ServerDerivedPaths {
   readonly peersPath: string;
   /** Import provenance: which CLI session became which thread. See `history/importRegistry.ts`. */
   readonly historyImportsPath: string;
+  /** Cached per-file aggregates of the CLIs' own session stores. See `usage/cli/CliUsageStore.ts`. */
+  readonly cliUsageCachePath: string;
   /** This machine's half of the cross-machine project categories. See `projectCatalog/ProjectCatalogRegistry.ts`. */
   readonly projectCatalogPath: string;
   readonly featureMapPath: string;
@@ -120,6 +122,7 @@ export const deriveServerPaths = Effect.fn(function* (
     settingsPath: join(stateDir, "settings.json"),
     peersPath: join(stateDir, "peers.json"),
     historyImportsPath: join(stateDir, "history-imports.json"),
+    cliUsageCachePath: join(stateDir, "cli-usage-cache.json"),
     projectCatalogPath: join(stateDir, "project-catalog.json"),
     featureMapPath: join(stateDir, "feature-map.json"),
     providerStatusCacheDir,

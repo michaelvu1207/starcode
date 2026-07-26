@@ -46,6 +46,13 @@ export interface ConnectionMenuRow {
   /** Whether `pingLabel` is a measurement rather than a placeholder. */
   readonly hasPing: boolean;
   readonly spendTodayUsd: number | null;
+  /**
+   * Today's spend from the machine's own CLI session stores. Deliberately a
+   * second number rather than part of `spendTodayUsd`: that one counts turns
+   * the fork ran, this counts messages the CLIs wrote to disk, and a turn the
+   * fork ran through a CLI lands in both.
+   */
+  readonly cliSpendTodayUsd: number | null;
   /** Highest rate-limit window across the machine's accounts, 0-100 or null. */
   readonly peakRateLimitPercent: number | null;
   /** True when at least one account is at or past its warning threshold. */
@@ -165,6 +172,19 @@ export function machineRateLimitWarning(usage: EnvironmentUsageSnapshot | null):
   });
 }
 
+/**
+ * Today's CLI-store spend on one machine, or null when there is no answer:
+ * either the machine's server predates CLI history, or its first scan has not
+ * finished. Null is rendered as nothing at all — a machine mid-scan has not
+ * spent $0.00, we simply do not know yet.
+ */
+export function machineCliSpendTodayUsd(usage: EnvironmentUsageSnapshot | null): number | null {
+  const history = usage?.cliHistory;
+  if (history === null || history === undefined) return null;
+  if (history.status === "scanning" && history.computedAt === null) return null;
+  return history.providers.reduce((total, provider) => total + provider.today.costUsd, 0);
+}
+
 export function buildConnectionMenuRow(
   input: ConnectionMenuRowInput,
   nowMs: number,
@@ -181,6 +201,7 @@ export function buildConnectionMenuRow(
     pingLabel: ping.label,
     hasPing: ping.hasPing,
     spendTodayUsd: input.usage === null ? null : input.usage.totalsToday.costUsd,
+    cliSpendTodayUsd: machineCliSpendTodayUsd(input.usage),
     peakRateLimitPercent: machinePeakRateLimitPercent(input.usage),
     rateLimitWarning: machineRateLimitWarning(input.usage),
     // Retrying a machine that is already connected or mid-dial does nothing
@@ -198,6 +219,8 @@ export interface ConnectionMenuSummary {
   readonly fleetSpendTodayUsd: number;
   /** True when at least one machine reported anything at all. */
   readonly hasFleetSpend: boolean;
+  /** Same day, same fleet, other provenance — the CLIs' own stores. */
+  readonly fleetCliSpendTodayUsd: number;
   /** Drives the badge on the icon-strip trigger. */
   readonly needsAttention: boolean;
   readonly downCount: number;
@@ -217,6 +240,7 @@ export function buildConnectionMenuSummary(
   return {
     rows,
     fleetSpendTodayUsd: spending.reduce((total, value) => total + value, 0),
+    fleetCliSpendTodayUsd: rows.reduce((total, row) => total + (row.cliSpendTodayUsd ?? 0), 0),
     hasFleetSpend: spending.length > 0,
     // A machine that has never been dialled is not an alarm. The badge fires
     // for machines that were meant to be up and are not, and for accounts

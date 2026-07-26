@@ -169,6 +169,14 @@ function ConnectionRow({
             · {formatUsd(row.spendTodayUsd)}
           </span>
         )}
+        {row.cliSpendTodayUsd !== null && row.cliSpendTodayUsd > 0 ? (
+          <span
+            className="shrink-0 tabular-nums text-muted-foreground/70"
+            title="Today's spend in this machine's Claude Code and Codex session stores — separate from what starcode itself recorded, and overlapping it"
+          >
+            · {formatUsd(row.cliSpendTodayUsd)} CLI
+          </span>
+        ) : null}
         <span className="flex-1" />
         {row.retryAvailable ? (
           <button
@@ -285,14 +293,25 @@ export function SidebarConnectionsMenu(): ReactNode {
         <div className="flex flex-col">
           <div className="flex items-baseline justify-between px-2 pb-1.5 pt-0.5">
             <span className="text-xs font-medium text-foreground">Connections</span>
-            {summary.hasFleetSpend ? (
-              <span
-                className="text-[11px] tabular-nums text-muted-foreground"
-                data-testid="connections-menu-fleet-spend"
-              >
-                {formatUsd(summary.fleetSpendTodayUsd)} today
-              </span>
-            ) : null}
+            <span className="flex items-baseline gap-2">
+              {summary.hasFleetSpend ? (
+                <span
+                  className="text-[11px] tabular-nums text-muted-foreground"
+                  data-testid="connections-menu-fleet-spend"
+                >
+                  {formatUsd(summary.fleetSpendTodayUsd)} today
+                </span>
+              ) : null}
+              {summary.fleetCliSpendTodayUsd > 0 ? (
+                <span
+                  className="text-[11px] tabular-nums text-muted-foreground/70"
+                  title="Today's spend in the machines' Claude Code and Codex session stores"
+                  data-testid="connections-menu-fleet-cli-spend"
+                >
+                  {formatUsd(summary.fleetCliSpendTodayUsd)} CLI
+                </span>
+              ) : null}
+            </span>
           </div>
           {summary.rows.length === 0 ? (
             <p className="px-2 py-3 text-[11px] text-muted-foreground/70">

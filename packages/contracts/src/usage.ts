@@ -113,6 +113,97 @@ export const ProviderInstanceUsage = Schema.Struct({
 });
 export type ProviderInstanceUsage = typeof ProviderInstanceUsage.Type;
 
+/**
+ * Which CLI a historical figure came from. This is the *tool* that wrote the
+ * session file, not the model vendor: a Codex rollout that called an Anthropic
+ * model is still `codex`, because the file it lives in is Codex's.
+ */
+export const CliUsageProvider = Schema.Literals(["claude", "codex"]);
+export type CliUsageProvider = typeof CliUsageProvider.Type;
+
+/**
+ * Historical totals read off a CLI's own session store.
+ *
+ * Separate from `UsageTotals` on purpose. That one counts *turns* the fork
+ * itself ran and trusts the provider's own cost figure; this one counts
+ * *messages* found on disk and prices them from a vendored rate table. They
+ * describe different things and must never be silently summed.
+ *
+ * `unpricedMessages` is the honesty valve: a model with no vendored rate still
+ * contributes its tokens here, but contributes nothing to `costUsd`. A caller
+ * that sees a non-zero count knows the cost is a floor, not a total.
+ */
+export const CliUsageTotals = Schema.Struct({
+  costUsd: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  cacheWriteTokens: NonNegativeInt,
+  cacheReadTokens: NonNegativeInt,
+  messages: NonNegativeInt,
+  unpricedMessages: NonNegativeInt,
+});
+export type CliUsageTotals = typeof CliUsageTotals.Type;
+
+export const EMPTY_CLI_USAGE_TOTALS: CliUsageTotals = {
+  costUsd: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheWriteTokens: 0,
+  cacheReadTokens: 0,
+  messages: 0,
+  unpricedMessages: 0,
+};
+
+export const CliUsageModelTotals = Schema.Struct({
+  /** Model id exactly as the session file spelled it. */
+  model: TrimmedNonEmptyString,
+  /** False when no vendored rate matched, which forces `costUsd` to 0. */
+  priced: Schema.Boolean,
+  totals: CliUsageTotals,
+});
+export type CliUsageModelTotals = typeof CliUsageModelTotals.Type;
+
+/**
+ * One CLI's history on one machine, in the four windows the panel shows.
+ *
+ * Windows are cumulative from today backwards and are computed in the
+ * reporting machine's zone, matching `EnvironmentUsageSnapshot.timeZone`.
+ */
+export const CliProviderUsage = Schema.Struct({
+  provider: CliUsageProvider,
+  allTime: CliUsageTotals,
+  last30Days: CliUsageTotals,
+  last7Days: CliUsageTotals,
+  today: CliUsageTotals,
+  /** Costliest first, so a truncated render still shows what dominates. */
+  models: Schema.Array(CliUsageModelTotals),
+  /** `YYYY-MM-DD` bounds of the days that carry usage; null when none do. */
+  firstDay: Schema.NullOr(TrimmedNonEmptyString),
+  lastDay: Schema.NullOr(TrimmedNonEmptyString),
+  sessionFiles: NonNegativeInt,
+});
+export type CliProviderUsage = typeof CliProviderUsage.Type;
+
+/**
+ * Whether the numbers below are final.
+ *
+ * `scanning` is a real state a client must render rather than hide: the first
+ * pass over a multi-gigabyte store takes tens of seconds, and the endpoint
+ * answers immediately with whatever the last completed pass knew.
+ */
+export const CliUsageScanStatus = Schema.Literals(["scanning", "ready", "failed"]);
+export type CliUsageScanStatus = typeof CliUsageScanStatus.Type;
+
+export const CliHistoricalUsage = Schema.Struct({
+  status: CliUsageScanStatus,
+  /** End of the last completed pass; null until one finishes. */
+  computedAt: Schema.NullOr(IsoDateTime),
+  providers: Schema.Array(CliProviderUsage),
+  totals: CliUsageTotals,
+  filesScanned: NonNegativeInt,
+});
+export type CliHistoricalUsage = typeof CliHistoricalUsage.Type;
+
 export const EnvironmentUsageSnapshot = Schema.Struct({
   generatedAt: IsoDateTime,
   /**
@@ -125,5 +216,18 @@ export const EnvironmentUsageSnapshot = Schema.Struct({
   instances: Schema.Array(ProviderInstanceUsage),
   totalsToday: UsageTotals,
   totalsWeek: UsageTotals,
+  /**
+   * What the machine's CLIs spent before, or outside, this fork.
+   *
+   * `optionalKey` in both directions on purpose: a newer client reading an
+   * older server must tolerate the key being absent, and an older client
+   * reading a newer server ignores it. Null means the machine has the feature
+   * but has nothing to report yet.
+   *
+   * Never add this into `totalsToday`/`totalsWeek`. Those count turns this
+   * fork ran; this counts messages found in the CLIs' own stores, and the two
+   * overlap for any turn the fork ran through a CLI that logs to disk.
+   */
+  cliHistory: Schema.optionalKey(Schema.NullOr(CliHistoricalUsage)),
 });
 export type EnvironmentUsageSnapshot = typeof EnvironmentUsageSnapshot.Type;

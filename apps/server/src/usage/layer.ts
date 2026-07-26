@@ -6,5 +6,13 @@
  *
  * @module UsageLayer
  */
+import * as Layer from "effect/Layer";
+
+import { layer as cliUsageStoreLayer } from "./cli/CliUsageStore.ts";
+import { layer as usageStoreLayer } from "./UsageStore.ts";
+
+export { CliUsageStore } from "./cli/CliUsageStore.ts";
 export { usageHttpApiLayer } from "./http.ts";
-export { layer as UsageServicesLive, UsageStore } from "./UsageStore.ts";
+export { UsageStore } from "./UsageStore.ts";
+
+export const UsageServicesLive = Layer.mergeAll(usageStoreLayer, cliUsageStoreLayer);
