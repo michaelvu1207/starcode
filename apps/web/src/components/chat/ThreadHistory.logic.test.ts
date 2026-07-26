@@ -53,6 +53,18 @@ const forkRecord = (overrides?: Partial<HistoryForkRecord>): HistoryForkRecord =
     ...overrides,
   }) as HistoryForkRecord;
 
+/**
+ * Strips the boundary, the way a registry row written before it existed lacks
+ * it. Passing `undefined` for an optional key is not the same shape under
+ * `exactOptionalPropertyTypes`, and it is the absent key that production sees.
+ */
+const withoutBoundary = <T extends { readonly sourceSizeBytes?: number }>(
+  record: T,
+): Omit<T, "sourceSizeBytes"> => {
+  const { sourceSizeBytes: _dropped, ...rest } = record;
+  return rest;
+};
+
 describe("resolveThreadProvenance", () => {
   it("finds the import a thread came from", () => {
     const record = importRecord();
@@ -150,7 +162,7 @@ describe("buildThreadHistoryModel", () => {
     const model = buildThreadHistoryModel({
       provenance: {
         kind: "forked",
-        record: forkRecord({ historySessionId: null, sourceSizeBytes: undefined }),
+        record: withoutBoundary(forkRecord({ historySessionId: null })) as HistoryForkRecord,
       },
       machineLabel: null,
     });
@@ -163,7 +175,10 @@ describe("buildThreadHistoryModel", () => {
     // Written before the boundary existed. Correct until the thread takes a
     // turn of its own, and never a reason to hide the history entirely.
     const model = buildThreadHistoryModel({
-      provenance: { kind: "imported", record: importRecord({ sourceSizeBytes: undefined }) },
+      provenance: {
+        kind: "imported",
+        record: withoutBoundary(importRecord()) as HistoryImportRecord,
+      },
       machineLabel: null,
     });
 

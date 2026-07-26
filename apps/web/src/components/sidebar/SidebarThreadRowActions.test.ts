@@ -1,7 +1,53 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { describe, expect, it } from "vite-plus/test";
 
 import actionsSource from "./SidebarThreadRowActions.tsx?raw";
-import { forkThreadTitle } from "./SidebarThreadRowActions";
+import { canForkConversation, forkThreadTitle } from "./SidebarThreadRowActions";
+
+const shell = (session: unknown): Pick<EnvironmentThreadShell, "session"> =>
+  ({ session }) as Pick<EnvironmentThreadShell, "session">;
+
+describe("canForkConversation", () => {
+  it("carries the conversation for a Claude thread that has spoken", () => {
+    expect(canForkConversation({ driverKind: "claudeAgent", thread: shell({}) })).toBe(true);
+  });
+
+  it("carries the conversation an imported thread inherited before it has spoken", () => {
+    // The case this exists for. An imported thread has hundreds of messages in
+    // the model's context and no session of its own yet, so the plain
+    // `session !== null` test calls it empty — and a fork taken on that answer
+    // silently drops everything the thread was imported to keep.
+    expect(
+      canForkConversation({
+        driverKind: "claudeAgent",
+        thread: shell(null),
+        inheritedConversation: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("still says setup-only for a Claude thread with nothing behind it", () => {
+    expect(
+      canForkConversation({
+        driverKind: "claudeAgent",
+        thread: shell(null),
+        inheritedConversation: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("never carries a conversation on a driver that cannot fork a session", () => {
+    // Codex resumes into the same rollout, so a "fork" there would be two
+    // threads appending to one transcript. Inherited or not, the answer is no.
+    expect(
+      canForkConversation({
+        driverKind: "codex",
+        thread: shell({}),
+        inheritedConversation: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("forkThreadTitle", () => {
   it("names the fork after the thread it came from", () => {

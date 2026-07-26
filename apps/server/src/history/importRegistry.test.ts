@@ -97,6 +97,10 @@ it.effect("keeps one row per session, replacing the earlier import", () =>
 const legacyRegistryContents = (entry: HistoryImportRecord): string =>
   JSON.stringify({ version: 1, imports: [entry] });
 
+/** A file carrying the key but nothing in it — hand-edited, or a fork undone. */
+const emptyForksRegistryContents = (entry: HistoryImportRecord): string =>
+  JSON.stringify({ version: 1, imports: [entry], forks: [] });
+
 const forkRecord = (overrides?: Partial<HistoryForkRecord>): HistoryForkRecord => ({
   threadId: ThreadId.make("thread-fork-1"),
   sourceThreadId: ThreadId.make("thread-1"),
@@ -182,6 +186,29 @@ it.effect("leaves the file shaped as it was on a machine that has never forked",
     // a key nobody asked for is how a format drifts. Absent stays absent.
     const contents = yield* fileSystem.readFileString(config.historyImportsPath);
     assert.isFalse(contents.includes("forks"));
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("normalises an empty forks array back out of the file", () =>
+  Effect.gen(function* () {
+    const registry = yield* HistoryImportRegistry;
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const imported = record();
+
+    yield* fileSystem.writeFileString(
+      config.historyImportsPath,
+      emptyForksRegistryContents(imported),
+    );
+    // Any write rewrites the whole file, so this is the moment the key would
+    // become permanent. A machine that has never forked should keep producing
+    // exactly the file it produced before forks existed — an empty array left
+    // lying in it is how a format drifts one release at a time.
+    yield* registry.record(record({ threadId: ThreadId.make("thread-2") }));
+
+    const contents = yield* fileSystem.readFileString(config.historyImportsPath);
+    assert.isFalse(contents.includes("forks"));
+    assert.deepEqual([...(yield* registry.listForks)], []);
   }).pipe(Effect.provide(makeLayer())),
 );
 

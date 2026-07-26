@@ -49,7 +49,12 @@ import {
   useFileThreadIntoProject,
   useProjectCatalogView,
 } from "../../state/projectCatalog";
-import { useForkThreadConversation } from "../../state/terminalHistory";
+import {
+  useForkThreadConversation,
+  useHistoryImports,
+  useRefreshHistoryImports,
+} from "../../state/terminalHistory";
+import { resolveThreadProvenance } from "../chat/ThreadHistory.logic";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -114,8 +119,21 @@ export function ThreadRowFilingActions({
   readonly onRename: () => void;
 }): ReactNode {
   const catalogSupported = useProjectCatalogSupported(thread.environmentId);
-  const forkThread = useForkThread();
-  const carriesConversation = canForkConversation({ driverKind, thread });
+  const forkThread = useForkThread(thread.environmentId);
+  // Shared, cached, and already read by the thread view and the picker, so
+  // this costs the row nothing. It is here because a thread can carry a
+  // conversation it has never spoken a word of — see `canForkConversation`.
+  const provenance = useHistoryImports(thread.environmentId);
+  const carriesConversation = canForkConversation({
+    driverKind,
+    thread,
+    inheritedConversation:
+      resolveThreadProvenance({
+        imports: provenance.data?.imports ?? null,
+        forks: provenance.data?.forks ?? null,
+        threadId: thread.id,
+      }) !== null,
+  });
 
   return (
     <>
@@ -368,12 +386,17 @@ async function waitForForkedThreadShell(
  * Whether this thread's fork can carry the conversation, guessed from what the
  * row already knows.
  *
- * Two conditions, and both are necessary. The agent has to be one that can fork
- * a *session* — only Claude can; Codex's app-server has `thread/resume` and no
- * fork, and resuming appends to the same rollout, so a Codex "fork" would be
- * two threads writing one transcript. And the thread has to have started a
- * session at all, because a thread that has said nothing has no conversation to
- * carry.
+ * The agent has to be one that can fork a *session* — only Claude can; Codex's
+ * app-server has `thread/resume` and no fork, and resuming appends to the same
+ * rollout, so a Codex "fork" would be two threads writing one transcript.
+ *
+ * Then the thread has to have a conversation to carry, which is true in two
+ * ways rather than one. Usually it means the thread has started a session. But
+ * an imported or forked thread carries hundreds of messages before it has said
+ * anything at all — the model's context came back with the resumed session —
+ * and treating that as "nothing to carry" would fork it into the exact amnesia
+ * the provenance line exists to warn about, silently, on a menu entry that
+ * promised a fork.
  *
  * A guess, deliberately: the authoritative answer lives in the source thread's
  * resume cursor, which is server-side and would cost a round trip per row to
@@ -384,8 +407,11 @@ async function waitForForkedThreadShell(
 export function canForkConversation(input: {
   readonly driverKind: string | null;
   readonly thread: Pick<EnvironmentThreadShell, "session">;
+  /** Whether this thread resumed somebody else's conversation to begin with. */
+  readonly inheritedConversation?: boolean;
 }): boolean {
-  return input.driverKind === CLAUDE_DRIVER_KIND && input.thread.session !== null;
+  if (input.driverKind !== CLAUDE_DRIVER_KIND) return false;
+  return input.thread.session !== null || input.inheritedConversation === true;
 }
 
 /**
@@ -408,13 +434,14 @@ export function canForkConversation(input: {
  * kind they got and why. The one thing that must never happen is a fork that
  * *claims* to carry the conversation and does not.
  */
-function useForkThread(): (
-  thread: EnvironmentThreadShell,
-  carriesConversation: boolean,
-) => Promise<void> {
+function useForkThread(
+  /** The machine whose provenance registry a successful fork invalidates. */
+  environmentId: EnvironmentId,
+): (thread: EnvironmentThreadShell, carriesConversation: boolean) => Promise<void> {
   const router = useRouter();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const forkConversation = useForkThreadConversation();
+  const refreshProvenance = useRefreshHistoryImports(environmentId);
 
   return useCallback(
     async (thread: EnvironmentThreadShell, carriesConversation: boolean) => {
@@ -433,6 +460,12 @@ function useForkThread(): (
           request: {},
         });
         if (attempt.kind === "forked") {
+          // The server just wrote a provenance row, and this registry is
+          // cached per machine with no refresh of its own. Without re-reading
+          // it, the fork we are about to navigate to opens looking like an
+          // ordinary empty thread — with the conversation it inherited hidden
+          // behind a line that has not arrived yet.
+          refreshProvenance();
           await goTo(attempt.result.threadId);
           toastManager.add({
             type: "success",

@@ -108,7 +108,13 @@ export function ThreadHistorySection(props: {
           // owns the rest of the column, and history that pushed the live
           // conversation off screen would have inverted which of the two the
           // view is about.
-          className="flex max-h-[45vh] min-h-0 shrink-0 flex-col overflow-y-auto bg-muted/20 px-5 py-3"
+          // `bg-card` rather than `bg-muted`: the muted token in this theme is
+          // 6% of a cream over transparent, so a tint of it is invisible against
+          // the app background. This region has to read as *not* part of the
+          // conversation below it at a glance, not on inspection, so it takes
+          // the same recessed surface panels elsewhere use — plus a little
+          // transparency, since the theme's backdrop should still show through.
+          className="flex max-h-[45vh] min-h-0 shrink-0 flex-col overflow-y-auto bg-card/70 px-5 py-3 opacity-85"
         >
           {canLoadEarlier(paging) ? (
             <button
