@@ -153,6 +153,7 @@ function ThreadRowMenu({
   open,
   onOpenChange,
   thread,
+  driverKind,
   rowAction,
   settlementSupported,
   snoozeAllowed,
@@ -169,6 +170,8 @@ function ThreadRowMenu({
   readonly onOpenChange: (open: boolean) => void;
   /** The thread the verbs below act on; they resolve their own state from it. */
   readonly thread: SidebarThreadSummary;
+  /** Which agent drives it. Only some can fork a session — see the fork entry. */
+  readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
   readonly rowAction: "settle" | "unsettle" | "unsnooze";
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
@@ -242,7 +245,9 @@ function ThreadRowMenu({
             block that is always here. Mounted only while the popup is open —
             they carry their own hooks, and the row is rendered hundreds of
             times. */}
-        {open ? <ThreadRowFilingActions thread={thread} onRename={onRename} /> : null}
+        {open ? (
+          <ThreadRowFilingActions thread={thread} driverKind={driverKind} onRename={onRename} />
+        ) : null}
         {hasLifecycleEntries ? <MenuSeparator /> : null}
         {rowAction === "unsnooze" ? (
           snoozeSupported ? (
@@ -517,6 +522,7 @@ export function SidebarThreadRow({
                   open={menuOpen}
                   onOpenChange={setMenuOpen}
                   thread={thread}
+                  driverKind={driverKind}
                   rowAction={rowAction}
                   settlementSupported={settlementSupported}
                   snoozeAllowed={snoozeAllowed}

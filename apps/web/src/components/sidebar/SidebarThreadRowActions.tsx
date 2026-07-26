@@ -49,6 +49,7 @@ import {
   useFileThreadIntoProject,
   useProjectCatalogView,
 } from "../../state/projectCatalog";
+import { useForkThreadConversation } from "../../state/terminalHistory";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -66,6 +67,15 @@ import "../projects/Projects.css";
  */
 const FORKED_THREAD_ARRIVAL_TIMEOUT_MS = 8_000;
 const FORKED_THREAD_POLL_INTERVAL_MS = 100;
+
+/**
+ * The `ProviderDriverKind` the Claude driver registers — `claudeAgent`, not
+ * `claude`. The server gates on the same string, and the two spellings living
+ * in different vocabularies is the trap: `claude` is what `HistoryProvider`
+ * calls the same provider, and using it here would silently label every Claude
+ * thread "setup only".
+ */
+const CLAUDE_DRIVER_KIND = "claudeAgent";
 
 /** Titles are display, but an unbounded one is a row that never truncates. */
 const FORK_TITLE_MAX_LENGTH = 120;
@@ -94,14 +104,18 @@ function useProjectCatalogSupported(environmentId: EnvironmentId): boolean {
  */
 export function ThreadRowFilingActions({
   thread,
+  driverKind,
   onRename,
 }: {
   readonly thread: EnvironmentThreadShell;
+  /** Which agent drives the thread. Only some can fork a session — see below. */
+  readonly driverKind: string | null;
   /** Puts the row into its inline rename input; owned by the sidebar. */
   readonly onRename: () => void;
 }): ReactNode {
   const catalogSupported = useProjectCatalogSupported(thread.environmentId);
   const forkThread = useForkThread();
+  const carriesConversation = canForkConversation({ driverKind, thread });
 
   return (
     <>
@@ -122,17 +136,29 @@ export function ThreadRowFilingActions({
         Rename
       </MenuItem>
       {catalogSupported ? <ThreadRowProjectSubmenu thread={thread} /> : null}
+      {/* One entry, two honest labels. Which one you get is a property of the
+          thread — its agent, and whether it has said anything yet — and saying
+          so on the entry is what stops the click being a surprise. Deliberately
+          NOT disabled in the setup-only case: a fork that carries the branch,
+          worktree and model is still worth having, and taking it away from
+          every Codex thread to make a point would be a worse trade. */}
       <MenuItem
         closeOnClick
         data-testid="sidebar-v2-row-fork"
+        data-carries-conversation={carriesConversation ? "true" : "false"}
         onClick={(event) => {
           event.stopPropagation();
-          void forkThread(thread);
+          void forkThread(thread, carriesConversation);
         }}
         className="sm:text-xs"
       >
         <GitBranchPlusIcon aria-hidden className="size-3.5" />
-        Fork thread
+        <span className="flex-1">
+          {carriesConversation ? "Fork with conversation" : "Fork thread"}
+        </span>
+        {carriesConversation ? null : (
+          <span className="text-[10px] text-muted-foreground/60">setup only</span>
+        )}
       </MenuItem>
     </>
   );
@@ -339,67 +365,134 @@ async function waitForForkedThreadShell(
 }
 
 /**
- * Forking, and what it honestly is here.
+ * Whether this thread's fork can carry the conversation, guessed from what the
+ * row already knows.
  *
- * The new thread inherits everything about *where and how* the source runs —
- * machine, project, branch, worktree, provider instance, model, permission and
- * interaction mode — and starts its own conversation. It does not inherit the
- * agent's context, and it deliberately does not try to: the only client-visible
- * handle on a running conversation would be the provider's session, and two
- * threads pointed at one session append to one transcript and corrupt both. The
- * toast says which half you got, at the moment you get it, rather than leaving
- * the word "fork" to imply the other half.
+ * Two conditions, and both are necessary. The agent has to be one that can fork
+ * a *session* — only Claude can; Codex's app-server has `thread/resume` and no
+ * fork, and resuming appends to the same rollout, so a Codex "fork" would be
+ * two threads writing one transcript. And the thread has to have started a
+ * session at all, because a thread that has said nothing has no conversation to
+ * carry.
  *
- * (Carrying the conversation is possible, but it is a server feature — see the
- * fork report. Nothing here is in its way: it would put a resume cursor on the
- * thread this already creates.)
+ * A guess, deliberately: the authoritative answer lives in the source thread's
+ * resume cursor, which is server-side and would cost a round trip per row to
+ * render a label. So this decides what the menu *says*, the server decides what
+ * actually happens, and the toast reports the server's answer. When they
+ * disagree the fork still lands — as a setup fork — and says so.
  */
-function useForkThread(): (thread: EnvironmentThreadShell) => Promise<void> {
+export function canForkConversation(input: {
+  readonly driverKind: string | null;
+  readonly thread: Pick<EnvironmentThreadShell, "session">;
+}): boolean {
+  return input.driverKind === CLAUDE_DRIVER_KIND && input.thread.session !== null;
+}
+
+/**
+ * Forking, both halves of it.
+ *
+ * The **conversation fork** is a server call, because naming the session behind
+ * a thread is something only the server can do — the client is never told a
+ * thread's provider session id. The server binds the new thread to the source's
+ * session with a marker that makes the provider fork on the first turn, so the
+ * source's transcript is read and never written.
+ *
+ * The **setup fork** is what happens otherwise, and it is a plain
+ * `thread.create`: same machine, project, branch, worktree, model, permission
+ * and interaction mode, fresh conversation.
+ *
+ * Every path that cannot carry the conversation falls back to the setup fork
+ * rather than failing. A refusal is information ("this agent cannot fork a
+ * session", "this thread has not spoken yet"), not a dead end, and the user
+ * still wanted a sibling thread — so they get one, and the toast says which
+ * kind they got and why. The one thing that must never happen is a fork that
+ * *claims* to carry the conversation and does not.
+ */
+function useForkThread(): (
+  thread: EnvironmentThreadShell,
+  carriesConversation: boolean,
+) => Promise<void> {
   const router = useRouter();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const forkConversation = useForkThreadConversation();
 
   return useCallback(
-    async (thread: EnvironmentThreadShell) => {
-      const threadId = newThreadId();
-      const title = forkThreadTitle(thread.title);
-      const result = await createThread({
-        environmentId: thread.environmentId,
-        input: {
-          threadId,
-          projectId: thread.projectId,
-          title,
-          modelSelection: thread.modelSelection,
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to fork thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
+    async (thread: EnvironmentThreadShell, carriesConversation: boolean) => {
+      const goTo = async (threadId: ThreadId) => {
+        await waitForForkedThreadShell(thread.environmentId, threadId);
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, threadId)),
+        });
+      };
+
+      if (carriesConversation) {
+        const attempt = await forkConversation({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+          request: {},
+        });
+        if (attempt.kind === "forked") {
+          await goTo(attempt.result.threadId);
+          toastManager.add({
+            type: "success",
+            title: `Forked "${thread.title}"`,
+            description: "The agent keeps the conversation. The original is untouched.",
+            timeout: 6_000,
+          });
+          return;
+        }
+        // Fall through to the setup fork, carrying the reason so the toast can
+        // explain why this one starts fresh.
+        const why = attempt.kind === "refused" ? attempt.detail : attempt.message;
+        await createSetupFork(thread, why);
         return;
       }
-      await waitForForkedThreadShell(thread.environmentId, threadId);
-      toastManager.add({
-        type: "success",
-        title: `Forked "${thread.title}"`,
-        description: "Same folder, branch and model. The conversation starts fresh.",
-        timeout: 6_000,
-      });
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, threadId)),
-      });
+      await createSetupFork(thread, null);
+
+      async function createSetupFork(
+        source: EnvironmentThreadShell,
+        why: string | null,
+      ): Promise<void> {
+        const threadId = newThreadId();
+        const result = await createThread({
+          environmentId: source.environmentId,
+          input: {
+            threadId,
+            projectId: source.projectId,
+            title: forkThreadTitle(source.title),
+            modelSelection: source.modelSelection,
+            runtimeMode: source.runtimeMode,
+            interactionMode: source.interactionMode,
+            branch: source.branch,
+            worktreePath: source.worktreePath,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to fork thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+          return;
+        }
+        await goTo(threadId);
+        toastManager.add({
+          type: "success",
+          title: `Forked "${source.title}"`,
+          description:
+            why === null
+              ? "Same folder, branch and model. The conversation starts fresh."
+              : `Same folder, branch and model, but the conversation starts fresh: ${why}`,
+          timeout: 6_000,
+        });
+      }
     },
-    [createThread, router],
+    [createThread, forkConversation, router],
   );
 }

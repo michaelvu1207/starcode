@@ -237,10 +237,17 @@ describe("SidebarThreadRow", () => {
     // hundreds. Gating on `open` is what keeps one row's menu from charging
     // every other row for it. Source-level: SSR never opens a base-ui popup, so
     // a render cannot tell the two apart.
-    expect(rowSource).toContain(
-      "{open ? <ThreadRowFilingActions thread={thread} onRename={onRename} /> : null}",
-    );
-    expect(rowSource).toContain("{open ? <ThreadRowArchiveAction thread={thread} /> : null}");
+    //
+    // Asserted as "each mount sits inside an `open ?` guard" rather than as one
+    // exact line, because the formatter reflows these across lines the moment a
+    // prop is added — and a discriminator that breaks on reformatting is a
+    // discriminator that gets deleted rather than fixed.
+    for (const component of ["<ThreadRowFilingActions", "<ThreadRowArchiveAction"]) {
+      const at = rowSource.indexOf(component);
+      expect(at).toBeGreaterThan(-1);
+      const guard = rowSource.slice(Math.max(0, at - 60), at);
+      expect(guard).toContain("{open ? ");
+    }
   });
 
   it("puts archive last, alone, below its own separator", () => {

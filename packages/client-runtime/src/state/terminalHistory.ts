@@ -22,9 +22,12 @@
  *
  * @module ClientRuntimeTerminalHistory
  */
-import { HistoryImportRefusedError } from "@t3tools/contracts";
+import { HistoryForkRefusedError, HistoryImportRefusedError } from "@t3tools/contracts";
 import type {
   EnvironmentId,
+  HistoryForkRefusalReason,
+  HistoryForkRequest,
+  HistoryForkResult,
   HistoryImportNeedsProjectResult,
   HistoryImportRefusalReason,
   HistoryImportRequest,
@@ -33,6 +36,7 @@ import type {
   HistorySessionId,
   HistorySessionsPage,
   HistoryPreview,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -299,6 +303,109 @@ const describeImportFailure = (error: unknown): HistoryImportAttempt => {
   return { kind: "unavailable", message };
 };
 
+/**
+ * The four ways a fork ends, and only one of them is an error.
+ *
+ * `refused` is the interesting one and the reason this is a value rather than a
+ * failure: "this driver cannot fork a session" and "this thread has not spoken
+ * yet" are both 409s that the caller acts on differently — the first is
+ * permanent, the second clears the moment somebody sends a message — and a
+ * caller that only saw "it failed" would offer the wrong next step for both.
+ */
+export type HistoryForkAttempt =
+  | { readonly kind: "forked"; readonly result: HistoryForkResult }
+  | {
+      readonly kind: "refused";
+      readonly reason: HistoryForkRefusalReason;
+      readonly detail: string | null;
+    }
+  | { readonly kind: "unavailable"; readonly message: string };
+
+const isHistoryForkRefusal = Schema.is(HistoryForkRefusedError);
+
+const describeForkFailure = (error: unknown): HistoryForkAttempt => {
+  if (isHistoryForkRefusal(error)) {
+    return { kind: "refused", reason: error.reason, detail: error.detail ?? null };
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { readonly _tag?: unknown })._tag === "EnvironmentResourceNotFoundError"
+  ) {
+    return { kind: "unavailable", message: "That thread is no longer on this machine." };
+  }
+  // A pre-fork server answers this POST with the SPA's HTML and a 200, so a
+  // decode failure and "this server is too old" are the same event — and the
+  // caller's fallback (a fork that carries the setup but not the conversation)
+  // is exactly right for it.
+  if (Schema.isSchemaError(error)) {
+    return {
+      kind: "unavailable",
+      message: "This machine is running an older server that cannot fork conversations yet.",
+    };
+  }
+  const message =
+    typeof error === "object" && error !== null && typeof (error as Error).message === "string"
+      ? (error as Error).message
+      : "The fork failed.";
+  return { kind: "unavailable", message };
+};
+
+/**
+ * Same contract as the import call, for the same reasons: not swallowed, not
+ * routed through `executeEnvironmentHttpRequest` (which would flatten the 409
+ * whose contents are the whole point), and generously timed because the server
+ * reads a binding, creates a thread and writes another binding before it
+ * answers.
+ */
+const DEFAULT_HISTORY_FORK_TIMEOUT_MS = 20_000;
+
+export const requestEnvironmentHistoryFork = Effect.fn(
+  "clientRuntime.state.requestEnvironmentHistoryFork",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly threadId: ThreadId;
+  readonly request: HistoryForkRequest;
+  readonly timeoutMs?: number;
+}) {
+  // Interpolated by hand as well as templated: a relay connection's DPoP proof
+  // binds to the exact URL, so which thread was forked has to be in the path
+  // the proof covered.
+  const requestUrl = environmentEndpointUrl(
+    input.prepared.httpBaseUrl,
+    `/api/history/threads/${input.threadId}/fork`,
+  );
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "POST",
+    requestUrl,
+    input.signer,
+  );
+  return yield* withEnvironmentCredentials(
+    input.prepared.httpAuthorization,
+    client.history.fork({
+      headers,
+      params: { threadId: input.threadId },
+      payload: input.request,
+    }),
+  ).pipe(
+    Effect.timeoutOption(Duration.millis(input.timeoutMs ?? DEFAULT_HISTORY_FORK_TIMEOUT_MS)),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.fail(
+            new HistoryImportTimeoutError({
+              message: `The fork request to ${requestUrl} timed out.`,
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+});
+
 export class TerminalHistoryLoader extends Context.Service<
   TerminalHistoryLoader,
   {
@@ -327,6 +434,16 @@ export class TerminalHistoryLoader extends Context.Service<
       readonly sessionId: HistorySessionId;
       readonly request: HistoryImportRequest;
     }) => Effect.Effect<HistoryImportAttempt>;
+    /**
+     * Import's mirror: bind a NEW thread to the session an existing thread is
+     * already using, so the fork's first turn resumes with the model's context
+     * intact. Keyed by thread id because the client cannot name a session.
+     */
+    readonly forkThread: (input: {
+      readonly prepared: PreparedConnection;
+      readonly threadId: ThreadId;
+      readonly request: HistoryForkRequest;
+    }) => Effect.Effect<HistoryForkAttempt>;
   }
 >()("@t3tools/client-runtime/state/terminalHistory/TerminalHistoryLoader") {}
 
@@ -419,6 +536,26 @@ export const terminalHistoryLoaderLayer: Layer.Layer<
                 kind: "unavailable",
                 message: "The machine could not be reached.",
               } satisfies HistoryImportAttempt),
+            ),
+          ),
+        ),
+      forkThread: (input) =>
+        requestEnvironmentHistoryFork({
+          prepared: input.prepared,
+          signer,
+          threadId: input.threadId,
+          request: input.request,
+        }).pipe(
+          Effect.map((result): HistoryForkAttempt => ({ kind: "forked", result })),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catch((error) => Effect.succeed(describeForkFailure(error))),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("A thread fork failed.").pipe(
+              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
+              Effect.as({
+                kind: "unavailable",
+                message: "The machine could not be reached.",
+              } satisfies HistoryForkAttempt),
             ),
           ),
         ),
@@ -607,5 +744,28 @@ export function createEnvironmentTerminalHistoryAtoms<R, E>(
     },
   });
 
-  return { sessionsAtom, previewAtom, importsAtom, importCommand };
+  /**
+   * The fork. Serial per environment for the same reason import is: a
+   * double-clicked menu entry must not race two forks of one thread, each
+   * creating a thread bound to the same session.
+   */
+  const forkCommand = createEnvironmentCommand(runtime, {
+    label: "environment-history:fork",
+    execute: (input: { readonly threadId: ThreadId; readonly request: HistoryForkRequest }) =>
+      withPreparedConnection((prepared) =>
+        Effect.flatMap(TerminalHistoryLoader, (loader) =>
+          loader.forkThread({
+            prepared,
+            threadId: input.threadId,
+            request: input.request,
+          }),
+        ),
+      ),
+    concurrency: {
+      mode: "serial",
+      key: ({ environmentId }) => environmentId,
+    },
+  });
+
+  return { sessionsAtom, previewAtom, importsAtom, importCommand, forkCommand };
 }

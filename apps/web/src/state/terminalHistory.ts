@@ -16,17 +16,20 @@ import {
   createEnvironmentTerminalHistoryAtoms,
   historySessionsAtomKey,
   historyPreviewAtomKey,
+  type HistoryForkAttempt,
   type HistoryImportAttempt,
   type HistorySessionsKey,
   type HistoryPreviewKey,
 } from "@t3tools/client-runtime/state/terminal-history";
 import type {
   EnvironmentId,
+  HistoryForkRequest,
   HistoryImportRequest,
   HistoryImportsPage,
   HistoryPreview,
   HistorySessionId,
   HistorySessionsPage,
+  ThreadId,
 } from "@t3tools/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -150,5 +153,33 @@ export function useImportHistorySession(): (input: {
     return AsyncResult.isSuccess(result)
       ? result.value
       : { kind: "unavailable", message: "The import could not be started." };
+  };
+}
+
+/**
+ * Runs one conversation fork. Resolves to the outcome the caller renders —
+ * including the refusals, which are values here rather than failures, because
+ * "this driver cannot fork" is the sentence the caller needs, not a toast
+ * saying something went wrong.
+ */
+export function useForkThreadConversation(): (input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly request: HistoryForkRequest;
+}) => Promise<HistoryForkAttempt> {
+  const run = useAtomCommand(environmentTerminalHistory.forkCommand, {
+    label: "web:history:fork",
+    // Empty failure channel by construction: the loader turns every refusal
+    // and every unreachable machine into a value.
+    reportFailure: false,
+  });
+  return async (input) => {
+    const result = await run({
+      environmentId: input.environmentId,
+      input: { threadId: input.threadId, request: input.request },
+    });
+    return AsyncResult.isSuccess(result)
+      ? result.value
+      : { kind: "unavailable", message: "The fork could not be started." };
   };
 }
