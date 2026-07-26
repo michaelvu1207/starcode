@@ -226,6 +226,8 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     [mapEntriesByEnvironment, project?.sections],
   );
   const featureSummary = describeProjectFeatures(featureRollup, silentMachines);
+  /** Machines the catalog fold could not read at all — see the delete dialog. */
+  const unreachableLabels = useMemo(() => view.notes.map((note) => note.label), [view.notes]);
 
   const rows = useMemo(
     () =>
@@ -492,6 +494,11 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
         slug={project.slug}
         title={project.display.title}
         threadCount={threadKeys.size}
+        // Every machine the fold could not read, not just the ones carrying
+        // this project: a machine that did not answer cannot be asked whether
+        // it holds the category, and reporting the count as if it could is the
+        // claim invariant 12 forbids.
+        unreachableLabels={unreachableLabels}
         environmentLabelById={environmentLabelById}
         onDelete={writer.remove}
         onDeleted={() => void navigate({ to: "/projects" })}

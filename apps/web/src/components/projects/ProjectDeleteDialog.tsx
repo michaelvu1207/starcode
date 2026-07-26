@@ -28,6 +28,7 @@ import {
   PROJECT_DELETE_GUARANTEES,
   projectDeleteConsequence,
   projectDeleteRefusalHeadline,
+  projectDeleteUnreachableNote,
 } from "./ProjectDelete.copy";
 import {
   Dialog,
@@ -45,6 +46,7 @@ export function ProjectDeleteDialog({
   slug,
   title,
   threadCount,
+  unreachableLabels,
   environmentLabelById,
   onDelete,
   onDeleted,
@@ -55,6 +57,12 @@ export function ProjectDeleteDialog({
   readonly title: string;
   /** How many threads lose their label. Zero is worth saying out loud too. */
   readonly threadCount: number;
+  /**
+   * Machines the fold could not read. The delete cannot reach them, so they
+   * keep the category and hand it back — the same outcome as a refusal, but
+   * knowable before the button rather than after it.
+   */
+  readonly unreachableLabels: ReadonlyArray<string>;
   readonly environmentLabelById: ReadonlyMap<string, string>;
   readonly onDelete: (slug: ProjectCategorySlug) => Promise<ProjectCatalogFanOutResult>;
   /** Called once every machine has taken it, for the caller to navigate away. */
@@ -85,13 +93,16 @@ export function ProjectDeleteDialog({
   };
 
   const attempted = refusals.length > 0;
+  const unreachable = projectDeleteUnreachableNote(unreachableLabels);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Delete {title}?</DialogTitle>
-          <DialogDescription>{projectDeleteConsequence(threadCount)}</DialogDescription>
+          <DialogDescription>
+            {projectDeleteConsequence(threadCount, unreachableLabels.length)}
+          </DialogDescription>
         </DialogHeader>
 
         <DialogPanel scrollFade={false}>
@@ -100,6 +111,15 @@ export function ProjectDeleteDialog({
               <li key={guarantee}>{guarantee}</li>
             ))}
           </ul>
+
+          {unreachable === null ? null : (
+            <p
+              data-testid="project-delete-unreachable"
+              className="mt-3 rounded-md border border-border/60 bg-muted/30 p-2 text-[11px] text-muted-foreground"
+            >
+              {unreachable}
+            </p>
+          )}
 
           {attempted ? (
             <div
