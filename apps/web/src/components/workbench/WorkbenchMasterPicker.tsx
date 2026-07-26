@@ -26,6 +26,13 @@ export interface WorkbenchMasterPickerProps {
   readonly currentThreadKey: string | null;
   readonly onPick: (environmentId: EnvironmentId, threadId: string) => void;
   readonly onCreate: (projectRef: ScopedProjectRef) => void;
+  /**
+   * Split view reuses this picker to fill its second pane, where a brand-new
+   * thread is a client-side draft rather than the server thread that pane
+   * renders. An optional prop rather than a generalisation: the component
+   * stays where it is and keeps its name.
+   */
+  readonly showCreate?: boolean;
 }
 
 interface PickerRow {
@@ -41,6 +48,7 @@ export function WorkbenchMasterPicker({
   currentThreadKey,
   onPick,
   onCreate,
+  showCreate = true,
 }: WorkbenchMasterPickerProps) {
   const threads = useThreadShells();
   const projects = useProjects();
@@ -144,7 +152,7 @@ export function WorkbenchMasterPicker({
         )}
       </ul>
 
-      {localProjects.length > 0 ? (
+      {showCreate && localProjects.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-muted-foreground/60">or start a new one in</span>
           {localProjects.map((project) => (

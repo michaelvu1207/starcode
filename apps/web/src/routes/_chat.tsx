@@ -10,6 +10,7 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+import { useFocusedPaneThreadRef } from "../components/split/openThreadInFocusedPane";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -42,17 +43,20 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
+  // Fork: with a split open, a command reaches the *focused* pane, so the
+  // `when:` context it is matched against has to describe that pane.
+  const focusedThreadRef = useFocusedPaneThreadRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    focusedThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, focusedThreadRef).terminalOpen
       : false,
   );
   // The `previewOpen` shortcut-context flag here uses the store-only value;
   // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
   // which we invoke via the action bus to avoid duplicating the rule.
   const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+    focusedThreadRef
+      ? selectActiveRightPanel(state.byThreadKey, focusedThreadRef) === "preview"
       : false,
   );
   useEffect(() => {
@@ -160,6 +164,7 @@ function ChatRouteGlobalShortcuts() {
     activeDraftThread,
     activeThread,
     clearSelection,
+    focusedThreadRef,
     handleNewThread,
     keybindings,
     defaultProjectRef,

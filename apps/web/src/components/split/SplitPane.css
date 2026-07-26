@@ -1,0 +1,124 @@
+/**
+ * Fork-owned styling for the split divider.
+ *
+ * Writes nothing into `starcode-theme.css` and defines no token of its own —
+ * it reads what that file publishes and stops there, the same contract
+ * `Connections.css` and `Projects.css` keep.
+ *
+ * The divider sits between two dense working surfaces, which is exactly where
+ * the restraint rule says decoration does not belong. So at rest it is a
+ * hairline indistinguishable from any other panel border. The engraving only
+ * arrives when you reach for it: the four-point star node from the glyph
+ * vocabulary, drawn as a *mask* over `--sc-glyph-ink` rather than a fill,
+ * which is what keeps it correct in light theme where the ink inverts. While
+ * dragging, the hairline warms toward butter at low alpha. No glow, no
+ * motion, no trail.
+ *
+ * The panes themselves paint nothing. The one body-level sky runs behind both
+ * of them and behind this track, so the split does not become a third surface
+ * to hand-tune.
+ */
+
+.sc-split-divider {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  /* The visible rule is one pixel; the grabbable track is the whole 6px
+     column, so you can take hold of it without aiming. */
+  background-color: transparent;
+}
+
+.sc-split-divider::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background-color: color-mix(in srgb, var(--border) 60%, transparent);
+  transition: background-color 150ms ease;
+}
+
+.sc-split-divider:hover::before,
+.sc-split-divider:focus-visible::before {
+  background-color: var(--border);
+}
+
+.sc-split-divider[data-dragging="true"]::before {
+  /* Chrome-level restraint: the ceiling here is the same one the starfield
+     answers to, not the empty-state level. */
+  background-color: color-mix(
+    in srgb,
+    var(--sc-butter) calc(var(--sc-star-chrome-max) * 100%),
+    var(--border)
+  );
+}
+
+.sc-split-divider:focus-visible {
+  outline: none;
+}
+
+/* The grip. Absent until the divider is hovered, focused or held — found
+   rather than noticed. */
+.sc-split-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 150ms ease;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-split-grip);
+  mask-image: var(--sc-split-grip);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 10px 10px;
+  mask-size: 10px 10px;
+}
+
+.sc-split-divider:hover::after,
+.sc-split-divider:focus-visible::after,
+.sc-split-divider[data-dragging="true"]::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-split-divider::before,
+  .sc-split-divider::after {
+    transition: none;
+  }
+}
+
+/**
+ * The single four-point star node, in the same `Q`-curve construction the
+ * constellation glyph uses. Local to this file because the theme publishes
+ * the three-star constellation, not one node on its own; the shape is
+ * re-derived from the same rule rather than copied out of its bytes.
+ */
+.sc-split-divider {
+  --sc-split-grip: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%2710%27%20viewBox%3D%270%200%2010%2010%27%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M5%200%20Q5%205%2010%205%20Q5%205%205%2010%20Q5%205%200%205%20Q5%205%205%200%20Z%27%2F%3E%3C%2Fsvg%3E");
+}
+
+/**
+ * The focused pane, marked so "where will this land" is never a guess.
+ *
+ * A ring would fight two transcripts for attention, so this is the quietest
+ * mark that still reads: the *unfocused* pane's edge dims rather than the
+ * focused one lighting up. Only applied while a real split is on screen —
+ * with one pane there is nothing to disambiguate.
+ */
+.sc-split-container[data-split-live="true"] .sc-split-pane[data-split-pane-focused="false"] {
+  opacity: 0.94;
+  transition: opacity 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-split-container[data-split-live="true"] .sc-split-pane[data-split-pane-focused="false"] {
+    transition: none;
+  }
+}

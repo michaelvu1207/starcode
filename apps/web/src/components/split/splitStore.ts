@@ -42,8 +42,14 @@ export interface SplitStoreState {
    * synchronously, without a hook and without re-subscribing.
    */
   renderState: SplitRenderState;
+  /**
+   * Last measured width of the pane region, `null` before first measure.
+   * Published alongside `renderState` so the affordance can say *why* it is
+   * unavailable instead of just vanishing.
+   */
+  containerWidth: number | null;
 
-  setRenderState: (renderState: SplitRenderState) => void;
+  setRenderState: (renderState: SplitRenderState, containerWidth: number | null) => void;
   openSplit: () => void;
   closeSplit: () => void;
   setSecondary: (ref: ScopedThreadRef | null) => void;
@@ -62,9 +68,14 @@ export const useSplitStore = create<SplitStoreState>()(
       ratio: SPLIT_DEFAULT_RATIO,
       focusedPane: "primary",
       renderState: "off",
+      containerWidth: null,
 
-      setRenderState: (renderState) =>
-        set((state) => (state.renderState === renderState ? state : { renderState })),
+      setRenderState: (renderState, containerWidth) =>
+        set((state) =>
+          state.renderState === renderState && state.containerWidth === containerWidth
+            ? state
+            : { renderState, containerWidth },
+        ),
       // Opening focuses the empty pane, so the first sidebar click after
       // splitting fills it without a second affordance.
       openSplit: () => set({ enabled: true, focusedPane: "secondary" }),

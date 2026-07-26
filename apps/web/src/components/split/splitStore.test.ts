@@ -16,6 +16,7 @@ describe("splitStore", () => {
       ratio: SPLIT_DEFAULT_RATIO,
       focusedPane: "primary",
       renderState: "off",
+      containerWidth: null,
     });
   });
 
@@ -64,7 +65,7 @@ describe("splitStore", () => {
 
   it("does not churn subscribers when the render state is unchanged", () => {
     const before = useSplitStore.getState();
-    useSplitStore.getState().setRenderState("off");
+    useSplitStore.getState().setRenderState("off", null);
     expect(useSplitStore.getState()).toBe(before);
   });
 

@@ -34,6 +34,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerOptionRow } from "./ComposerOptionsPopover";
 import { OpenInPicker } from "./OpenInPicker";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./PanelLayoutControls";
+import { SplitPaneMenuControls } from "../split/SplitPaneMenuControls";
 
 /**
  * "Open in editor" shells out on the machine running the server, so it is only
@@ -177,6 +178,10 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
               />
             </ComposerOptionRow>
           ) : null}
+
+          <ComposerOptionRow label="Split" hint="Two threads at once">
+            <SplitPaneMenuControls />
+          </ComposerOptionRow>
 
           <ComposerOptionRow label="Panels">
             <div className="flex items-center gap-1">

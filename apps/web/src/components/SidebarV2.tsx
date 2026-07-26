@@ -124,6 +124,7 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
 import { SidebarThreadRow } from "./sidebar/SidebarThreadRow";
+import { openThreadInFocusedPane } from "./split/openThreadInFocusedPane";
 import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
 import { useAllProjectsScopeGuard } from "./sidebar/sidebarProjectScope";
@@ -1085,6 +1086,9 @@ export default function SidebarV2() {
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
+      // Fork: with a split open and its second pane focused, this fills that
+      // pane instead of navigating. Returns false whenever the split is off.
+      if (openThreadInFocusedPane(threadRef)) return;
       setSelectionAnchor(scopedThreadKey(threadRef));
       if (isMobile) {
         setOpenMobile(false);
