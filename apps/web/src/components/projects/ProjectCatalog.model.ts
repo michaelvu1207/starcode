@@ -276,22 +276,20 @@ export function projectThreadKey(thread: {
  * Both the bindings and the explicit lists are machine-scoped, so nothing here
  * ever compares an id from one machine against a list from another.
  */
-export function resolveProjectMembership(input: {
-  readonly projects: ReadonlyArray<ProjectCategoryView>;
-  readonly threads: ReadonlyArray<ProjectMembershipThread>;
-  /** Archived projects still own their threads unless the caller says otherwise. */
-  readonly includeArchived?: boolean;
-}): ProjectMembership {
-  const includeArchived = input.includeArchived ?? true;
-  const projects = input.projects.filter((project) => includeArchived || !project.archived);
-
-  // Both indexes are keyed by environment as well as by id, because a
-  // `ProjectId` from one machine and a `ProjectId` from another are unrelated
-  // strings that can collide.
+/**
+ * Which category each *location* is bound to, keyed `<environmentId>:<projectId>`.
+ *
+ * Extracted so that "what does derivation alone say about this thread" has the
+ * same answer as the derived half of `resolveProjectMembership` — including the
+ * tie-break, which is the part a second copy would get wrong first.
+ */
+function buildSlugByBinding(
+  projects: ReadonlyArray<ProjectCategoryView>,
+): ReadonlyMap<string, ProjectCategorySlug> {
+  // Keyed by environment as well as by id, because a `ProjectId` from one
+  // machine and a `ProjectId` from another are unrelated strings that can
+  // collide.
   const slugByBinding = new Map<string, ProjectCategorySlug>();
-  const explicitSlugByThread = new Map<string, ProjectCategorySlug>();
-  const excludedBySlugAndThread = new Set<string>();
-
   for (const project of projects) {
     for (const section of project.sections) {
       for (const binding of section.local.bindings) {
@@ -303,6 +301,49 @@ export function resolveProjectMembership(input: {
         if (incumbent === undefined || project.slug < incumbent)
           slugByBinding.set(key, project.slug);
       }
+    }
+  }
+  return slugByBinding;
+}
+
+/**
+ * The category a thread would land in on derivation alone — bindings only, with
+ * every explicit add and exclusion ignored.
+ *
+ * Only one caller needs this, and it needs it for one reason: taking a thread
+ * *out* of a project. Dropping the explicit opinions is not enough when the
+ * thread's folder is bound, because derivation would put it straight back, so
+ * the caller has to know which category to exclude it from. Membership itself
+ * never asks this question — it only ever wants the answer after overrides.
+ */
+export function resolveDerivedProjectSlug(input: {
+  readonly projects: ReadonlyArray<ProjectCategoryView>;
+  readonly thread: ProjectMembershipThread;
+  readonly includeArchived?: boolean;
+}): ProjectCategorySlug | null {
+  const includeArchived = input.includeArchived ?? true;
+  const projects = input.projects.filter((project) => includeArchived || !project.archived);
+  return (
+    buildSlugByBinding(projects).get(`${input.thread.environmentId}:${input.thread.projectId}`) ??
+    null
+  );
+}
+
+export function resolveProjectMembership(input: {
+  readonly projects: ReadonlyArray<ProjectCategoryView>;
+  readonly threads: ReadonlyArray<ProjectMembershipThread>;
+  /** Archived projects still own their threads unless the caller says otherwise. */
+  readonly includeArchived?: boolean;
+}): ProjectMembership {
+  const includeArchived = input.includeArchived ?? true;
+  const projects = input.projects.filter((project) => includeArchived || !project.archived);
+
+  const slugByBinding = buildSlugByBinding(projects);
+  const explicitSlugByThread = new Map<string, ProjectCategorySlug>();
+  const excludedBySlugAndThread = new Set<string>();
+
+  for (const project of projects) {
+    for (const section of project.sections) {
       for (const threadId of section.local.threadIds) {
         const key = `${section.environmentId}:${threadId}`;
         const incumbent = explicitSlugByThread.get(key);
