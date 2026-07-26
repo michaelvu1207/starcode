@@ -10,19 +10,26 @@
  *
  * Two affordances share the header and they are deliberately separate targets,
  * which is the same problem the connections view solved with its rename pencil.
- * The header expands and collapses. The arrow beside it opens the project's
+ * The header expands and collapses. The map beside it opens the project's
  * home at `/projects/$slug`, where the masters, the lineage sky and the
- * per-project workbench live. Making the header itself navigate would put the
- * one destructive-to-your-scroll-position action on the target you hit forty
- * times a day.
+ * per-project workbench live — a map glyph because a star map is literally what
+ * is behind it. Making the header itself navigate would put the one
+ * destructive-to-your-scroll-position action on the target you hit forty times
+ * a day.
  *
- * What is NOT here: any second opinion about which project a thread belongs to.
+ * What is NOT here: any inbox. No attention badges, no needs-attention rollup,
+ * no ranking. This view is your projects and their threads; triage is the inbox
+ * view's job and it is one menu away. Threads no project claims land in a
+ * "Chats" section at the very bottom, under everything including the archived
+ * disclosure, with the filing popover on its header.
+ *
+ * Also NOT here: any second opinion about which project a thread belongs to.
  * Membership arrives resolved from the F16 fold, the same answer `/projects`
  * shows, and the machine a thread runs on stays a detail on the row.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, MapIcon } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -81,7 +88,7 @@ export function SidebarProjectsView(props: {
   const [seedOpen, setSeedOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
-  const { groups, archivedGroups } = useMemo(
+  const { groups, archivedGroups, chatsGroup } = useMemo(
     () =>
       buildSidebarProjectGroups({
         activeThreads: props.activeThreads,
@@ -98,7 +105,9 @@ export function SidebarProjectsView(props: {
       new Map(environments.map((environment) => [environment.environmentId, environment.label])),
     [environments],
   );
-  const fileableProjects = useMemo(() => groups.filter((group) => group.slug !== null), [groups]);
+  // Live projects only: filing into an archived project would un-hide it on the
+  // next render, which is not what "file this here" is asking for.
+  const fileableProjects = groups;
 
   const toggleGroup = useCallback(
     (groupKey: string, expanded: boolean) => {
@@ -153,7 +162,7 @@ export function SidebarProjectsView(props: {
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
             >
               {group.slug === null ? (
-                // The unfiled group is not a project and does not pretend to
+                // The Chats group is not a project and does not pretend to
                 // be one: no constellation, no accent, just a mark that reads
                 // as "these have no home yet".
                 <span
@@ -175,15 +184,6 @@ export function SidebarProjectsView(props: {
               <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
                 {group.title}
               </span>
-              {group.attentionCount > 0 ? (
-                <span
-                  data-testid="sidebar-v2-project-group-attention"
-                  title={`${group.attentionCount} waiting on you`}
-                  className="shrink-0 rounded-full bg-warning/15 px-1.5 font-mono text-[10px] leading-4 text-warning"
-                >
-                  {group.attentionCount}
-                </span>
-              ) : null}
               <span className="h-px flex-1 bg-sidebar-border/60" />
               <span className="shrink-0 font-mono text-[11px] text-muted-foreground/50">
                 {group.rows.length}
@@ -211,7 +211,7 @@ export function SidebarProjectsView(props: {
                 data-testid="sidebar-v2-project-group-open"
                 className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100"
               >
-                <ArrowUpRightIcon aria-hidden className="size-3" />
+                <MapIcon aria-hidden className="size-3" />
               </Link>
             )}
           </div>
@@ -244,11 +244,11 @@ export function SidebarProjectsView(props: {
   return (
     <>
       {/* The invitation shows whenever no project exists — NOT only when the
-          list is empty. Before you have filed anything, every thread is
-          unfiled, so the list is never empty and keying the empty state off
-          `groups.length` would leave the one view that is about projects with
-          no way to make one. The unfiled group still renders below it. */}
-      {fileableProjects.length === 0 ? (
+          list is empty. Before you have filed anything every thread is in
+          Chats, so the view is never empty, and gating this on "nothing to
+          show" would leave the one view that is about projects with no way to
+          make one. Chats still renders below it. */}
+      {groups.length === 0 ? (
         <li className="list-none px-2.5 py-6 text-center text-xs text-muted-foreground/60">
           <p className="mb-2">No projects yet</p>
           <p className="mb-3 text-[11px] text-muted-foreground/50">
@@ -303,6 +303,13 @@ export function SidebarProjectsView(props: {
         </li>
       ) : null}
       {showArchived ? archivedGroups.map(renderGroup) : null}
+
+      {/* Chats last, below the archived disclosure and below everything else.
+          These are the threads that have not been given a home; the projects
+          are the point of this view and they get the top of it. The header
+          carries the filing popover, so putting one away is still one click
+          from where it sits. */}
+      {chatsGroup === null ? null : renderGroup(chatsGroup)}
 
       <ProjectSeedDialog
         open={seedOpen}

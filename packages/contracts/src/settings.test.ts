@@ -71,19 +71,22 @@ describe("ClientSettings sidebar v2", () => {
     expect(() => decodeClientSettingsPatch({ sidebarV2ThreadSortOrder: "updated_at" })).toThrow();
   });
 
-  it("defaults the v2 view mode to the flat inbox and accepts the connections view", () => {
-    expect(decodeClientSettings({}).sidebarV2ViewMode).toBe("inbox");
-    expect(decodeClientSettings({ sidebarV2ViewMode: "connections" }).sidebarV2ViewMode).toBe(
-      "connections",
-    );
-    expect(decodeClientSettingsPatch({ sidebarV2ViewMode: "connections" }).sidebarV2ViewMode).toBe(
-      "connections",
-    );
+  it("defaults the v2 view mode to projects", () => {
+    expect(decodeClientSettings({}).sidebarV2ViewMode).toBe("projects");
+  });
+
+  it("keeps the inbox and the connections view selectable", () => {
+    // The default moved; the other two views did not go anywhere, and an
+    // operator who already chose one keeps it.
+    for (const mode of ["inbox", "connections", "projects"] as const) {
+      expect(decodeClientSettings({ sidebarV2ViewMode: mode }).sidebarV2ViewMode).toBe(mode);
+      expect(decodeClientSettingsPatch({ sidebarV2ViewMode: mode }).sidebarV2ViewMode).toBe(mode);
+    }
   });
 
   it("rejects an unknown v2 view mode", () => {
-    expect(() => decodeClientSettings({ sidebarV2ViewMode: "projects" })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarV2ViewMode: "projects" })).toThrow();
+    expect(() => decodeClientSettings({ sidebarV2ViewMode: "workbench" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV2ViewMode: "workbench" })).toThrow();
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {

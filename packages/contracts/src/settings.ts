@@ -34,11 +34,16 @@ export const DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER: SidebarV2ThreadSortOrder = "a
 // stream, "connections" groups the same threads under the machine that runs
 // them, "projects" groups them under the category they were filed into — which
 // is cross-machine, so a project group mixes machines by design where a
-// connection group cannot. Defaults to "inbox" so the view only changes when a
-// user asks for it.
+// connection group cannot.
+//
+// Defaults to "projects": the sidebar is the thing you navigate all day, and
+// the organisation you gave your own work is a better map of it than a single
+// undifferentiated stream. The inbox is still one menu away and is still where
+// triage happens — this is a default, not a removal. Anyone who has already
+// chosen a view has it persisted and is unaffected.
 export const SidebarV2ViewMode = Schema.Literals(["inbox", "connections", "projects"]);
 export type SidebarV2ViewMode = typeof SidebarV2ViewMode.Type;
-export const DEFAULT_SIDEBAR_V2_VIEW_MODE: SidebarV2ViewMode = "inbox";
+export const DEFAULT_SIDEBAR_V2_VIEW_MODE: SidebarV2ViewMode = "projects";
 
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",

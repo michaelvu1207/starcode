@@ -24,8 +24,20 @@
  * index sorts its cards. The index is a dashboard you open to decide what to
  * work on, so ranking is its job; the sidebar is a map you navigate all day,
  * and a map whose landmarks reshuffle when an agent asks a question is a map
- * you cannot learn. The attention rollup on each header carries the same signal
- * without moving anything.
+ * you cannot learn.
+ *
+ * Nothing here rolls attention up to a group. An earlier revision put a
+ * "3 waiting on you" badge on every header, which quietly made this view a
+ * second inbox — a list of projects ranked by how much they were nagging.
+ * Projects are the categories you organised your work into; the inbox is the
+ * view that triages, and it is one menu away. If you want to know what is
+ * waiting, the rows already say so, each in its own group.
+ *
+ * Threads no project claims do not become a group among the projects either.
+ * They come back separately as `chatsGroup`, for the caller to render at the
+ * very bottom under "Chats" — below the archived disclosure, below everything.
+ * A loose thread is not a category, and sorting one into the middle of the list
+ * under "U" for Unfiled made it look like one.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ProjectCategorySlug } from "@t3tools/contracts";
@@ -35,8 +47,6 @@ import {
   type ProjectCategoryView,
   type ProjectMembership,
 } from "./projects/ProjectCatalog.model";
-import { resolveSidebarV2Status } from "./Sidebar.logic";
-import { toneForThreadStatus } from "./workbench/Workbench.tone";
 // The row shape and the paging rule are the connections view's, reused rather
 // than restated. The rule that the thread open in the chat pane is never the
 // one hidden behind "show more" is a correctness rule, not a layout choice, and
@@ -55,13 +65,22 @@ export type SidebarProjectRow = SidebarConnectionRow;
 
 export { limitSidebarConnectionRows as limitSidebarProjectRows };
 
-/** The key the unfiled group takes, where a project group takes its slug. */
+/**
+ * The key the Chats group takes, where a project group takes its slug.
+ *
+ * Still "unfiled" though the section reads "Chats": it is the persisted
+ * collapse key, and renaming it would silently expand a section every user who
+ * had collapsed it had already put away.
+ */
 export const SIDEBAR_UNFILED_GROUP_KEY = "unfiled";
+
+/** What the section of unclaimed threads calls itself. */
+export const SIDEBAR_CHATS_GROUP_TITLE = "Chats";
 
 export interface SidebarProjectGroup {
   /** Stable across renders and unique within the view; the collapse key. */
   readonly key: string;
-  /** `null` for the unfiled group — there is no project home to open. */
+  /** `null` for the Chats group — there is no project home to open. */
   readonly slug: ProjectCategorySlug | null;
   readonly title: string;
   /** Chosen accent id, or empty for the one derived from the slug. */
@@ -69,13 +88,6 @@ export interface SidebarProjectGroup {
   /** Chosen glyph variant, or empty for the one derived from the slug. */
   readonly glyph: string;
   readonly archived: boolean;
-  /**
-   * Threads whose agent stopped and is waiting on a human. Counted over live
-   * rows only — a settled thread is not waiting on anybody — which is the same
-   * rule the index card's badge uses, so the two never disagree about how many
-   * things a project needs from you.
-   */
-  readonly attentionCount: number;
   readonly rows: ReadonlyArray<SidebarProjectRow>;
 }
 
@@ -89,11 +101,7 @@ export interface SidebarProjectsInput {
 }
 
 export interface SidebarProjectGroups {
-  /**
-   * Live projects by title, then the unfiled group last — it is a to-do, not a
-   * project, and it belongs at the bottom of the list rather than sorted into
-   * the middle of it under "U". Omitted entirely when nothing is unfiled.
-   */
+  /** Live projects by title. Projects only — nothing else is in this list. */
   readonly groups: ReadonlyArray<SidebarProjectGroup>;
   /**
    * Archived projects, kept out of `groups` for the caller to put behind a
@@ -102,6 +110,11 @@ export interface SidebarProjectGroups {
    * and the caller needs the count to say how much is behind it.
    */
   readonly archivedGroups: ReadonlyArray<SidebarProjectGroup>;
+  /**
+   * Threads no project claims, for the bottom of the view. `null` when every
+   * thread is filed — an empty Chats section is a header saying nothing.
+   */
+  readonly chatsGroup: SidebarProjectGroup | null;
 }
 
 export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarProjectGroups {
@@ -147,7 +160,6 @@ export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarP
       accent: project.display.accent,
       glyph: project.display.glyph,
       archived: project.archived,
-      attentionCount: countAttention(rows),
       rows,
     };
   };
@@ -164,31 +176,21 @@ export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarP
     .map(toGroup)
     .toSorted(byTitle);
 
-  const unfiledRows = rowsFor(input.membership.unfiledThreadKeys);
-  if (unfiledRows.length > 0) {
-    groups.push({
-      key: SIDEBAR_UNFILED_GROUP_KEY,
-      slug: null,
-      title: "Unfiled",
-      accent: "",
-      glyph: "",
-      archived: false,
-      attentionCount: countAttention(unfiledRows),
-      rows: unfiledRows,
-    });
-  }
+  const chatRows = rowsFor(input.membership.unfiledThreadKeys);
+  const chatsGroup: SidebarProjectGroup | null =
+    chatRows.length === 0
+      ? null
+      : {
+          key: SIDEBAR_UNFILED_GROUP_KEY,
+          slug: null,
+          title: SIDEBAR_CHATS_GROUP_TITLE,
+          accent: "",
+          glyph: "",
+          archived: false,
+          rows: chatRows,
+        };
 
-  return { groups, archivedGroups };
-}
-
-function countAttention(rows: ReadonlyArray<SidebarProjectRow>): number {
-  let count = 0;
-  for (const row of rows) {
-    if (row.section === "settled") continue;
-    const tone = toneForThreadStatus(resolveSidebarV2Status(row.thread));
-    if (tone === "attention" || tone === "input") count += 1;
-  }
-  return count;
+  return { groups, archivedGroups, chatsGroup };
 }
 
 /** How many threads a collapsed archived disclosure is hiding. */

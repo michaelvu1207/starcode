@@ -18,6 +18,7 @@ import {
   countSidebarProjectRows,
   resolveSidebarProjectGroupExpanded,
   sidebarProjectGroupExpansionKey,
+  SIDEBAR_CHATS_GROUP_TITLE,
   SIDEBAR_UNFILED_GROUP_KEY,
 } from "./Sidebar.projects";
 import { supportsSidebarRangeSelect } from "./Sidebar.connections";
@@ -232,8 +233,8 @@ describe("buildSidebarProjectGroups", () => {
   });
 });
 
-describe("unfiled", () => {
-  it("collects threads no project claims, and sorts the group last", () => {
+describe("the Chats section", () => {
+  it("collects threads no project claims, out of the project list entirely", () => {
     const filed = makeThread("t-filed", LOCAL);
     const loose = makeThread("t-loose", LOCAL);
     const projects = [
@@ -244,15 +245,18 @@ describe("unfiled", () => {
       }),
     ];
 
-    const { groups } = build({ projects, active: [filed, loose] });
+    const { groups, chatsGroup } = build({ projects, active: [filed, loose] });
 
-    expect(groups.map((group) => group.key)).toEqual(["zephyr", SIDEBAR_UNFILED_GROUP_KEY]);
-    const unfiled = groups[1];
-    expect(unfiled?.slug).toBeNull();
-    expect(unfiled?.rows.map((row) => row.thread.id)).toEqual([loose.id]);
+    // The point of the split: `groups` is projects and only projects, so a
+    // caller rendering it top to bottom cannot put loose threads among them.
+    expect(groups.map((group) => group.key)).toEqual(["zephyr"]);
+    expect(chatsGroup?.key).toBe(SIDEBAR_UNFILED_GROUP_KEY);
+    expect(chatsGroup?.title).toBe(SIDEBAR_CHATS_GROUP_TITLE);
+    expect(chatsGroup?.slug).toBeNull();
+    expect(chatsGroup?.rows.map((row) => row.thread.id)).toEqual([loose.id]);
   });
 
-  it("omits the group entirely when every thread is filed", () => {
+  it("is null when every thread is filed, rather than an empty header", () => {
     const filed = makeThread("t-filed", LOCAL);
     const projects = [
       project({
@@ -261,12 +265,13 @@ describe("unfiled", () => {
       }),
     ];
 
-    const { groups } = build({ projects, active: [filed] });
+    const { groups, chatsGroup } = build({ projects, active: [filed] });
 
     expect(groups.map((group) => group.key)).toEqual(["atlas"]);
+    expect(chatsGroup).toBeNull();
   });
 
-  it("counts a thread excluded from its derived project as unfiled", () => {
+  it("takes a thread excluded from its derived project", () => {
     const bound = makeThread("t-bound", LOCAL);
     const projects = [
       project({
@@ -283,60 +288,59 @@ describe("unfiled", () => {
       }),
     ];
 
-    const { groups } = build({ projects, active: [bound] });
+    const { groups, chatsGroup } = build({ projects, active: [bound] });
 
     expect(groups[0]?.rows).toEqual([]);
-    expect(groups[1]?.key).toBe(SIDEBAR_UNFILED_GROUP_KEY);
-    expect(groups[1]?.rows.map((row) => row.thread.id)).toEqual([bound.id]);
+    expect(chatsGroup?.rows.map((row) => row.thread.id)).toEqual([bound.id]);
+  });
+
+  it("keeps the inbox's section order, the same as a project group", () => {
+    const working = makeThread("t-working", LOCAL);
+    const napping = makeThread("t-napping", LOCAL);
+    const done = makeThread("t-done", LOCAL);
+
+    const { chatsGroup } = build({
+      projects: [],
+      active: [working],
+      snoozed: [napping],
+      settled: [done],
+    });
+
+    expect(chatsGroup?.rows).toEqual([
+      { thread: working, section: "active" },
+      { thread: napping, section: "snoozed" },
+      { thread: done, section: "settled" },
+    ]);
   });
 });
 
-describe("attention rollup", () => {
-  it("counts threads whose agent is waiting on a human", () => {
+describe("no inbox semantics", () => {
+  // Michael's ask: the projects view is projects, not a second inbox. The
+  // partition used to roll "waiting on you" up onto every group header, which
+  // is the signal that made it one. Nothing here may reintroduce it.
+  it("puts no attention rollup on a project group", () => {
     const approval = makeThread("t-approval", LOCAL, { hasPendingApprovals: true });
     const asking = makeThread("t-asking", LOCAL, { hasPendingUserInput: true });
-    const idle = makeThread("t-idle", LOCAL);
     const projects = [
       project({
         slug: "atlas",
-        sections: [
-          { environmentId: LOCAL, local: { threadIds: [approval.id, asking.id, idle.id] } },
-        ],
+        sections: [{ environmentId: LOCAL, local: { threadIds: [approval.id, asking.id] } }],
       }),
     ];
 
-    const { groups } = build({ projects, active: [approval, asking, idle] });
+    const { groups } = build({ projects, active: [approval, asking] });
 
-    expect(groups[0]?.attentionCount).toBe(2);
+    expect(groups[0]?.rows).toHaveLength(2);
+    expect(groups[0]).not.toHaveProperty("attentionCount");
   });
 
-  it("ignores settled threads — a settled thread is waiting on nobody", () => {
-    const parked = makeThread("t-parked", LOCAL, { hasPendingApprovals: true });
-    const projects = [
-      project({
-        slug: "atlas",
-        sections: [{ environmentId: LOCAL, local: { threadIds: [parked.id] } }],
-      }),
-    ];
+  it("puts none on the Chats group either", () => {
+    const approval = makeThread("t-approval", LOCAL, { hasPendingApprovals: true });
 
-    const { groups } = build({ projects, settled: [parked] });
+    const { chatsGroup } = build({ projects: [], active: [approval] });
 
-    expect(groups[0]?.rows).toHaveLength(1);
-    expect(groups[0]?.attentionCount).toBe(0);
-  });
-
-  it("counts snoozed threads — snoozed work is coming back", () => {
-    const napping = makeThread("t-napping", LOCAL, { hasPendingApprovals: true });
-    const projects = [
-      project({
-        slug: "atlas",
-        sections: [{ environmentId: LOCAL, local: { threadIds: [napping.id] } }],
-      }),
-    ];
-
-    const { groups } = build({ projects, snoozed: [napping] });
-
-    expect(groups[0]?.attentionCount).toBe(1);
+    expect(chatsGroup?.rows).toHaveLength(1);
+    expect(chatsGroup).not.toHaveProperty("attentionCount");
   });
 });
 
