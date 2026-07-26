@@ -24,8 +24,11 @@ import { useCallback, useMemo } from "react";
 import { useEnvironments } from "../../state/environments";
 import {
   refreshProjectCatalogs,
+  useForgetPendingProjectDisplay,
   useProjectCatalogView,
+  useRemoveProjectCategory,
   useUpsertProjectCategory,
+  type ProjectCatalogFanOutResult,
 } from "../../state/projectCatalog";
 import { projectSectionFor } from "./ProjectCatalog.model";
 import type { ProjectBindSuggestion, ProjectSeedProposal } from "./ProjectCatalog.model";
@@ -39,6 +42,12 @@ export interface ProjectWriter {
   readonly create: (title: string) => Promise<ProjectCategorySlug | null>;
   readonly rename: (slug: ProjectCategorySlug, patch: ProjectCategoryDisplayPatch) => Promise<void>;
   readonly setArchived: (slug: ProjectCategorySlug, archived: boolean) => Promise<void>;
+  /**
+   * Drops the category from every connected machine, and reports which ones
+   * took it. Threads are untouched — a category is a label over threads that
+   * live somewhere else, so removing it unfiles them and deletes nothing.
+   */
+  readonly remove: (slug: ProjectCategorySlug) => Promise<ProjectCatalogFanOutResult>;
   /**
    * Names this project's orchestrator on one machine, or clears it with an
    * empty id.
@@ -59,6 +68,8 @@ export function useProjectWriter(): ProjectWriter {
   const view = useProjectCatalogView();
   const { environments } = useEnvironments();
   const upsert = useUpsertProjectCategory();
+  const removeCategory = useRemoveProjectCategory();
+  const forgetPending = useForgetPendingProjectDisplay();
 
   const connectedIds = useMemo(
     () =>
@@ -140,11 +151,18 @@ export function useProjectWriter(): ProjectWriter {
         slug = `${base}-${suffix}` as ProjectCategorySlug;
         suffix += 1;
       }
-      await upsert({ slug, display: { title: title.trim() }, created: true });
+      const result = await upsert({ slug, display: { title: title.trim() }, created: true });
+      // Nowhere took it. Without this the optimistic overlay would keep
+      // rendering a project that exists on no machine — a ghost the operator
+      // can open, name and file threads into, none of which goes anywhere.
+      if (result.acceptedEnvironmentIds.length === 0) {
+        forgetPending(slug);
+        return null;
+      }
       refreshProjectCatalogs(connectedIds);
       return slug;
     },
-    [connectedIds, upsert, view.projects],
+    [connectedIds, forgetPending, upsert, view.projects],
   );
 
   const rename = useCallback(
@@ -167,6 +185,19 @@ export function useProjectWriter(): ProjectWriter {
     [connectedIds, upsert],
   );
 
+  const remove = useCallback(
+    async (slug: ProjectCategorySlug) => {
+      const result = await removeCategory({ slug, environmentIds: connectedIds });
+      // Refresh the machines that took it, not all of them: a machine that
+      // refused still holds the category, and re-reading it would only put the
+      // category straight back on screen with no explanation. The caller is
+      // holding the refusals and is the one that can explain them.
+      refreshProjectCatalogs(result.acceptedEnvironmentIds);
+      return result;
+    },
+    [connectedIds, removeCategory],
+  );
+
   const designateMaster = useCallback(
     async (slug: ProjectCategorySlug, environmentId: EnvironmentId, threadId: string) => {
       await upsert({
@@ -180,7 +211,7 @@ export function useProjectWriter(): ProjectWriter {
   );
 
   return useMemo(
-    () => ({ seed, bind, create, rename, setArchived, designateMaster }),
-    [bind, create, designateMaster, rename, seed, setArchived],
+    () => ({ seed, bind, create, rename, setArchived, remove, designateMaster }),
+    [bind, create, designateMaster, remove, rename, seed, setArchived],
   );
 }

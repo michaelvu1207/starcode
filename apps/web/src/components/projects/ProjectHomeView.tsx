@@ -19,7 +19,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { ArchiveIcon, ArrowLeftIcon, CompassIcon, PencilIcon } from "lucide-react";
+import { ArchiveIcon, ArrowLeftIcon, CompassIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -27,6 +27,7 @@ import { cn } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadActivities, useThreadShell, useThreadShells } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../../threadRoutes";
 import { resolveSidebarV2Status } from "../Sidebar.logic";
@@ -44,6 +45,7 @@ import {
   toneForThreadStatus,
 } from "../workbench/Workbench.tone";
 import { projectMasterCandidates, projectSectionFor } from "./ProjectCatalog.model";
+import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { projectAccentHue } from "./ProjectsIndex.model";
@@ -58,13 +60,21 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
   const navigate = useNavigate();
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
+  const { environments } = useEnvironments();
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [picking, setPicking] = useState(false);
   /** `null` until the operator says; see `showMaster` for what that resolves to. */
   const [masterPaneOpen, setMasterPaneOpen] = useState<boolean | null>(null);
   const [preferredEnvironmentId, setPreferredEnvironmentId] = useState<EnvironmentId | null>(null);
 
   const project = view.projects.find((entry) => entry.slug === slug) ?? null;
+
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
 
   /**
    * This project's orchestrator, resolved through the same function the global
@@ -298,6 +308,22 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
               <ArchiveIcon className="size-3.5" />
               {project.archived ? "Unarchive" : "Archive"}
             </Button>
+            {/* Delete sits beside Archive because they are the same decision at
+                two strengths, and seeing both is what makes archive the obvious
+                choice for "I am done with this for now". Only the project home
+                carries it: the sidebar header is a target you hit forty times a
+                day and is the wrong place for the one action that cannot be
+                undone. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="project-delete"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => setDeleting(true)}
+            >
+              <Trash2Icon className="size-3.5" />
+              Delete
+            </Button>
           </div>
         </div>
 
@@ -394,6 +420,17 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
         onOpenChange={setEditing}
         project={project}
         onSave={(patch) => writer.rename(project.slug, patch)}
+      />
+
+      <ProjectDeleteDialog
+        open={deleting}
+        onOpenChange={setDeleting}
+        slug={project.slug}
+        title={project.display.title}
+        threadCount={threadKeys.size}
+        environmentLabelById={environmentLabelById}
+        onDelete={writer.remove}
+        onDeleted={() => void navigate({ to: "/projects" })}
       />
     </div>
   );
