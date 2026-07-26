@@ -47,30 +47,59 @@ export function SidebarProjectNewThread({
   // The button would open an empty menu, so it does not render.
   if (locations.length === 0) return null;
 
-  const trigger = (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`New thread in ${title}`}
-            data-testid="sidebar-v2-project-new-thread"
-            className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100"
-            {...(unambiguous === null ? {} : { onClick: () => onStart(slug, unambiguous) })}
-          />
-        }
-      >
-        <PlusIcon aria-hidden className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">New thread</TooltipPopup>
-    </Tooltip>
-  );
+  const BUTTON_CLASS =
+    "shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100";
 
-  if (unambiguous !== null) return trigger;
+  // One bound folder is not a choice: click and go, no menu in the way.
+  if (unambiguous !== null) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`New thread in ${title}`}
+              data-testid="sidebar-v2-project-new-thread"
+              className={BUTTON_CLASS}
+              onClick={() => onStart(slug, unambiguous)}
+            />
+          }
+        >
+          <PlusIcon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">New thread</TooltipPopup>
+      </Tooltip>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={trigger} />
+      {/* ⚠️ The nesting order is load-bearing and the wrong one is silent.
+          `PopoverTrigger render={<Tooltip>…}` type-checks, renders a button
+          that looks right, and does NOTHING: the popover's props are spread
+          onto `Tooltip`, which is a context-only Root with no DOM to put them
+          on, so no click handler ever reaches the button. The trigger has to be
+          the innermost wrapper around the real element — same shape as
+          `SidebarConnectionsMenu` and `SidebarUnfiledTriage`. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`New thread in ${title}`}
+                  data-testid="sidebar-v2-project-new-thread"
+                  className={BUTTON_CLASS}
+                />
+              }
+            />
+          }
+        >
+          <PlusIcon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">New thread</TooltipPopup>
+      </Tooltip>
       <PopoverPopup align="start" className="w-64 p-1">
         {bound.length === 0 ? (
           <p className="px-2 py-1.5 text-[11px] text-muted-foreground/70">
