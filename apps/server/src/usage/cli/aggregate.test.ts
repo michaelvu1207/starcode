@@ -238,3 +238,86 @@ describe("aggregateCliUsage", () => {
     assert.strictEqual(result.totals.costUsd, 0);
   });
 });
+
+describe("aggregateCliUsage day buckets", () => {
+  it("emits one entry per day inside the 30-day window, oldest first", () => {
+    const result = aggregateCliUsage(
+      [
+        codexFile([
+          bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 }),
+          bucket({ day: "2026-07-20", model: "gpt-5.5", output: 2_000_000 }),
+        ]),
+      ],
+      options,
+    );
+    const days = providerNamed(result, "codex")?.days ?? [];
+    assert.deepStrictEqual(
+      days.map((entry) => entry.day),
+      ["2026-07-20", "2026-07-25"],
+    );
+    assert.strictEqual(days[0]?.totals.costUsd, 60);
+    assert.strictEqual(days[1]?.totals.costUsd, 30);
+  });
+
+  it("folds two files' same-day messages into one bucket", () => {
+    const result = aggregateCliUsage(
+      [
+        codexFile([bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 })]),
+        codexFile([bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 })]),
+      ],
+      options,
+    );
+    const days = providerNamed(result, "codex")?.days ?? [];
+    assert.lengthOf(days, 1);
+    assert.strictEqual(days[0]?.totals.costUsd, 60);
+    assert.strictEqual(days[0]?.totals.messages, 2);
+  });
+
+  it("leaves days older than the 30-day window out of the series", () => {
+    const result = aggregateCliUsage(
+      [
+        codexFile([
+          bucket({ day: "2026-05-01", model: "gpt-5.5", output: 1_000_000 }),
+          bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 }),
+        ]),
+      ],
+      options,
+    );
+    const days = providerNamed(result, "codex")?.days ?? [];
+    assert.deepStrictEqual(
+      days.map((entry) => entry.day),
+      ["2026-07-25"],
+    );
+    // The excluded day still counts where it belongs.
+    assert.strictEqual(providerNamed(result, "codex")?.allTime.costUsd, 60);
+  });
+
+  it("sums its day buckets back to the 30-day window", () => {
+    const result = aggregateCliUsage(
+      [
+        codexFile([
+          bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 }),
+          bucket({ day: "2026-07-01", model: "gpt-5.4", output: 1_000_000 }),
+          bucket({ day: "2026-07-01", model: "gpt-5.6-sol", output: 1_000_000 }),
+        ]),
+      ],
+      options,
+    );
+    const codex = providerNamed(result, "codex");
+    const summed = (codex?.days ?? []).reduce((total, entry) => total + entry.totals.costUsd, 0);
+    assert.strictEqual(Math.round(summed * 100), Math.round((codex?.last30Days.costUsd ?? 0) * 100));
+  });
+
+  it("keeps an all-unpriced day in the series with tokens and no cost", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ day: "2026-07-24", model: "gpt-5.6-sol", messages: 3, output: 900 })])],
+      options,
+    );
+    const day = (providerNamed(result, "codex")?.days ?? [])[0];
+    assert.strictEqual(day?.day, "2026-07-24");
+    assert.strictEqual(day?.totals.costUsd, 0);
+    assert.strictEqual(day?.totals.outputTokens, 900);
+    assert.strictEqual(day?.totals.unpricedMessages, 3);
+  });
+});
+

@@ -14,6 +14,7 @@
  */
 import {
   type CliProviderUsage,
+  type CliUsageDayTotals,
   type CliUsageModelTotals,
   type CliUsageProvider,
   type CliUsageTotals,
@@ -103,12 +104,19 @@ const totalTokensOf = (tokens: MessageTokens): number =>
   tokens.cacheWrite1hTokens +
   tokens.cacheReadTokens;
 
+interface ModelAccumulator {
+  readonly priced: boolean;
+  readonly totals: MutableTotals;
+}
+
 interface ProviderAccumulator {
   readonly allTime: MutableTotals;
   readonly last30Days: MutableTotals;
   readonly last7Days: MutableTotals;
   readonly today: MutableTotals;
-  readonly models: Map<string, { readonly priced: boolean; readonly totals: MutableTotals }>;
+  readonly models: Map<string, ModelAccumulator>;
+  /** Per-day totals inside the 30-day window; days outside it are not kept. */
+  readonly days: Map<string, MutableTotals>;
   firstDay: string | null;
   lastDay: string | null;
   files: number;
@@ -120,6 +128,7 @@ const emptyProviderAccumulator = (): ProviderAccumulator => ({
   last7Days: emptyMutable(),
   today: emptyMutable(),
   models: new Map(),
+  days: new Map(),
   firstDay: null,
   lastDay: null,
   files: 0,
@@ -152,6 +161,12 @@ const foldInto = (
   accumulate(accumulator.allTime, tokens, messages, costUsd, priced);
   if (day >= options.earliest30Day) {
     accumulate(accumulator.last30Days, tokens, messages, costUsd, priced);
+    let dayEntry = accumulator.days.get(day);
+    if (dayEntry === undefined) {
+      dayEntry = emptyMutable();
+      accumulator.days.set(day, dayEntry);
+    }
+    accumulate(dayEntry, tokens, messages, costUsd, priced);
   }
   if (day >= options.earliest7Day) {
     accumulate(accumulator.last7Days, tokens, messages, costUsd, priced);
@@ -184,6 +199,12 @@ const toProviderUsage = (
         left.model.localeCompare(right.model),
     );
 
+  // Oldest first. The chart reads left to right and a reversed series would be
+  // a silent off-by-a-month rather than a visible error.
+  const days: Array<CliUsageDayTotals> = [...accumulator.days.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([day, totals]) => ({ day, totals: freeze(totals) }));
+
   return {
     provider,
     allTime: freeze(accumulator.allTime),
@@ -191,6 +212,7 @@ const toProviderUsage = (
     last7Days: freeze(accumulator.last7Days),
     today: freeze(accumulator.today),
     models,
+    days,
     firstDay: accumulator.firstDay,
     lastDay: accumulator.lastDay,
     sessionFiles: accumulator.files,

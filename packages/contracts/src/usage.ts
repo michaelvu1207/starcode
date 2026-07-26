@@ -164,6 +164,21 @@ export const CliUsageModelTotals = Schema.Struct({
 export type CliUsageModelTotals = typeof CliUsageModelTotals.Type;
 
 /**
+ * One local calendar day of a CLI's history, in the reporting machine's zone.
+ *
+ * Emitted only for days inside the 30-day chart window that carry usage — the
+ * full history is a year of rows per provider per machine, and nothing renders
+ * it. A missing day means "no messages", which the chart draws as a gap in a
+ * dense axis rather than as an absent bar.
+ */
+export const CliUsageDayTotals = Schema.Struct({
+  /** `YYYY-MM-DD` in the reporting machine's local time zone. */
+  day: TrimmedNonEmptyString,
+  totals: CliUsageTotals,
+});
+export type CliUsageDayTotals = typeof CliUsageDayTotals.Type;
+
+/**
  * One CLI's history on one machine, in the four windows the panel shows.
  *
  * Windows are cumulative from today backwards and are computed in the
@@ -177,6 +192,16 @@ export const CliProviderUsage = Schema.Struct({
   today: CliUsageTotals,
   /** Costliest first, so a truncated render still shows what dominates. */
   models: Schema.Array(CliUsageModelTotals),
+  /**
+   * Per-day totals for the 30-day window above, oldest first.
+   *
+   * Additive over the four cumulative windows rather than a replacement for
+   * them: `last30Days` is still the figure the tiles read, and summing `days`
+   * reproduces it. `optionalKey` so a server that predates the daily chart
+   * omits the field instead of sending an empty array a client would read as
+   * "thirty days of nothing".
+   */
+  days: Schema.optionalKey(Schema.Array(CliUsageDayTotals)),
   /** `YYYY-MM-DD` bounds of the days that carry usage; null when none do. */
   firstDay: Schema.NullOr(TrimmedNonEmptyString),
   lastDay: Schema.NullOr(TrimmedNonEmptyString),
