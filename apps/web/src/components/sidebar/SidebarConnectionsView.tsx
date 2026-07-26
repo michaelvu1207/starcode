@@ -27,7 +27,7 @@
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -129,19 +129,26 @@ export function SidebarConnectionsView(props: {
               data-testid="sidebar-v2-connection-group"
               data-environment-id={group.environmentId}
             >
-              <div className="group/machine mb-1 mt-3 flex items-center gap-1.5 px-2.5">
+              <div className="group/machine mb-0.5 mt-5 flex items-center gap-1.5 px-2.5">
                 {renamingEnvironmentId === group.environmentId ? (
                   <>
+                    {/* The chevron and the mark are here too, so nothing shifts
+                        sideways the moment you start typing in the header. */}
+                    <ChevronRightIcon
+                      aria-hidden
+                      className={cn(
+                        "size-3.5 shrink-0 text-muted-foreground/60",
+                        expanded && "rotate-90",
+                      )}
+                    />
                     <ConnectionStatusDot
                       dotClassName={sidebarConnectionDotClassName(group.connection)}
                     />
-                    {/* Also while renaming, so the row does not change width
-                        the moment you start typing in it. */}
-                    <ConnectionMark environmentId={group.environmentId} />
+                    <ConnectionMark environmentId={group.environmentId} className="size-4" />
                     <ConnectionNameInput
                       environmentId={group.environmentId}
                       serverLabel={group.serverLabel}
-                      className="h-6 text-xs"
+                      className="h-7 text-sm"
                       onDone={() => setRenamingEnvironmentId(null)}
                     />
                   </>
@@ -152,8 +159,20 @@ export function SidebarConnectionsView(props: {
                       onClick={() => toggleGroup(group.environmentId, expanded)}
                       aria-expanded={expanded}
                       data-testid="sidebar-v2-connection-group-toggle"
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                     >
+                      {/* Same header grammar as the projects view — leading
+                          disclosure, name at section weight. The two views are
+                          the same list grouped two ways, and a machine heading
+                          that read smaller than a project heading would imply a
+                          hierarchy between them that does not exist. */}
+                      <ChevronRightIcon
+                        aria-hidden
+                        className={cn(
+                          "size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                          expanded && "rotate-90",
+                        )}
+                      />
                       <ConnectionStatusDot
                         dotClassName={sidebarConnectionDotClassName(group.connection)}
                         pingClassName={
@@ -163,24 +182,17 @@ export function SidebarConnectionsView(props: {
                             : null
                         }
                       />
-                      <ConnectionMark environmentId={group.environmentId} />
-                      <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
+                      <ConnectionMark environmentId={group.environmentId} className="size-4" />
+                      <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
                         {group.label}
                       </span>
                       {group.isLocal ? (
                         <span className="shrink-0 text-[10px] text-muted-foreground/60">Local</span>
                       ) : null}
-                      <span className="h-px flex-1 bg-sidebar-border/60" />
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground/50">
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground/45">
                         {group.rows.length}
                       </span>
-                      <ChevronDownIcon
-                        aria-hidden
-                        className={cn(
-                          "size-3 text-muted-foreground/50 transition-transform",
-                          expanded && "rotate-180",
-                        )}
-                      />
+                      <span className="flex-1" />
                     </button>
                     {/* Only for machines still in the catalog: a group left
                         behind by a removed connection has nothing to alias. */}

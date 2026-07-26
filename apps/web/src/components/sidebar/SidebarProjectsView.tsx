@@ -29,7 +29,7 @@
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
-import { ChevronDownIcon, ChevronRightIcon, MapIcon } from "lucide-react";
+import { ChevronRightIcon, MapIcon } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -153,25 +153,39 @@ export function SidebarProjectsView(props: {
           data-testid="sidebar-v2-project-group"
           data-project-slug={group.slug ?? SIDEBAR_UNFILED_GROUP_KEY}
         >
-          <div className="group/project mb-1 mt-3 flex items-center gap-1.5 px-2.5">
+          {/* A section header, not a label. The threads below are this
+              project's, and the header has to carry enough weight to say so at
+              a glance — so it leads with the disclosure triangle every list on
+              every platform uses for "this opens", and the name is set two
+              steps larger and heavier than the rows it governs. The hairline
+              that used to run to the right edge is gone: it was there to give
+              a 12px label some presence, and at this size it only competed. */}
+          <div className="group/project mb-0.5 mt-5 flex items-center gap-1.5 px-2.5">
             <button
               type="button"
               onClick={() => toggleGroup(group.key, expanded)}
               aria-expanded={expanded}
               data-testid="sidebar-v2-project-group-toggle"
-              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
             >
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                  expanded && "rotate-90",
+                )}
+              />
               {group.slug === null ? (
                 // The Chats group is not a project and does not pretend to
                 // be one: no constellation, no accent, just a mark that reads
                 // as "these have no home yet".
                 <span
                   aria-hidden
-                  className="size-3 shrink-0 rounded-[3px] border border-dashed border-muted-foreground/40"
+                  className="size-3.5 shrink-0 rounded-[3px] border border-dashed border-muted-foreground/40"
                 />
               ) : (
                 <span
-                  className="sc-project-mark size-3.5 shrink-0"
+                  className="sc-project-mark size-4 shrink-0"
                   style={
                     {
                       "--sc-project-hue": `${projectAccentHue(group.key, group.accent)}deg`,
@@ -181,20 +195,13 @@ export function SidebarProjectsView(props: {
                   <ProjectGlyph slug={group.key} variant={group.glyph} />
                 </span>
               )}
-              <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
+              <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
                 {group.title}
               </span>
-              <span className="h-px flex-1 bg-sidebar-border/60" />
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground/50">
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground/45">
                 {group.rows.length}
               </span>
-              <ChevronDownIcon
-                aria-hidden
-                className={cn(
-                  "size-3 text-muted-foreground/50 transition-transform",
-                  expanded && "rotate-180",
-                )}
-              />
+              <span className="flex-1" />
             </button>
             {group.slug === null ? (
               <SidebarUnfiledTriage
