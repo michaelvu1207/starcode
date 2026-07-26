@@ -1,13 +1,15 @@
 /**
- * Fork-owned: opening a *named* thread in the second pane, and deciding where
- * the split toggle lives.
+ * Fork-owned: opening a *named* thread to the right of the one you are reading.
  *
- * The split shipped with exactly one way in — a row inside the composer's `···`
- * popover — and the first thing anyone asked was where it was. Two answers
- * here. `useCanOpenInSplit` puts "Open in split" on the sidebar row menu, which
- * is where you are when you already know which thread you want beside this one;
- * `resolveSplitControlPlacement` lifts the toggle out of the popover and onto
- * the composer footer, which is where you are when you do not.
+ * The split shipped with one way in — a row inside the composer's `···` popover
+ * — and the first thing anyone asked was where it was. The entry belongs on the
+ * sidebar row instead, because that is where you are standing when you know
+ * which thread you want beside this one: you are looking at its name.
+ *
+ * The semantics are the ones the affordance's position implies. The thread you
+ * are already reading does not move — it stays the left pane, and the row you
+ * opened the menu on fills the right. Invoke it again on a different row and
+ * the right pane is replaced, not stacked.
  *
  * This is a different verb from `openThreadInFocusedPane`. That one answers
  * "the user clicked a thread, where does it land" and defers to whichever pane
@@ -15,53 +17,67 @@
  * they are reading" — so it opens the split if it is closed, and always targets
  * the second pane.
  *
+ * The composer's popover keeps its own split row. That one closes the pane and
+ * swaps what is in it, which is management of a split you already have; this is
+ * how you get one.
+ *
  * @module openInSplit
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { splitFitsContainer, type SplitPaneId, type SplitRenderState } from "./Split.logic";
+import { splitFitsContainer } from "./Split.logic";
 import { useSplitStore } from "./splitStore";
 
 /**
- * Whether a given thread's row menu offers "Open in split".
+ * What a row's menu does about the split.
  *
- * Three ways to answer no, and all three are cases where the entry would either
- * fail or do nothing visible:
- *
- * - the window cannot hold two panes, so a split would resolve straight back to
- *   `off` and the click would look broken;
- * - the thread is already the second pane;
- * - the thread is the one the route is showing. With a split live it is the
- *   left pane already, and with the split closed this would put the same
- *   transcript on both sides of the divider.
+ * - `hidden` — no entry, and no `···` earned on its own account. Either the
+ *   window cannot hold two panes, or no thread is open for a second one to sit
+ *   beside.
+ * - `ready` — an enabled "Open in split view".
+ * - `already-primary` / `already-secondary` — the thread is already on screen,
+ *   in one pane or the other. The entry stays, disabled, saying which. Shown
+ *   rather than hidden because an item that vanishes on exactly one row
+ *   explains itself worse than one that greys out — but deliberately not enough
+ *   to summon a menu that would otherwise be empty, since a `···` holding one
+ *   greyed line is the same lie as an empty one.
  */
-export function resolveOpenInSplitAvailability(input: {
-  readonly renderState: SplitRenderState;
+export type OpenInSplitState = "hidden" | "ready" | "already-primary" | "already-secondary";
+
+export function resolveOpenInSplitState(input: {
   /** `null` before the pane region has been measured — treated as "fits". */
   readonly containerWidth: number | null;
+  /**
+   * Whether a thread is open at all. The split container is mounted by the
+   * thread route, so on `/projects` or a draft there is no left pane for a
+   * second one to open beside and the entry would do nothing.
+   */
+  readonly hasRouteThread: boolean;
   readonly isRouteThread: boolean;
   readonly isSecondaryThread: boolean;
-}): boolean {
-  if (input.containerWidth !== null && !splitFitsContainer(input.containerWidth)) return false;
-  if (input.isSecondaryThread) return false;
-  if (input.isRouteThread) return false;
-  return true;
+}): OpenInSplitState {
+  if (!input.hasRouteThread) return "hidden";
+  // A split below this width resolves straight back to `off`, so the click
+  // would read as broken rather than as unavailable.
+  if (input.containerWidth !== null && !splitFitsContainer(input.containerWidth)) return "hidden";
+  if (input.isSecondaryThread) return "already-secondary";
+  if (input.isRouteThread) return "already-primary";
+  return "ready";
 }
 
-/** The hook form, for the sidebar row that has to decide twice: once for the
- *  entry itself, and once for whether the `···` has anything in it at all. */
-export function useCanOpenInSplit(input: {
+/** The hook form, resolved once per row by `SidebarV2Row`. */
+export function useOpenInSplitState(input: {
   readonly threadRef: ScopedThreadRef;
   /** The row already knows this — it is what paints the row as active. */
   readonly isRouteThread: boolean;
-}): boolean {
-  const renderState = useSplitStore((state) => state.renderState);
+  readonly hasRouteThread: boolean;
+}): OpenInSplitState {
   const containerWidth = useSplitStore((state) => state.containerWidth);
   const secondary = useSplitStore((state) => state.secondary);
-  return resolveOpenInSplitAvailability({
-    renderState,
+  return resolveOpenInSplitState({
     containerWidth,
+    hasRouteThread: input.hasRouteThread,
     isRouteThread: input.isRouteThread,
     isSecondaryThread:
       secondary !== null && scopedThreadKey(secondary) === scopedThreadKey(input.threadRef),
@@ -69,7 +85,8 @@ export function useCanOpenInSplit(input: {
 }
 
 /**
- * Put this thread in the second pane, opening the split if it is closed.
+ * Put this thread in the right-hand pane, opening the split if it is closed.
+ * The route — and so the left pane — is untouched.
  *
  * Not a hook: it is called from a menu item's `onClick`, and reading the store
  * imperatively means the sidebar does not re-render every row when the split
@@ -79,28 +96,4 @@ export function openThreadInSplit(threadRef: ScopedThreadRef): void {
   const state = useSplitStore.getState();
   if (!state.enabled) state.openSplit();
   state.setSecondary(threadRef);
-}
-
-/**
- * Where the split toggle renders.
- *
- * `"footer"` is a persistent icon beside the composer's `···`; `"menu"` is the
- * labelled row inside that popover. Exactly one of them shows, so the control
- * is never duplicated and never silently absent.
- *
- * The split is worth a permanent slot in the footer only where it is actually
- * reachable, and below two minimum panes it is not. That case keeps the popover
- * row instead, because the row can afford a disabled button that says *why* —
- * a footer icon that vanished on narrow windows would read as a bug, which is
- * the failure this whole round is fixing.
- */
-export function resolveSplitControlPlacement(input: {
-  readonly paneId: SplitPaneId | null;
-  readonly containerWidth: number | null;
-}): "footer" | "menu" {
-  // The second pane only exists inside a live split, so the width question is
-  // already answered, and its controls are the ones you reach for most.
-  if (input.paneId === "secondary") return "footer";
-  if (input.containerWidth === null) return "footer";
-  return splitFitsContainer(input.containerWidth) ? "footer" : "menu";
 }

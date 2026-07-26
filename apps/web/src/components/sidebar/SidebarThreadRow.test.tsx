@@ -10,6 +10,7 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
+import rowSource from "./SidebarThreadRow.tsx?raw";
 import { SidebarThreadRow, type SidebarThreadRowActions } from "./SidebarThreadRow";
 
 const noop = () => {};
@@ -81,10 +82,11 @@ function render(
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
-    // Off by default: whether a split can hold this thread is a property of the
-    // window, and letting it default to true would let every assertion about
-    // settlement and snooze pass for the wrong reason.
-    canOpenInSplit: false,
+    // Hidden by default: whether a split can hold this thread is a property of
+    // the window and of what is already on screen, and letting it default to
+    // ready would let every assertion about settlement and snooze pass for the
+    // wrong reason.
+    splitState: "hidden",
     onOpenInSplit: noop,
     ...overrides,
   } as Parameters<typeof SidebarThreadRow>[0];
@@ -224,12 +226,61 @@ describe("SidebarThreadRow", () => {
       snoozeSupported: false,
     };
 
-    expect(render({ ...noOtherActions, canOpenInSplit: true })).toContain(
+    expect(render({ ...noOtherActions, splitState: "ready" })).toContain(
       'data-testid="sidebar-v2-row-menu"',
     );
-    expect(render({ ...noOtherActions, canOpenInSplit: false })).not.toContain(
+    expect(render({ ...noOtherActions, splitState: "hidden" })).not.toContain(
       'data-testid="sidebar-v2-row-menu"',
     );
+  });
+
+  it("does not summon a menu for a split entry that is only there to be grey", () => {
+    // The disabled states are worth a line next to real actions and not worth a
+    // button of their own — a ··· holding one greyed line is the same lie as an
+    // empty one, and it would land on the row you are currently reading.
+    const noOtherActions = {
+      settlementSupported: false,
+      snoozeAllowed: false,
+      snoozeSupported: false,
+    };
+
+    for (const splitState of ["already-primary", "already-secondary"] as const) {
+      expect(render({ ...noOtherActions, splitState })).not.toContain(
+        'data-testid="sidebar-v2-row-menu"',
+      );
+    }
+    // …but it still rides along on a row that has something else to offer.
+    expect(render({ splitState: "already-primary" })).toContain(
+      'data-testid="sidebar-v2-row-menu"',
+    );
+  });
+
+  it("greys the split entry out rather than letting it look clickable", () => {
+    // Checked against the source: a base-ui menu only mounts its items once it
+    // is open, and SSR never opens one, so the rendered markup of every case
+    // above is identical inside the popup. This is the one property of the
+    // entry that a render cannot see, and "disabled" is half of what makes an
+    // already-open thread explain itself instead of appearing to do nothing.
+    expect(rowSource).toContain('disabled={splitState !== "ready"}');
+    // Belt and braces, because the two say different things: the first makes it
+    // *look* inert, the second makes it *be* inert.
+    expect(rowSource).toContain('if (splitState === "ready") onOpenInSplit();');
+  });
+
+  it("stops the split click from reaching the row underneath it", () => {
+    // Found in a browser, not here: the menu popup is portalled to the body,
+    // but a React portal's events bubble up the *component* tree, so a click on
+    // this item also fires the row's own handler — and the row navigates. The
+    // symptom was that opening a thread on the right dragged the left pane onto
+    // it too, which is precisely what this entry exists not to do.
+    //
+    // Source-level for the same reason as above: SSR never opens the popup, so
+    // there is no item to dispatch a click at.
+    const splitItem = rowSource.slice(
+      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]") - 900,
+      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]"),
+    );
+    expect(splitItem).toContain("event.stopPropagation()");
   });
 
   it("offers the menu on a snoozed row only where waking is supported", () => {

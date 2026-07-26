@@ -125,7 +125,7 @@ import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
 import { SidebarThreadRow } from "./sidebar/SidebarThreadRow";
 import { openThreadInFocusedPane } from "./split/openThreadInFocusedPane";
-import { openThreadInSplit, useCanOpenInSplit } from "./split/openInSplit";
+import { openThreadInSplit, useOpenInSplitState } from "./split/openInSplit";
 import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
 import { useAllProjectsScopeGuard } from "./sidebar/sidebarProjectScope";
@@ -284,6 +284,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // the user visits the thread.
   wokeAt: string | null;
   isActive: boolean;
+  // Whether *any* thread is open. The split entry on the row menu needs a left
+  // pane to open beside, and there is none on /projects or a fresh draft.
+  hasRouteThread: boolean;
   jumpLabel: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
@@ -500,16 +503,20 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // the row's menu is open is the row's own business.
   const snoozeAllowed =
     props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
-  // Whether this thread can go beside the one you are reading. Resolved here
-  // rather than in the row for the same reason as everything else on it: the
-  // row stays a function of its props.
-  const canOpenInSplit = useCanOpenInSplit({ threadRef, isRouteThread: props.isActive });
+  // Whether this thread can go to the right of the one you are reading, and if
+  // not, why. Resolved here rather than in the row for the same reason as
+  // everything else on it: the row stays a function of its props.
+  const splitState = useOpenInSplitState({
+    threadRef,
+    isRouteThread: props.isActive,
+    hasRouteThread: props.hasRouteThread,
+  });
   const handleOpenInSplit = useCallback(() => openThreadInSplit(threadRef), [threadRef]);
   return (
     <SidebarThreadRow
       thread={thread}
       status={status}
-      canOpenInSplit={canOpenInSplit}
+      splitState={splitState}
       onOpenInSplit={handleOpenInSplit}
       flags={{
         isActive: props.isActive,
@@ -1797,6 +1804,7 @@ export default function SidebarV2() {
                       // rows resolve to null on their own.
                       wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                       isActive={routeThreadKey === threadKey}
+                      hasRouteThread={routeThreadKey !== null}
                       jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                       environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                       projectCwd={

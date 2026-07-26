@@ -1,103 +1,74 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import composerPaneMenuSource from "../chat/ComposerPaneMenu.tsx?raw";
 import { describe, expect, it } from "vite-plus/test";
 
+import moduleSource from "./openInSplit.ts?raw";
+import sidebarSource from "../SidebarV2.tsx?raw";
 import { SPLIT_DIVIDER_PX, SPLIT_MIN_PANE_PX } from "./Split.logic";
-import {
-  openThreadInSplit,
-  resolveOpenInSplitAvailability,
-  resolveSplitControlPlacement,
-} from "./openInSplit";
+import { openThreadInSplit, resolveOpenInSplitState } from "./openInSplit";
 import { useSplitStore } from "./splitStore";
 
 const WIDE = SPLIT_MIN_PANE_PX * 2 + SPLIT_DIVIDER_PX;
 const NARROW = WIDE - 1;
 
 const base = {
-  renderState: "off",
   containerWidth: WIDE,
+  hasRouteThread: true,
   isRouteThread: false,
   isSecondaryThread: false,
 } as const;
 
-describe("resolveOpenInSplitAvailability", () => {
-  it("offers the entry on an ordinary row in a window wide enough for two panes", () => {
-    expect(resolveOpenInSplitAvailability(base)).toBe(true);
+describe("resolveOpenInSplitState", () => {
+  it("offers the entry on an ordinary row while a thread is open", () => {
+    expect(resolveOpenInSplitState(base)).toBe("ready");
   });
 
-  it("withholds it one pixel below the width two panes need", () => {
+  it("hides it when no thread is open to split against", () => {
+    // The split container is mounted by the thread route. On /projects or a
+    // fresh draft there is no left pane, so the entry would open a right pane
+    // beside nothing.
+    expect(resolveOpenInSplitState({ ...base, hasRouteThread: false })).toBe("hidden");
+  });
+
+  it("hides it one pixel below the width two panes need", () => {
     // The boundary and not a round number: a click here would open a split that
     // resolves straight back to `off`, which reads as a dead menu item.
-    expect(resolveOpenInSplitAvailability({ ...base, containerWidth: WIDE })).toBe(true);
-    expect(resolveOpenInSplitAvailability({ ...base, containerWidth: NARROW })).toBe(false);
+    expect(resolveOpenInSplitState({ ...base, containerWidth: WIDE })).toBe("ready");
+    expect(resolveOpenInSplitState({ ...base, containerWidth: NARROW })).toBe("hidden");
   });
 
   it("allows it before the pane region has been measured", () => {
     // `null` is the first frame, not a narrow window. Treating it as narrow
     // would hide the entry from every row until a resize happened to fire.
-    expect(resolveOpenInSplitAvailability({ ...base, containerWidth: null })).toBe(true);
+    expect(resolveOpenInSplitState({ ...base, containerWidth: null })).toBe("ready");
   });
 
-  it("withholds it on the thread the second pane is already showing", () => {
-    expect(
-      resolveOpenInSplitAvailability({
-        ...base,
-        renderState: "split",
-        isSecondaryThread: true,
-      }),
-    ).toBe(false);
+  it("greys it out on the thread you are reading rather than acting on it", () => {
+    // This is the left pane. Opening it in the split would put one transcript
+    // on both sides of the divider.
+    expect(resolveOpenInSplitState({ ...base, isRouteThread: true })).toBe("already-primary");
   });
 
-  it("withholds it on the thread the route is showing, split or not", () => {
-    // With a split live it is the left pane already; with the split closed this
-    // would put the same transcript on both sides of the divider.
-    expect(resolveOpenInSplitAvailability({ ...base, isRouteThread: true })).toBe(false);
-    expect(
-      resolveOpenInSplitAvailability({ ...base, renderState: "split", isRouteThread: true }),
-    ).toBe(false);
+  it("greys it out on the thread the right pane already holds", () => {
+    expect(resolveOpenInSplitState({ ...base, isSecondaryThread: true })).toBe("already-secondary");
   });
-});
 
-describe("resolveSplitControlPlacement", () => {
-  it("puts the toggle in the composer footer wherever a split fits", () => {
-    expect(resolveSplitControlPlacement({ paneId: null, containerWidth: WIDE })).toBe("footer");
-    expect(resolveSplitControlPlacement({ paneId: "primary", containerWidth: WIDE })).toBe(
-      "footer",
+  it("puts the hard gates ahead of the two soft ones", () => {
+    // A row that is both the route thread and in a window too narrow to split
+    // reads "hidden", not a disabled entry promising something impossible.
+    expect(resolveOpenInSplitState({ ...base, containerWidth: NARROW, isRouteThread: true })).toBe(
+      "hidden",
     );
-  });
-
-  it("falls back to the popover row only when the window is too narrow", () => {
-    // The row is kept for this case alone: it can carry a disabled button that
-    // says why, which a bare icon in the footer cannot.
-    expect(resolveSplitControlPlacement({ paneId: "primary", containerWidth: NARROW })).toBe(
-      "menu",
+    expect(resolveOpenInSplitState({ ...base, hasRouteThread: false, isRouteThread: true })).toBe(
+      "hidden",
     );
-  });
-
-  it("keeps the second pane's own controls in its footer whatever the measurement says", () => {
-    // A second pane only exists inside a live split, so a width that claims
-    // otherwise is a stale measurement, not a reason to hide its close button.
-    expect(resolveSplitControlPlacement({ paneId: "secondary", containerWidth: NARROW })).toBe(
-      "footer",
-    );
-  });
-
-  it("shows exactly one of the two, never both and never neither", () => {
-    for (const width of [null, NARROW, WIDE]) {
-      for (const paneId of [null, "primary", "secondary"] as const) {
-        expect(["footer", "menu"]).toContain(
-          resolveSplitControlPlacement({ paneId, containerWidth: width }),
-        );
-      }
-    }
   });
 });
 
 describe("openThreadInSplit", () => {
   const threadRef = scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("t-9"));
 
-  it("opens the split when it is closed and puts the thread in the second pane", () => {
+  it("opens the split when it is closed and puts the thread in the right pane", () => {
     useSplitStore.setState({ enabled: false, secondary: null, focusedPane: "primary" });
 
     openThreadInSplit(threadRef);
@@ -105,12 +76,12 @@ describe("openThreadInSplit", () => {
     const state = useSplitStore.getState();
     expect(state.enabled).toBe(true);
     expect(state.secondary).toEqual(threadRef);
-    // The second pane takes the keyboard, so the thread you just asked for is
+    // The right pane takes the keyboard, so the thread you just asked for is
     // the one the next keystroke reaches.
     expect(state.focusedPane).toBe("secondary");
   });
 
-  it("replaces the second pane's thread when the split is already open", () => {
+  it("replaces the right pane's thread rather than stacking, when a split is open", () => {
     const other = scopeThreadRef(EnvironmentId.make("env-b"), ThreadId.make("t-1"));
     useSplitStore.setState({ enabled: true, secondary: other, focusedPane: "primary" });
 
@@ -118,18 +89,30 @@ describe("openThreadInSplit", () => {
 
     expect(useSplitStore.getState().secondary).toEqual(threadRef);
   });
+
+  it("never touches the route, so the thread you are reading keeps the left pane", () => {
+    // The whole point of the affordance's position: the row you invoked it on
+    // fills the right pane, and the thread you were reading stays put on the
+    // left. The left pane's identity *is* the route, so the way this breaks is
+    // someone reaching for the router here — which is also the one thing a
+    // store assertion cannot see. So it is checked at the seam it would cross.
+    expect(moduleSource).not.toContain("@tanstack/react-router");
+    expect(moduleSource).not.toContain("navigate");
+  });
 });
 
-describe("the composer footer wiring", () => {
-  it("renders the split controls outside the popover, not inside it", () => {
-    // Read from the source because the popover only mounts its contents in a
-    // browser, so a rendered test cannot tell the two placements apart — and
-    // "the control is in the markup" was exactly the assertion that let a
-    // dead button ship last round. What matters here is *where*.
-    const controls = composerPaneMenuSource.indexOf("<SplitPaneMenuControls />");
-    const popover = composerPaneMenuSource.indexOf("<Popover>");
-    expect(controls).toBeGreaterThan(-1);
-    expect(popover).toBeGreaterThan(-1);
-    expect(controls).toBeLessThan(popover);
+describe("the row's split entry reaches every sidebar view", () => {
+  it("is resolved once on the shared row, not per view", () => {
+    // The projects groups, the Chats dock, the connections view and the inbox
+    // shelves all render through the one `renderThreadRow` callback, so the
+    // entry cannot be present in one view and missing from another. This is the
+    // assertion that a fifth view would have to keep true.
+    const rowUsages = sidebarSource.match(/<SidebarThreadRow/g) ?? [];
+    expect(rowUsages).toHaveLength(1);
+    expect(sidebarSource).toContain("useOpenInSplitState({");
+    for (const view of ["SidebarConnectionsView", "SidebarProjectsView"]) {
+      const usage = sidebarSource.slice(sidebarSource.indexOf(`<${view}`));
+      expect(usage.slice(0, 400)).toContain("renderThreadRow={renderThreadRow}");
+    }
   });
 });

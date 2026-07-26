@@ -52,6 +52,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import type { OpenInSplitState } from "../split/openInSplit";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { resolveSnoozePresets } from "../Sidebar.snooze";
 import { Menu, MenuGroup, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -110,6 +111,17 @@ function JumpHintBadge({ label }: { readonly label: string }): ReactNode {
 }
 
 /**
+ * What the split entry reads as, per state. The two disabled labels name the
+ * pane the thread is already in rather than saying a flat "unavailable": on the
+ * row you are reading, "here" is the answer to why the entry is grey.
+ */
+const SPLIT_MENU_LABEL: Readonly<Record<Exclude<OpenInSplitState, "hidden">, string>> = {
+  ready: "Open in split view",
+  "already-primary": "Already open here",
+  "already-secondary": "Already in split view",
+};
+
+/**
  * Everything you can do to a row, behind one button.
  *
  * The row used to swap its own content on hover: the machine, the agent and
@@ -137,7 +149,7 @@ function ThreadRowMenu({
   settlementSupported,
   snoozeAllowed,
   snoozeSupported,
-  canOpenInSplit,
+  splitState,
   onOpenInSplit,
   onSettle,
   onUnsettle,
@@ -150,8 +162,8 @@ function ThreadRowMenu({
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
   readonly snoozeSupported: boolean;
-  /** False where a split cannot hold this thread — see `openInSplit`. */
-  readonly canOpenInSplit: boolean;
+  /** Whether this thread can go in the right pane — see `openInSplit`. */
+  readonly splitState: OpenInSplitState;
   readonly onOpenInSplit: () => void;
   readonly onSettle: (event: ReactMouseEvent) => void;
   readonly onUnsettle: (event: ReactMouseEvent) => void;
@@ -180,20 +192,36 @@ function ThreadRowMenu({
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-48">
         {/* First, and above the separator: this is the only entry that opens
-            something rather than filing it away, and it is the reason the row
-            menu earns a look on a thread that needs no triage at all. */}
-        {canOpenInSplit ? (
+            something rather than filing it away, and it is how the split is
+            reached at all. The thread stays where the pointer is — the one you
+            are reading keeps the left pane and this one fills the right. */}
+        {splitState === "hidden" ? null : (
           <>
-            <MenuItem closeOnClick onClick={onOpenInSplit} className="sm:text-xs">
+            {/* `stopPropagation` is load-bearing, not defensive. The popup is
+                portalled to the body, but a React portal's events bubble up the
+                *component* tree, so this click reaches the row — and the row
+                navigates. Without it, opening a thread on the right also drags
+                the left pane onto it, which is the one thing this entry exists
+                not to do. The settle and wake handlers stop it for the same
+                reason; the snooze presets take no event and need none. */}
+            <MenuItem
+              closeOnClick
+              disabled={splitState !== "ready"}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (splitState === "ready") onOpenInSplit();
+              }}
+              className="sm:text-xs"
+            >
               <Columns2Icon aria-hidden className="size-3.5" />
-              Open in split
+              {SPLIT_MENU_LABEL[splitState]}
             </MenuItem>
             {rowAction === "unsnooze" ? snoozeSupported ? <MenuSeparator /> : null : null}
             {rowAction !== "unsnooze" && (settlementSupported || snoozeAllowed) ? (
               <MenuSeparator />
             ) : null}
           </>
-        ) : null}
+        )}
         {rowAction === "unsnooze" ? (
           snoozeSupported ? (
             <MenuItem closeOnClick onClick={onUnsnooze} className="sm:text-xs">
@@ -253,9 +281,11 @@ function hasRowActions(input: {
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
   readonly snoozeSupported: boolean;
-  readonly canOpenInSplit: boolean;
+  readonly splitState: OpenInSplitState;
 }): boolean {
-  if (input.canOpenInSplit) return true;
+  // Only a *usable* split entry earns the row a menu. A disabled line is worth
+  // showing next to real actions and not worth a button of its own.
+  if (input.splitState === "ready") return true;
   if (input.rowAction === "unsnooze") return input.snoozeSupported;
   return input.settlementSupported || input.snoozeAllowed;
 }
@@ -295,7 +325,7 @@ export function SidebarThreadRow({
   settlementSupported,
   snoozeSupported,
   snoozeAllowed,
-  canOpenInSplit,
+  splitState,
   driverKind,
   providerDisplayName,
   jumpLabel,
@@ -320,11 +350,12 @@ export function SidebarThreadRow({
   /** Snooze is also refused on blocked or queued work, so it has its own gate. */
   readonly snoozeAllowed: boolean;
   /**
-   * Whether this thread can go in the second pane. A property of the window and
-   * of what is already open, not of the thread — resolved by `useCanOpenInSplit`
-   * in `SidebarV2Row` and handed down, like every other decision this row makes.
+   * Whether this thread can go in the right pane, and if not, why. A property
+   * of the window and of what is already on screen rather than of the thread —
+   * resolved by `useOpenInSplitState` in `SidebarV2Row` and handed down, like
+   * every other decision this row makes.
    */
-  readonly canOpenInSplit: boolean;
+  readonly splitState: OpenInSplitState;
   readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
   readonly providerDisplayName: string;
   readonly jumpLabel: string | null;
@@ -346,7 +377,7 @@ export function SidebarThreadRow({
     settlementSupported,
     snoozeAllowed,
     snoozeSupported,
-    canOpenInSplit,
+    splitState,
   });
   const hasProgress = hasThreadTaskProgress(thread.planSummary);
   // A snoozed row shows when it comes BACK rather than when it was last
@@ -479,7 +510,7 @@ export function SidebarThreadRow({
                     settlementSupported={settlementSupported}
                     snoozeAllowed={snoozeAllowed}
                     snoozeSupported={snoozeSupported}
-                    canOpenInSplit={canOpenInSplit}
+                    splitState={splitState}
                     onOpenInSplit={onOpenInSplit}
                     onSettle={actions.onSettle}
                     onUnsettle={actions.onUnsettle}
