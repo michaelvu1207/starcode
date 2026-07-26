@@ -40,6 +40,8 @@ import {
   ProjectGetResult,
   ProjectListInput,
   ProjectListResult,
+  ProjectSetIconToolInput,
+  ProjectSetIconToolResult,
   ProjectToolError,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
@@ -113,4 +115,41 @@ export const ProjectFileThreadTool = Tool.make("project_file_thread", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
-export const ProjectsToolkit = Toolkit.make(ProjectListTool, ProjectGetTool, ProjectFileThreadTool);
+/**
+ * The first *display* write any tool in this fork makes, which is worth naming.
+ *
+ * Every other project tool answers about this machine and changes nothing that
+ * leaves it. An icon is display: the fold resolves display halves on newest
+ * `updatedAt`, so an icon set here becomes the icon the operator sees on every
+ * surface on every machine as soon as any client folds the catalog — and the
+ * other machines' own copies catch up the next time a display write fans out.
+ * That is the replication story working as designed, not a gap: one machine
+ * authored an opinion about what the project *is*, and that is precisely the
+ * half of a record that is allowed to travel.
+ *
+ * Gated the same way `project_file_thread` is, rather than added to
+ * `CAPABILITY_GATED_TOOLS`: a thread setting the icon of the project it is
+ * working in is doing its own housekeeping, and hiding the tool outright would
+ * take that from every worker to prevent a use the handler can simply refuse.
+ */
+export const ProjectSetIconTool = Tool.make("project_set_icon", {
+  description:
+    "Set the icon shown beside a project's name on every surface, as a base64 data URI. Omit slug to set your own project's icon — the one your thread is filed under — which needs no special capability; naming any other project requires the orchestrator capability. Accepts png, webp, jpeg and gif, not svg, and refuses anything over 32000 characters encoded, so shrink the image to about 96px square before encoding it: it is drawn at 16-28px and the string is stored in the project record on every machine. Pass an empty icon to clear it and go back to the derived constellation.",
+  parameters: ProjectSetIconToolInput,
+  success: ProjectSetIconToolResult,
+  failure: ProjectToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Set a project's icon")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  // Setting the same icon twice lands the same record; only the stamp moves.
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ProjectsToolkit = Toolkit.make(
+  ProjectListTool,
+  ProjectGetTool,
+  ProjectFileThreadTool,
+  ProjectSetIconTool,
+);

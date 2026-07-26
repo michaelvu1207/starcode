@@ -41,6 +41,7 @@ import {
 import { ExecutionEnvironmentPlatform } from "./environment.ts";
 import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
+import { PROJECT_CATEGORY_ICON_MAX_LENGTH, ProjectCategoryIconDataUri } from "./projectIcon.ts";
 import { WorkbenchMasterDefaults } from "./settings.ts";
 
 // The slug is defined in its own leaf module to keep `peers.ts` out of a
@@ -50,6 +51,19 @@ export {
   ProjectCategorySlug,
   toProjectCategorySlug,
 } from "./projectCategorySlug.ts";
+
+// Same arrangement for the icon, which the browser encoder and the server
+// validator both need without either reaching the rest of this module.
+export {
+  describeProjectCategoryIconRejection,
+  PROJECT_CATEGORY_ICON_MAX_LENGTH,
+  PROJECT_CATEGORY_ICON_MIME_TYPES,
+  PROJECT_CATEGORY_ICON_TARGET_SIZE,
+  ProjectCategoryIconDataUri,
+  validateProjectCategoryIcon,
+  type ProjectCategoryIconMimeType,
+  type ProjectCategoryIconRejection,
+} from "./projectIcon.ts";
 
 export const PROJECT_CATEGORY_TITLE_MAX_LENGTH = 200;
 export const PROJECT_CATEGORY_SUMMARY_MAX_LENGTH = 500;
@@ -77,6 +91,19 @@ export const ProjectCategoryDisplay = Schema.Struct({
   ),
   /** Constellation glyph id. Empty means "derive one from the slug hash". */
   glyph: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  /**
+   * An uploaded mark, as a base64 data URI. Empty — the default, and what every
+   * project starts as — means "draw the constellation `glyph` names".
+   *
+   * Capped but not sniffed here, unlike the patch below: the strict schema
+   * belongs on the write, and a stored value that somehow fails it must still
+   * decode rather than take the machine's whole catalog down with it. The
+   * renderer falls back to the constellation when the image will not load, so a
+   * bad string costs one project its picture and nothing else.
+   */
+  icon: Schema.String.check(Schema.isMaxLength(PROJECT_CATEGORY_ICON_MAX_LENGTH)).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
   /**
@@ -212,6 +239,13 @@ export const ProjectCategoryDisplayPatch = Schema.Struct({
   ),
   accent: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
   glyph: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  /**
+   * Strict here and nowhere else. This is the only door bytes come through —
+   * the HTTP upsert, the MCP tool and the fan-out all decode this patch — so
+   * refusing an oversize or mistyped image at the schema costs every write path
+   * one shared implementation instead of three that drift. Empty clears it.
+   */
+  icon: Schema.optionalKey(ProjectCategoryIconDataUri),
   parentSlug: Schema.optionalKey(Schema.NullOr(ProjectCategorySlug)),
   links: Schema.optionalKey(
     Schema.Array(ProjectCategoryLink).check(Schema.isMaxLength(PROJECT_CATEGORY_LINK_MAX_COUNT)),
@@ -394,7 +428,7 @@ const orderedBySlug = (
  * claims to know what another machine holds — the cross-machine union is the
  * client's fold, and a server that guessed at it would be inventing.
  */
-export const ProjectToolOperation = Schema.Literals(["list", "get", "file_thread"]);
+export const ProjectToolOperation = Schema.Literals(["list", "get", "file_thread", "set_icon"]);
 export type ProjectToolOperation = typeof ProjectToolOperation.Type;
 
 export const ProjectToolErrorReason = Schema.Literals([
@@ -432,6 +466,14 @@ export const ProjectToolSummary = Schema.Struct({
   threadCount: Schema.Int,
   /** This machine names an orchestrator for it. */
   hasMaster: Schema.Boolean,
+  /**
+   * Whether it already has an uploaded icon — the fact, never the bytes.
+   *
+   * An agent deciding whether to set one needs to know if there is one; it has
+   * no use for 24 KB of base64, and putting that in a listing would spend a
+   * meaningful slice of the caller's context on a picture it cannot look at.
+   */
+  hasIcon: Schema.Boolean,
 });
 export type ProjectToolSummary = typeof ProjectToolSummary.Type;
 
@@ -554,3 +596,37 @@ export const ProjectFileThreadToolResult = Schema.Struct({
   mode: ProjectCatalogFileThreadMode,
 });
 export type ProjectFileThreadToolResult = typeof ProjectFileThreadToolResult.Type;
+
+/**
+ * Setting a project's icon from a thread.
+ *
+ * The gate mirrors `project_file_thread` exactly, and for the same reason: a
+ * thread acting on *its own* project is that thread's business, and acting on
+ * somebody else's is an orchestrator's. Doing this any other way would mean
+ * either taking a small, obviously-useful write away from every worker or
+ * letting any session restyle a project it has never touched, on four machines.
+ */
+export const ProjectSetIconToolInput = Schema.Struct({
+  slug: Schema.optional(
+    ProjectCategorySlug.annotate({
+      description:
+        "Project to set the icon on. Defaults to the project the calling thread is filed under. Setting any other project's icon requires the orchestrator capability.",
+    }),
+  ),
+  icon: ProjectCategoryIconDataUri.annotate({
+    description:
+      "The icon as a base64 data URI (data:image/webp;base64,…). png, webp, jpeg and gif are accepted; svg is not. It is shown at ~16-28px beside the project name, so encode it small — square, about 96px, under 32000 characters encoded. Pass an empty string to clear it and go back to the derived constellation.",
+  }),
+});
+export type ProjectSetIconToolInput = typeof ProjectSetIconToolInput.Type;
+
+export const ProjectSetIconToolResult = Schema.Struct({
+  slug: ProjectCategorySlug,
+  /** False when the call cleared the icon. The bytes never come back. */
+  hasIcon: Schema.Boolean,
+  /** Characters stored, so a caller can see what its encoding actually cost. */
+  iconLength: Schema.Int,
+  /** The stamp this machine wrote, which is what the fold sorts on. */
+  updatedAt: IsoDateTime,
+});
+export type ProjectSetIconToolResult = typeof ProjectSetIconToolResult.Type;

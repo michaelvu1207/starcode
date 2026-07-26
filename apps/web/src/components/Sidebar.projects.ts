@@ -87,6 +87,8 @@ export interface SidebarProjectGroup {
   readonly accent: string;
   /** Chosen glyph variant, or empty for the one derived from the slug. */
   readonly glyph: string;
+  /** Uploaded icon as a data URI, or empty to draw the glyph. */
+  readonly icon: string;
   readonly archived: boolean;
   readonly rows: ReadonlyArray<SidebarProjectRow>;
 }
@@ -159,6 +161,7 @@ export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarP
       title: project.display.title,
       accent: project.display.accent,
       glyph: project.display.glyph,
+      icon: project.display.icon,
       archived: project.archived,
       rows,
     };
@@ -186,6 +189,7 @@ export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarP
           title: SIDEBAR_CHATS_GROUP_TITLE,
           accent: "",
           glyph: "",
+          icon: "",
           archived: false,
           rows: chatRows,
         };

@@ -202,7 +202,7 @@ function ProjectCardTile({ card }: { readonly card: ProjectCard }): ReactNode {
           className="sc-project-mark mt-px size-7 shrink-0"
           style={{ "--sc-project-hue": `${projectAccentHue(card.slug, card.accent)}deg` } as never}
         >
-          <ProjectGlyph slug={card.slug} variant={card.glyph} />
+          <ProjectGlyph slug={card.slug} variant={card.glyph} icon={card.icon} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">{card.title}</span>

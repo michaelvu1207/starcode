@@ -23,6 +23,7 @@ import {
   type ProjectGetResult,
   type ProjectListResult,
   type ProjectFileThreadToolResult,
+  type ProjectSetIconToolResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -40,6 +41,15 @@ import {
 } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { __testing } from "./handlers.ts";
+
+/**
+ * A real PNG header followed by zeroes: the sniff reads the first twelve bytes
+ * and nothing decodes it, so a valid signature is the whole of what "an image"
+ * has to mean here.
+ */
+const PNG_ICON = `data:image/png;base64,${Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+]).toString("base64")}`;
 
 const CALLER_THREAD = ThreadId.make("thread-caller");
 const OTHER_THREAD = ThreadId.make("thread-other");
@@ -144,7 +154,9 @@ const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapabilit
 const MASTER = ["preview", "peers", "peers-operate", "features-operate"] as const;
 const WORKER = ["preview", "peers"] as const;
 
-type ToolResult = Partial<ProjectListResult & ProjectGetResult & ProjectFileThreadToolResult>;
+type ToolResult = Partial<
+  ProjectListResult & ProjectGetResult & ProjectFileThreadToolResult & ProjectSetIconToolResult
+>;
 
 type ToolContext =
   | McpInvocationContext.McpInvocationContext
@@ -409,6 +421,110 @@ describe("project tools", () => {
         "label",
         "platform",
       ]);
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+  /**
+   * The icon tools, which are the first *display* write anything in this
+   * toolkit makes. Two rules matter and they pull in opposite directions:
+   * Michael asked for threads to be able to set their own project's icon, and
+   * display travels to every machine — so the gate has to let a worker restyle
+   * the project it is working in while refusing it somebody else's.
+   */
+  it.effect("lets a worker set its own project's icon without any extra capability", () =>
+    Effect.gen(function* () {
+      yield* seed("hub", [HUB_PROJECT]);
+      const set = yield* call("project_set_icon", { icon: PNG_ICON });
+
+      // No slug was passed: the project is the one the caller's folder derives
+      // it into, which is what "its own project" has to mean for a thread
+      // nobody filed by hand.
+      assert.strictEqual(set.slug, "hub");
+      assert.strictEqual(set.hasIcon, true);
+      assert.strictEqual(set.iconLength, PNG_ICON.length);
+
+      // Reported as a fact on the summary, never as bytes: a listing carrying
+      // data URIs would spend the caller's context on pictures.
+      const listed = yield* call("project_list", {});
+      assert.strictEqual(listed.projects?.[0]?.hasIcon, true);
+      // The summary carries no field the bytes could ride in at all, which is
+      // stronger than checking that this particular icon did not leak.
+      assert.notInclude(Object.keys(listed.projects?.[0] ?? {}), "icon");
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("refuses a worker setting another project's icon, and says which one is its own", () =>
+    Effect.gen(function* () {
+      yield* seed("hub", [HUB_PROJECT]);
+      yield* seed("research", []);
+
+      const refused = yield* call("project_set_icon", {
+        slug: "research",
+        icon: PNG_ICON,
+      }).pipe(Effect.flip);
+      assert.strictEqual(refused.reason, "capability_unavailable");
+      assert.include(refused.detail ?? "", "hub");
+
+      // The same call from the orchestrator lands, which is the other half of
+      // the split: filing and restyling somebody else's work is a master's act.
+      const research = yield* call("project_set_icon", { slug: "research", icon: PNG_ICON }).pipe(
+        Effect.provide(makeLayer(MASTER)),
+      );
+      assert.strictEqual(research.hasIcon, true);
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("clears the icon with an empty string rather than a second verb", () =>
+    Effect.gen(function* () {
+      yield* seed("hub", [HUB_PROJECT]);
+      yield* call("project_set_icon", { icon: PNG_ICON });
+
+      const cleared = yield* call("project_set_icon", { icon: "" });
+      assert.strictEqual(cleared.hasIcon, false);
+      assert.strictEqual(cleared.iconLength, 0);
+      assert.strictEqual((yield* call("project_list", {})).projects?.[0]?.hasIcon, false);
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("refuses bytes that are not what the data URI says, and oversize ones", () =>
+    Effect.gen(function* () {
+      yield* seed("hub", [HUB_PROJECT]);
+
+      // The handler validates as well as the schema, so an agent gets the
+      // tool's own error shape and a sentence about what to do — not a decode
+      // failure it has to guess at.
+      const mistyped = yield* call("project_set_icon", {
+        icon: PNG_ICON.replace("image/png", "image/webp"),
+      }).pipe(Effect.flip);
+      assert.strictEqual(mistyped.reason, "invalid");
+      assert.include(mistyped.detail ?? "", "not the image type");
+
+      const oversize = yield* call("project_set_icon", {
+        icon: `data:image/png;base64,${"A".repeat(40_000)}`,
+      }).pipe(Effect.flip);
+      assert.strictEqual(oversize.reason, "invalid");
+      assert.include(oversize.detail ?? "", "96px");
+
+      const svg = yield* call("project_set_icon", {
+        icon: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+      }).pipe(Effect.flip);
+      assert.strictEqual(svg.reason, "invalid");
+      assert.include(svg.detail ?? "", "SVG is not accepted");
+
+      // Nothing landed. A refused write must leave the record alone rather than
+      // half-applying, since this one replicates.
+      assert.strictEqual((yield* call("project_list", {})).projects?.[0]?.hasIcon, false);
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("tells an unfiled thread to file itself rather than guessing a project", () =>
+    Effect.gen(function* () {
+      // No bindings anywhere, so the caller is in no project. Picking one for
+      // it would be the server inventing membership, which is the one thing the
+      // local/display split exists to prevent.
+      yield* seed("research", []);
+      const refused = yield* call("project_set_icon", { icon: PNG_ICON }).pipe(Effect.flip);
+      assert.strictEqual(refused.reason, "not_found");
+      assert.include(refused.detail ?? "", "project_file_thread");
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 });

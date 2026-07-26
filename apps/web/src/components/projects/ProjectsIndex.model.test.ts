@@ -33,6 +33,7 @@ const project = (input: {
   readonly title?: string;
   readonly accent?: string;
   readonly glyph?: string;
+  readonly icon?: string;
   readonly archived?: boolean;
   readonly sections?: ReadonlyArray<{
     readonly environmentId: string;
@@ -48,6 +49,7 @@ const project = (input: {
     summary: "",
     accent: input.accent ?? "",
     glyph: input.glyph ?? "",
+    icon: input.icon ?? "",
     parentSlug: null,
     links: [],
     notes: "",
@@ -244,6 +246,7 @@ describe("sortProjectCards", () => {
     summary: "",
     accent: "",
     glyph: "",
+    icon: "",
     archived: false,
     machines: [],
     activeCount: 0,

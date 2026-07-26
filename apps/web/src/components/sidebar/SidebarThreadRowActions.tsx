@@ -309,7 +309,11 @@ function ThreadRowProjectSubmenu({
                   } as never
                 }
               >
-                <ProjectGlyph slug={project.slug} variant={project.display.glyph} />
+                <ProjectGlyph
+                  slug={project.slug}
+                  variant={project.display.glyph}
+                  icon={project.display.icon}
+                />
               </span>
               <span className="min-w-0 flex-1 truncate">{project.display.title}</span>
               {isCurrent ? <CheckIcon aria-hidden className="size-3.5 shrink-0" /> : null}

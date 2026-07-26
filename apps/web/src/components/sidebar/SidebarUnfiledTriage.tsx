@@ -162,7 +162,7 @@ export function SidebarUnfiledTriage({
                           } as never
                         }
                       >
-                        <ProjectGlyph slug={project.key} variant={project.glyph} />
+                        <ProjectGlyph slug={project.key} variant={project.glyph} icon={project.icon} />
                       </span>
                       <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                         {project.title}

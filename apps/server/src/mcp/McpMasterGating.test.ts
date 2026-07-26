@@ -42,6 +42,7 @@ const category = (slug: string, master: string): ProjectCategoryRecord => ({
     summary: "",
     accent: "",
     glyph: "",
+    icon: "",
     parentSlug: null,
     links: [],
     notes: "",

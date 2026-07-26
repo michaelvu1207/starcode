@@ -15,8 +15,8 @@
  * that same text to every agent that asks.
  */
 import type { ProjectCategoryDisplayPatch } from "@t3tools/contracts";
-import { PlusIcon, XIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { ImagePlusIcon, PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -34,6 +34,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import type { ProjectCategoryView } from "./ProjectCatalog.model";
+import { encodeProjectIcon } from "./projectIconEncode";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { PROJECT_ACCENTS, PROJECT_GLYPH_VARIANTS, projectAccentHue } from "./ProjectsIndex.model";
 import "./Projects.css";
@@ -58,21 +59,53 @@ export function ProjectEditDialog({
   const [summary, setSummary] = useState(project.display.summary);
   const [accent, setAccent] = useState(project.display.accent);
   const [glyph, setGlyph] = useState(project.display.glyph);
+  const [icon, setIcon] = useState(project.display.icon);
+  const [iconError, setIconError] = useState("");
+  const [encoding, setEncoding] = useState(false);
   const [notes, setNotes] = useState(project.display.notes);
   const [links, setLinks] = useState<ReadonlyArray<LinkDraft>>(project.display.links);
   const [saving, setSaving] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   // Re-seed on open rather than on every prop change: the catalog polls, so a
   // refresh landing mid-edit would otherwise overwrite what is being typed.
+  //
+  // The latch is what makes that true. `project.display` has to stay in the
+  // dependency list — the dialog must show the current record when it opens —
+  // but a poll hands back a new object every 45 seconds, and without the latch
+  // the effect fires again and reverts the form. That was survivable when the
+  // worst case was a re-typed sentence; an upload is a file the operator picked
+  // and re-encoded, and losing it silently on a timer is not.
+  const seeded = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      seeded.current = false;
+      return;
+    }
+    if (seeded.current) return;
+    seeded.current = true;
     setTitle(project.display.title);
     setSummary(project.display.summary);
     setAccent(project.display.accent);
     setGlyph(project.display.glyph);
+    setIcon(project.display.icon);
+    setIconError("");
     setNotes(project.display.notes);
     setLinks(project.display.links);
   }, [open, project.display]);
+
+  const pickIcon = async (file: File | undefined) => {
+    if (file === undefined) return;
+    setIconError("");
+    setEncoding(true);
+    try {
+      const result = await encodeProjectIcon(file);
+      if (result.ok) setIcon(result.icon);
+      else setIconError(result.message);
+    } finally {
+      setEncoding(false);
+    }
+  };
 
   // The figure swatches all wear the accent being edited, so choosing a figure
   // and choosing a colour are one decision seen twice rather than two.
@@ -88,6 +121,7 @@ export function ProjectEditDialog({
         summary: summary.trim(),
         accent,
         glyph,
+        icon,
         notes,
         // A half-typed row is not a link. Dropping it silently beats saving a
         // label that points nowhere.
@@ -144,6 +178,70 @@ export function ProjectEditDialog({
                 operator who has two projects whose auto-figures look alike. */}
             <div className="space-y-2">
               <Label>Mark</Label>
+
+              {/* The uploaded icon, when there is one, wins over everything
+                  below it — so it goes first, at the size the sidebar and the
+                  cards actually draw it rather than as a large preview that
+                  flatters a picture nobody will see that big. */}
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="sc-project-mark size-9 shrink-0 rounded-md border border-border/40 p-1"
+                  style={{ "--sc-project-hue": `${hue}deg` } as never}
+                  data-testid="project-icon-preview"
+                >
+                  <ProjectGlyph slug={project.slug} variant={glyph} icon={icon} />
+                </span>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="image/png,image/webp,image/jpeg,image/gif,image/svg+xml"
+                  className="hidden"
+                  data-testid="project-icon-input"
+                  onChange={(event) => {
+                    void pickIcon(event.target.files?.[0]);
+                    // Cleared so picking the same file twice still fires a
+                    // change — the second attempt after a rejection is the one
+                    // most likely to be the same file, re-exported.
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-[11px]"
+                  disabled={encoding}
+                  onClick={() => fileInput.current?.click()}
+                  data-testid="project-icon-upload"
+                >
+                  <ImagePlusIcon className="size-3" />
+                  {encoding ? "Shrinking…" : icon.length > 0 ? "Replace icon" : "Upload icon"}
+                </Button>
+                {icon.length > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px] text-muted-foreground"
+                    onClick={() => {
+                      setIcon("");
+                      setIconError("");
+                    }}
+                    data-testid="project-icon-clear"
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </div>
+              {iconError.length > 0 ? (
+                <p className="text-[11px] text-destructive" data-testid="project-icon-error">
+                  {iconError}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground/60">
+                  Shrunk to 96px square and stored with the project, so it shows on every machine.
+                  {icon.length > 0 ? " The figures below apply when there is no icon." : ""}
+                </p>
+              )}
+
               <div className="flex flex-wrap gap-1.5">
                 {PROJECT_GLYPH_VARIANTS.map((variant) => (
                   <button

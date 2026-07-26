@@ -42,6 +42,7 @@ const record = (input: {
     summary: "",
     accent: "",
     glyph: "",
+    icon: "",
     parentSlug: null,
     links: [],
     notes: "",

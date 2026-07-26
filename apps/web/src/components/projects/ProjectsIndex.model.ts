@@ -59,6 +59,8 @@ export interface ProjectCard {
   readonly accent: string;
   /** Chosen glyph variant, or empty for the one derived from the slug. */
   readonly glyph: string;
+  /** Uploaded icon as a data URI, or empty to draw the glyph. */
+  readonly icon: string;
   readonly archived: boolean;
   readonly machines: ReadonlyArray<ProjectMachineChip>;
   readonly activeCount: number;
@@ -167,6 +169,7 @@ export function buildProjectCards(input: {
       summary: project.display.summary,
       accent: project.display.accent,
       glyph: project.display.glyph,
+      icon: project.display.icon,
       archived: project.archived,
       machines: project.sections.map(
         (section): ProjectMachineChip => ({

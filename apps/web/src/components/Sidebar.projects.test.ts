@@ -55,6 +55,7 @@ const project = (input: {
     summary: "",
     accent: "",
     glyph: "",
+    icon: "",
     parentSlug: null,
     links: [],
     notes: "",

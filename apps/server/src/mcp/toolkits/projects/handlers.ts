@@ -10,14 +10,17 @@
  * @module ProjectHandlers
  */
 import {
+  describeProjectCategoryIconRejection,
   featureMapEntryInProject,
   ProjectToolError,
   resolveLocalProjectMembership,
+  validateProjectCategoryIcon,
   type ProjectCatalogFileThreadMode,
   type ProjectCategoryRecord,
   type ProjectCategorySlug,
   type ProjectToolFeature,
   type ProjectToolLocation,
+  type ProjectToolOperation,
   type ProjectToolSummary,
   type ProjectToolThread,
   type ThreadId,
@@ -38,7 +41,7 @@ import { ProjectsToolkit } from "./tools.ts";
  * capability — a shape that should not occur — fails loudly rather than
  * reading the operator's notes.
  */
-const requireRead = (operation: "list" | "get" | "file_thread") =>
+const requireRead = (operation: ProjectToolOperation) =>
   Effect.gen(function* () {
     const invocation = yield* McpInvocationContext.McpInvocationContext;
     if (!invocation.capabilities.has("peers")) {
@@ -51,7 +54,7 @@ const requireRead = (operation: "list" | "get" | "file_thread") =>
     return invocation;
   });
 
-const storageFailed = (operation: "list" | "get" | "file_thread") => (cause: unknown) =>
+const storageFailed = (operation: ProjectToolOperation) => (cause: unknown) =>
   new ProjectToolError({
     operation,
     reason: "storage_failed",
@@ -86,6 +89,9 @@ const summarize = (input: {
     .filter((root): root is string => root !== undefined),
   threadCount: input.threadCount,
   hasMaster: input.category.local.masterThreadId.trim().length > 0,
+  // The fact, not the bytes. A listing that carried four data URIs would
+  // spend more of the caller's context on pictures than on projects.
+  hasIcon: input.category.display.icon.length > 0,
 });
 
 /**
@@ -95,7 +101,7 @@ const summarize = (input: {
  * because reading them concurrently is the difference between a tool call an
  * agent waits on and one it does not notice.
  */
-const readMachineState = (operation: "list" | "get" | "file_thread") =>
+const readMachineState = (operation: ProjectToolOperation) =>
   Effect.gen(function* () {
     const registry = yield* ProjectCatalogRegistry;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -329,6 +335,89 @@ const handlers = {
       }
 
       return { threadId, slug: landed, mode };
+    }),
+
+  project_set_icon: (input) =>
+    Effect.gen(function* () {
+      const invocation = yield* requireRead("set_icon");
+
+      // Validated here as well as at the schema, because the two produce
+      // different things: the schema's refusal is a decode error the agent sees
+      // as malformed input, and this is the tool telling it, in the tool's own
+      // error shape, exactly which rule the image broke and what to do about
+      // it. Both call the same function, so they cannot disagree about what is
+      // acceptable — only about how they say so.
+      const rejection = validateProjectCategoryIcon(input.icon);
+      if (rejection !== null) {
+        return yield* new ProjectToolError({
+          operation: "set_icon",
+          reason: "invalid",
+          detail: describeProjectCategoryIconRejection(rejection),
+        });
+      }
+
+      const state = yield* readMachineState("set_icon");
+
+      // Whose project this thread is in, which is what "omit slug" means. Read
+      // from the same resolver every other membership answer comes from rather
+      // than from the catalog directly, so a thread filed by its folder is as
+      // much a member as one filed explicitly.
+      let ownSlug: ProjectCategorySlug | null = null;
+      for (const [slug, ids] of state.membership) {
+        if (ids.includes(invocation.threadId)) {
+          ownSlug = slug;
+          break;
+        }
+      }
+
+      const slug = input.slug ?? ownSlug;
+      if (slug === undefined || slug === null) {
+        return yield* new ProjectToolError({
+          operation: "set_icon",
+          reason: "not_found",
+          detail:
+            "This thread is not filed under any project on this machine, so there is no icon to set. Call project_file_thread to file it, or pass a slug.",
+        });
+      }
+
+      // The gate, and the same one `project_file_thread` applies. An icon is
+      // display: it is what the project *is*, and it lands on every surface on
+      // every machine. Restyling the project you are working in is housekeeping;
+      // restyling somebody else's is an orchestrator's act.
+      if (slug !== ownSlug && !invocation.capabilities.has("peers-operate")) {
+        return yield* new ProjectToolError({
+          operation: "set_icon",
+          reason: "capability_unavailable",
+          detail: `Only the designated master thread may set another project's icon. This thread is filed under ${
+            ownSlug ?? "no project"
+          }; call this without a slug to set that one.`,
+        });
+      }
+
+      if (!state.categories.some((entry) => entry.slug === slug)) {
+        return yield* new ProjectToolError({
+          operation: "set_icon",
+          reason: "not_found",
+          detail: `This machine has no project '${slug}'. Its projects are: ${
+            state.categories.map((entry) => entry.slug).join(", ") || "(none)"
+          }.`,
+        });
+      }
+
+      const registry = yield* ProjectCatalogRegistry;
+      // No `displayUpdatedAt`: the server's own clock is the right stamp for a
+      // write nobody is fanning out. The client stamps its own only because it
+      // sends one value to four machines.
+      const result = yield* registry
+        .upsert({ slug, display: { icon: input.icon } })
+        .pipe(Effect.mapError(storageFailed("set_icon")));
+
+      return {
+        slug,
+        hasIcon: result.category.display.icon.length > 0,
+        iconLength: result.category.display.icon.length,
+        updatedAt: result.category.display.updatedAt,
+      };
     }),
 } satisfies Parameters<typeof ProjectsToolkit.toLayer>[0];
 

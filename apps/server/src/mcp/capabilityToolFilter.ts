@@ -44,6 +44,13 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  * for somebody else's, so the gate is a branch inside the handler and cannot be
  * expressed as "hide it". Listing it here would take self-filing away from
  * every worker to gate a use most of them will never reach for.
+ *
+ * `project_set_icon` is absent on the same grounds, and it is the one that had
+ * a real case against it: an icon is *display*, so it travels to every machine
+ * rather than staying where it was written, and that is an argument for
+ * master-only. It loses to the same branch the two above rest on — a thread
+ * setting the icon of the project it is working in is doing its own
+ * housekeeping, and the handler can simply refuse any other project.
  */
 export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.McpCapability> =
   new Map([

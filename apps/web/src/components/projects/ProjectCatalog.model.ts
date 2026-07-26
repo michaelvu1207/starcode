@@ -631,6 +631,7 @@ export function projectDisplayPatch(record: ProjectCategoryRecord | ProjectCateg
   readonly summary: string;
   readonly accent: string;
   readonly glyph: string;
+  readonly icon: string;
   readonly parentSlug: ProjectCategorySlug | null;
   readonly links: ProjectCategoryDisplay["links"];
   readonly notes: string;
@@ -642,6 +643,7 @@ export function projectDisplayPatch(record: ProjectCategoryRecord | ProjectCateg
     summary: display.summary,
     accent: display.accent,
     glyph: display.glyph,
+    icon: display.icon,
     parentSlug: display.parentSlug,
     links: display.links,
     notes: display.notes,
@@ -739,6 +741,7 @@ export function applyPendingProjectDisplays(
           summary: "",
           accent: "",
           glyph: "",
+          icon: "",
           parentSlug: null,
           links: [],
           notes: "",

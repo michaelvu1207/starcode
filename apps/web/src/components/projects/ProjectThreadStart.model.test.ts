@@ -42,6 +42,7 @@ const project = (
     summary: "",
     accent: "",
     glyph: "",
+    icon: "",
     parentSlug: null,
     links: [],
     notes: "",

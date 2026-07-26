@@ -282,7 +282,11 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
             <ArrowLeftIcon className="size-4" />
           </Link>
           <span className="sc-project-mark mt-px size-7 shrink-0">
-            <ProjectGlyph slug={project.slug} variant={project.display.glyph} />
+            <ProjectGlyph
+              slug={project.slug}
+              variant={project.display.glyph}
+              icon={project.display.icon}
+            />
           </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium text-foreground">

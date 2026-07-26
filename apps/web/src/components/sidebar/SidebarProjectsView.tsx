@@ -253,7 +253,7 @@ export function SidebarProjectsView(props: {
                     } as never
                   }
                 >
-                  <ProjectGlyph slug={group.key} variant={group.glyph} />
+                  <ProjectGlyph slug={group.key} variant={group.glyph} icon={group.icon} />
                 </span>
               )}
               <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">

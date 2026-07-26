@@ -231,6 +231,9 @@ it.effect("shows every session the project tools, self-filing included", () =>
     expect(tools).toContain("project_list");
     expect(tools).toContain("project_get");
     expect(tools).toContain("project_file_thread");
+    // Same shape, same reason: setting your own project's icon is housekeeping,
+    // and the refusal for anybody else's lives in the handler.
+    expect(tools).toContain("project_set_icon");
   }),
 );
 

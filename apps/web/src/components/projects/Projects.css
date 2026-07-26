@@ -78,3 +78,28 @@
   color: var(--sc-butter);
   opacity: 0.85;
 }
+
+/**
+ * An uploaded icon leaves the accent alone.
+ *
+ * The rotation above exists to tint a monochrome constellation, and it applies
+ * to whatever the wrapper renders — including an `<img>`. It has to be undone
+ * *here*, on the wrapper, and not on the image: a filter on an ancestor applies
+ * to the rendered result of its whole subtree, so `filter: none` on the child
+ * cannot escape it. The first version of this tried exactly that and shipped a
+ * gold logo rendered green.
+ *
+ * The dark-mode dimming goes with it. It sits engraved marks at the right
+ * weight against the sky; an operator who uploaded their project's logo asked
+ * for that logo, not for a faded copy of it.
+ */
+.sc-project-mark:has(img) {
+  filter: none;
+}
+
+/* Specificity, not repetition: `:has()` takes the weight of its argument, so
+   `.sc-project-mark:has(img)` alone loses the opacity to `.dark
+   .sc-project-mark` above and the logo stays dimmed. */
+.dark .sc-project-mark:has(img) {
+  opacity: 1;
+}
