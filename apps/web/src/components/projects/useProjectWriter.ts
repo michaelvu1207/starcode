@@ -119,8 +119,19 @@ export function useProjectWriter(): ProjectWriter {
     (suggestion: ProjectBindSuggestion) => {
       const project = view.projects.find((entry) => entry.slug === suggestion.slug);
       if (project === undefined) return;
+      // A machine that did not answer has no *known* binding set, and the patch
+      // below replaces the whole set — so writing one derived from the empty
+      // fallback would silently unbind every folder that machine actually
+      // holds, taking every thread derived from them out of the project with
+      // it. `useProjectSeedPlan` already withholds these suggestions; this is
+      // the guard that makes the rule true rather than merely observed, since
+      // the two polls behind a suggestion can go stale between render and click.
+      if (view.notes.some((note) => note.environmentId === suggestion.location.environmentId)) {
+        return;
+      }
       // Append rather than replace: the patch carries the whole set, so the
-      // machine's existing bindings have to travel with the new one.
+      // machine's existing bindings have to travel with the new one. Empty is
+      // correct *here* — the machine answered and holds no record yet.
       const existing = projectSectionFor(project, suggestion.location.environmentId).bindings.map(
         (binding) => binding.projectId,
       );
@@ -134,7 +145,7 @@ export function useProjectWriter(): ProjectWriter {
         environmentIds: [],
       }).then(() => refreshProjectCatalogs([suggestion.location.environmentId]));
     },
-    [upsert, view.projects],
+    [upsert, view.notes, view.projects],
   );
 
   const create = useCallback(

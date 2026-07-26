@@ -26,7 +26,10 @@ import type {
   FeatureFlowStage,
   FeatureMapEntry,
   OrchestrationThreadPlanSummary,
+  ProjectCategorySlug,
+  ThreadId,
 } from "@t3tools/contracts";
+import { featureMapEntryInProject } from "@t3tools/contracts";
 
 import type { FeatureFlowFeatureNode, FeatureFlowView } from "./FeatureFlow.model";
 import type { WorkbenchBoard, WorkbenchBoardCard } from "./Workbench.board";
@@ -85,12 +88,37 @@ export interface SkyModel {
   readonly plannedCount: number;
   /** Connected machines that cannot report stages, named once, plainly. */
   readonly stageUnsupportedLabels: ReadonlyArray<string>;
+  /**
+   * Connected machines that claim they can and did not. Distinct from the
+   * above because the remedy is different — one needs a server update, the
+   * other needs looking into — and because this one means the counts are short.
+   */
+  readonly stageUnreadableLabels: ReadonlyArray<string>;
   readonly diagnostics: ReadonlyArray<string>;
 }
 
 export interface SkyMachineMap {
   readonly label: string;
   readonly entries: ReadonlyArray<FeatureMapEntry>;
+}
+
+/**
+ * What narrows a sky to one project.
+ *
+ * One object rather than two coordinated props because the halves must agree.
+ * A membership filter without a slug is what the sky had before, and it is why
+ * `/projects/$slug` rendered every machine's entire feature map: the predicate
+ * reached the board and the flow, and the map entries walked straight past it.
+ * A slug without a membership filter would be the mirror bug — a project's
+ * filed features beside every unfiled star on the fleet.
+ *
+ * `includeThreadKey` takes `environmentId:threadId`, because a project's
+ * threads are spread across machines and a bare thread id means nothing until
+ * you say whose.
+ */
+export interface SkyProjectScope {
+  readonly slug: ProjectCategorySlug;
+  readonly includeThreadKey: (key: string) => boolean;
 }
 
 export interface SkyModelInput {
@@ -101,6 +129,11 @@ export interface SkyModelInput {
   readonly master: SkyMaster | null;
   /** `environmentId:projectId` → project title, for the hover card. */
   readonly projectTitleByKey: ReadonlyMap<string, string>;
+  /**
+   * Scopes the sky to one project. Null — the default — is the fleet, which is
+   * what `/workbench` passes and what this model did before projects existed.
+   */
+  readonly scope?: SkyProjectScope | null;
 }
 
 const threadKey = (environmentId: string, threadId: string): string =>
@@ -203,8 +236,23 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
   const claimedThreadKey = new Map<string, string>();
   const built: SkyFeature[] = [];
 
+  const scope = input.scope ?? null;
+
   for (const [environmentId, machine] of input.mapEntriesByEnvironment) {
     for (const entry of machine.entries) {
+      // The filter the board and the flow already had, finally applied here
+      // too. Note it runs over *every* machine's registry, not just the local
+      // one — which is the cross-machine fold: a feature the orchestrator
+      // created on simforge1 is on its project's sky when read from the Mac,
+      // because the client unions what each server said about itself.
+      if (
+        scope !== null &&
+        !featureMapEntryInProject(entry, scope.slug, (threadId: ThreadId) =>
+          scope.includeThreadKey(threadKey(environmentId, threadId)),
+        )
+      ) {
+        continue;
+      }
       const key = mapKey(environmentId, entry.id);
       const boundKey = entry.threadId === null ? null : threadKey(environmentId, entry.threadId);
       const facts = boundKey === null ? undefined : threadFacts.get(boundKey);
@@ -283,6 +331,7 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
     realCount: features.filter((feature) => !feature.planned).length,
     plannedCount: features.filter((feature) => feature.planned).length,
     stageUnsupportedLabels: input.flow.unsupportedLabels,
+    stageUnreadableLabels: input.flow.unreadableLabels,
     diagnostics: input.flow.diagnostics,
   };
 }

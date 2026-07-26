@@ -50,8 +50,19 @@ export const projectCatalogHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
 
+          // An unreadable catalog is no projects, logged, not a failed request
+          // — the same rule the feature-flow routes next door follow, and the
+          // doctrine's own words (invariant 11). A missing file already
+          // degrades inside the registry; this covers the other shape, a file
+          // that exists and does not decode. Answering 500 there took the
+          // machine's whole projects view out over one hand-edited JSON, and
+          // the client cannot tell that apart from a server it cannot reach.
           const categories = yield* registry.list.pipe(
-            Effect.catch((cause) => failEnvironmentInternal("project_catalog_load_failed", cause)),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("could not read the project catalog; serving no projects", {
+                cause,
+              }).pipe(Effect.as([])),
+            ),
           );
           return { categories, computedAt: yield* computedAt } satisfies ProjectCatalogSnapshot;
         }),
@@ -64,9 +75,14 @@ export const projectCatalogHttpApiLayer = HttpApiBuilder.group(
 
           const [categories, shell] = yield* Effect.all(
             [
+              // Same degradation as the snapshot above: an unreadable catalog
+              // means nothing is bound, which is what an operator needs to see
+              // in order to bind something.
               registry.list.pipe(
-                Effect.catch((cause) =>
-                  failEnvironmentInternal("project_catalog_load_failed", cause),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("could not read the project catalog; nothing is bound", {
+                    cause,
+                  }).pipe(Effect.as([])),
                 ),
               ),
               projectionSnapshotQuery

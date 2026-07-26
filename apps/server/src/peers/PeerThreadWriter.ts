@@ -25,7 +25,6 @@ import {
   type ClientOrchestrationCommand,
   CommandId,
   MessageId,
-  type ModelSelection,
   PeerFederationError,
   type PeerFederationOperation,
   type PeerName,
@@ -58,6 +57,11 @@ import {
   sendPeerMailboxMessage,
 } from "./PeerEnvironmentClient.ts";
 import { PeerRegistry, type ResolvedPeer } from "./PeerRegistry.ts";
+import {
+  choosePeerProjectLocation,
+  resolvePeerThreadModelSelection,
+  resolvePeerThreadModes,
+} from "./peerProjectPlacement.ts";
 
 export interface PeerThreadSendOptions {
   readonly peer?: PeerName | undefined;
@@ -288,10 +292,15 @@ export const make = Effect.gen(function* () {
      * because the binding is the peer's to hold — the same project can be a
      * different folder on every machine, and that asymmetry is the whole reason
      * the catalog splits display from local.
+     *
+     * The category also carries the defaults the operator set for threads
+     * started in this project *there*, which is why it is kept rather than
+     * discarded after yielding an id: a thread delegated into a project should
+     * start as a thread started by hand in that project would.
      */
-    const projectId =
+    const placement =
       options.project === undefined
-        ? options.projectId
+        ? null
         : yield* Effect.gen(function* () {
             const catalog = yield* fetchPeerProjectCatalog({
               baseUrl: peer.baseUrl,
@@ -315,12 +324,12 @@ export const make = Effect.gen(function* () {
                 }.`,
               );
             }
+            const choice = choosePeerProjectLocation(category);
             // A category with no binding here is a legal state — it is how a
             // research project with no folder of its own looks — but it is not
             // somewhere a thread can be created, and saying so beats picking a
             // folder the operator never bound.
-            const binding = category.local.bindings[0];
-            if (binding === undefined) {
+            if (choice.kind === "unbound") {
               return yield* failure(
                 "create",
                 "project_not_found",
@@ -328,8 +337,22 @@ export const make = Effect.gen(function* () {
                 `Peer knows project '${options.project}' but binds no folder to it, so there is nowhere to start the thread. Bind a location there first, or pass projectId.`,
               );
             }
-            return binding.projectId;
+            // Several folders and nothing on the peer saying which. Refused
+            // rather than settled by the order the file happened to list them,
+            // because a thread started in the wrong checkout is invisible from
+            // inside the call that started it.
+            if (choice.kind === "ambiguous") {
+              return yield* failure(
+                "create",
+                "project_not_found",
+                peer.name,
+                `Peer binds ${choice.projectIds.length} folders to project '${options.project}' and names no preferred one, so which to start the thread in is ambiguous. Pass projectId — the candidates are: ${choice.projectIds.join(", ")}.`,
+              );
+            }
+            return { projectId: choice.projectId, category };
           });
+
+    const projectId = placement === null ? options.projectId : placement.projectId;
 
     if (projectId === undefined) {
       return yield* failure(
@@ -350,14 +373,21 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    // The peer's own default is the best guess available; an explicit instance
-    // or model from the caller overrides it, and a peer with no default at all
-    // is a configuration problem the caller has to resolve.
-    const baseSelection: ModelSelection | null = project.defaultModelSelection;
-    if (
-      baseSelection === null &&
-      (options.instanceId === undefined || options.model === undefined)
-    ) {
+    // Three layers, weakest first: the folder's default, the project category's
+    // — which is where the operator actually configures a project, and which
+    // this used to ignore entirely — then whatever the caller named outright.
+    const overrides = {
+      instanceId: options.instanceId,
+      model: options.model,
+      runtimeMode: options.runtimeMode,
+      interactionMode: options.interactionMode,
+    };
+    const modelSelection = resolvePeerThreadModelSelection({
+      locationDefault: project.defaultModelSelection,
+      categoryDefault: placement?.category.local.defaults.modelSelection,
+      overrides,
+    });
+    if (modelSelection === null) {
       return yield* failure(
         "create",
         "message_rejected",
@@ -365,11 +395,6 @@ export const make = Effect.gen(function* () {
         `Project '${projectId}' has no default model, so instanceId and model must both be given.`,
       );
     }
-    const modelSelection = {
-      ...baseSelection,
-      ...(options.instanceId === undefined ? {} : { instanceId: options.instanceId }),
-      ...(options.model === undefined ? {} : { model: options.model }),
-    } as ModelSelection;
 
     const threadId = ThreadId.make(`thread-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
     const commandId = CommandId.make(
@@ -377,8 +402,10 @@ export const make = Effect.gen(function* () {
     );
     const messageId = MessageId.make(`msg-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
     const createdAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-    const runtimeMode = options.runtimeMode ?? "approval-required";
-    const interactionMode = options.interactionMode ?? "default";
+    const { runtimeMode, interactionMode } = resolvePeerThreadModes({
+      ...(placement === null ? {} : { category: placement.category }),
+      overrides,
+    });
 
     const send = (command: ClientOrchestrationCommand) =>
       dispatchPeerCommand({ baseUrl: peer.baseUrl, credential, command }).pipe(

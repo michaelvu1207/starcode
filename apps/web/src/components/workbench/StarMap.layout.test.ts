@@ -35,6 +35,7 @@ function model(features: ReadonlyArray<SkyFeature>, master?: SkyModel["master"])
     realCount: features.filter((entry) => !entry.planned).length,
     plannedCount: features.filter((entry) => entry.planned).length,
     stageUnsupportedLabels: [],
+    stageUnreadableLabels: [],
     diagnostics: [],
   };
 }

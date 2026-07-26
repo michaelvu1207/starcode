@@ -18,6 +18,7 @@ import {
   ProjectToolError,
   ProviderInstanceId,
   ThreadId,
+  type ExecutionEnvironmentDescriptor,
   type OrchestrationShellSnapshot,
   type ProjectGetResult,
   type ProjectListResult,
@@ -27,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../../../config.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import {
   FeatureMapRegistry,
   layer as featureMapRegistryLayer,
@@ -110,9 +112,27 @@ const projectionLayer = Layer.mock(ProjectionSnapshotQuery)({
   getShellSnapshot: () => Effect.succeed(shellSnapshot),
 });
 
+/**
+ * A machine that knows what it is called. `project_get` names it beside the
+ * paths so a planner can tell a folder it can go and look at from one it
+ * cannot — the doctrine's answer to visibility, which is observation rather
+ * than a synced filesystem.
+ */
+const environmentLayer = Layer.mock(ServerEnvironment.ServerEnvironment)({
+  getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+  getDescriptor: Effect.succeed({
+    environmentId: EnvironmentId.make("environment-1"),
+    label: "simforge1",
+    platform: { os: "linux", arch: "arm64" },
+    serverVersion: "0.0.0",
+    capabilities: { repositoryIdentity: true },
+  } as ExecutionEnvironmentDescriptor),
+});
+
 const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) =>
   Layer.succeed(McpInvocationContext.McpInvocationContext)(invocation(capabilities)).pipe(
     Layer.provideMerge(projectionLayer),
+    Layer.provideMerge(environmentLayer),
     Layer.provideMerge(projectCatalogRegistryLayer),
     Layer.provideMerge(featureMapRegistryLayer),
     Layer.provideMerge(
@@ -130,7 +150,8 @@ type ToolContext =
   | McpInvocationContext.McpInvocationContext
   | ProjectCatalogRegistry
   | ProjectionSnapshotQuery
-  | FeatureMapRegistry;
+  | FeatureMapRegistry
+  | ServerEnvironment.ServerEnvironment;
 
 /** Calls one tool's handler directly — the same function MCP dispatches to. */
 const call = (
@@ -312,8 +333,8 @@ describe("project tools", () => {
       const features = yield* FeatureMapRegistry;
       yield* features.create({ name: "Behaviour programs", threadId: CALLER_THREAD });
       yield* features.create({ name: "Something else entirely", threadId: OTHER_THREAD });
-      // A feature nobody is working on cannot be attributed to a project, so it
-      // is left out rather than guessed at.
+      // A feature with no thread and no project cannot be attributed to one, so
+      // it is left out rather than guessed at.
       yield* features.create({ name: "Only an intention", planned: true });
 
       const got = yield* call("project_get", { slug: "hub" });
@@ -321,6 +342,73 @@ describe("project tools", () => {
         got.features?.map((feature) => feature.name),
         ["Behaviour programs"],
       );
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("reaches a planned feature through the project it was filed under", () =>
+    Effect.gen(function* () {
+      // The load-bearing case: a planned feature has no thread, so before it
+      // could carry a slug no membership rule could reach it at all.
+      yield* seed("hub", [HUB_PROJECT]);
+      const features = yield* FeatureMapRegistry;
+      yield* features.create({
+        name: "Intended",
+        planned: true,
+        slug: ProjectCategorySlug.make("hub"),
+      });
+      yield* features.create({
+        name: "Somebody else's intention",
+        planned: true,
+        slug: ProjectCategorySlug.make("scratch"),
+      });
+
+      const got = yield* call("project_get", { slug: "hub" });
+      assert.deepStrictEqual(
+        got.features?.map((feature) => feature.name),
+        ["Intended"],
+      );
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("lets a filed feature outrank the project its thread sits in", () =>
+    Effect.gen(function* () {
+      yield* seed("hub", [HUB_PROJECT]);
+      const features = yield* FeatureMapRegistry;
+      // The thread is in hub; the orchestrator filed the feature elsewhere.
+      // Refiling a thread is not a statement about the feature.
+      yield* features.create({
+        name: "Filed away",
+        threadId: CALLER_THREAD,
+        slug: ProjectCategorySlug.make("scratch"),
+      });
+
+      const got = yield* call("project_get", { slug: "hub" });
+      assert.deepStrictEqual(
+        got.features?.map((feature) => feature.name),
+        [],
+      );
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("names the machine its paths are on, and nothing about how to reach it", () =>
+    Effect.gen(function* () {
+      // The doctrine's answer to a planner that needs to see uncommitted work on
+      // another host: say which host. Going and looking is the operator's own
+      // SSH config, which is theirs and not ours to hold — so this carries a
+      // name and no credential, port, or user.
+      yield* seed("hub", [HUB_PROJECT]);
+      const got = yield* call("project_get", { slug: "hub" });
+
+      assert.strictEqual(got.machine?.environmentId, "environment-1");
+      assert.strictEqual(got.machine?.label, "simforge1");
+      assert.strictEqual(got.machine?.platform.os, "linux");
+      assert.isTrue(typeof got.machine?.hostname === "string" || got.machine?.hostname === null);
+      assert.deepStrictEqual(Object.keys(got.machine ?? {}).toSorted(), [
+        "environmentId",
+        "hostname",
+        "label",
+        "platform",
+      ]);
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 });

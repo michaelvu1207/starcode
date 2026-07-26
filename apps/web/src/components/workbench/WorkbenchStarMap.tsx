@@ -53,6 +53,7 @@ import {
   type SkyFeature,
   type SkyMaster,
   type SkyModel,
+  type SkyProjectScope,
   type SkyThreadRef,
 } from "./StarMap.model";
 import { buildWorkbenchBoard } from "./Workbench.board";
@@ -579,7 +580,7 @@ export function WorkbenchStarMap({
   masterThreadKey,
   master,
   masterCreatedThreadIds,
-  includeThreadKey = null,
+  scope = null,
   emptyLabel,
 }: {
   readonly masterThreadKey: string | null;
@@ -589,11 +590,16 @@ export function WorkbenchStarMap({
    * Scopes the sky to one project. Null — the default — is the fleet, which is
    * what `/workbench` passes and what this component did before projects
    * existed.
+   *
+   * One object rather than a bare thread predicate: the board, the flow and the
+   * feature map all have to be narrowed by the same project, and passing them
+   * separately is how the map came to be narrowed by nothing at all.
    */
-  readonly includeThreadKey?: ((key: string) => boolean) | null;
+  readonly scope?: SkyProjectScope | null;
   /** What an empty sky says. A project's sky is empty for different reasons. */
   readonly emptyLabel?: string;
 }) {
+  const includeThreadKey = scope?.includeThreadKey ?? null;
   const navigate = useNavigate();
   const threads = useThreadShells();
   const projects = useProjects();
@@ -651,7 +657,14 @@ export function WorkbenchStarMap({
       // not by a toggle.
       showSettled: true,
     });
-    return buildSkyModel({ board, flow, mapEntriesByEnvironment, master, projectTitleByKey });
+    return buildSkyModel({
+      board,
+      flow,
+      mapEntriesByEnvironment,
+      master,
+      projectTitleByKey,
+      scope,
+    });
   }, [
     autoSettleAfterDays,
     environments,
@@ -664,6 +677,7 @@ export function WorkbenchStarMap({
     nowMinute,
     primaryEnvironmentId,
     projectTitleByKey,
+    scope,
     serverConfigs,
     threadLastVisitedAtById,
     threads,
@@ -698,10 +712,15 @@ export function WorkbenchStarMap({
 
   const measured = size.width > 0 && size.height > 0;
   const empty = model.features.length === 0;
+  // A machine that is connected and simply did not answer outranks the others:
+  // the count above is wrong by however much that machine was carrying, and
+  // saying nothing was how that went unnoticed.
   const footnote =
-    model.stageUnsupportedLabels.length > 0
-      ? `Stages need a server update on ${model.stageUnsupportedLabels.join(", ")}`
-      : (model.diagnostics[0] ?? "");
+    model.stageUnreadableLabels.length > 0
+      ? `Could not read work on ${model.stageUnreadableLabels.join(", ")} — the count above is short`
+      : model.stageUnsupportedLabels.length > 0
+        ? `Stages need a server update on ${model.stageUnsupportedLabels.join(", ")}`
+        : (model.diagnostics[0] ?? "");
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

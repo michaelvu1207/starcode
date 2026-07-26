@@ -11,9 +11,12 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
   FeatureMapError,
+  ProjectCategorySlug,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
   type FeatureMapEntry,
+  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,8 +26,44 @@ import {
   FeatureMapRegistry,
   layer as featureMapRegistryLayer,
 } from "../../../featureMap/FeatureMapRegistry.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ProjectCatalogRegistry,
+  layer as projectCatalogRegistryLayer,
+} from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { __testing } from "./handlers.ts";
+
+const HUB_PROJECT = ProjectId.make("project-hub");
+const HUB_THREAD = ThreadId.make("thread-hub");
+
+/**
+ * One folder, one thread in it. Enough for the slug filter to have a thread
+ * membership to fall back on for an entry nobody filed.
+ */
+const shellSnapshot = {
+  snapshotSequence: 1,
+  updatedAt: "2026-07-25T00:00:00.000Z",
+  projects: [{ id: HUB_PROJECT, title: "hub", workspaceRoot: "/work/hub" }],
+  threads: [
+    {
+      id: HUB_THREAD,
+      projectId: HUB_PROJECT,
+      title: "Hub",
+      worktreePath: null,
+      archivedAt: null,
+      settledAt: null,
+      settledOverride: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    },
+  ],
+} as unknown as OrchestrationShellSnapshot;
+
+const projectionLayer = Layer.mock(ProjectionSnapshotQuery)({
+  getShellSnapshot: () => Effect.succeed(shellSnapshot),
+});
 
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
@@ -41,6 +80,8 @@ const invocation = (
 const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) =>
   Layer.succeed(McpInvocationContext.McpInvocationContext)(invocation(capabilities)).pipe(
     Layer.provideMerge(featureMapRegistryLayer),
+    Layer.provideMerge(projectCatalogRegistryLayer),
+    Layer.provideMerge(projectionLayer),
     Layer.provideMerge(
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-feature-tools-test-" })),
     ),
@@ -68,7 +109,10 @@ const call = (
 ): Effect.Effect<
   ToolResult,
   FeatureMapError,
-  McpInvocationContext.McpInvocationContext | FeatureMapRegistry
+  | McpInvocationContext.McpInvocationContext
+  | FeatureMapRegistry
+  | ProjectCatalogRegistry
+  | ProjectionSnapshotQuery
 > =>
   (
     __testing.handlers[name] as (
@@ -76,7 +120,10 @@ const call = (
     ) => Effect.Effect<
       ToolResult,
       FeatureMapError,
-      McpInvocationContext.McpInvocationContext | FeatureMapRegistry
+      | McpInvocationContext.McpInvocationContext
+      | FeatureMapRegistry
+      | ProjectCatalogRegistry
+      | ProjectionSnapshotQuery
     >
   )(input);
 
@@ -158,6 +205,33 @@ describe("feature map tools", () => {
         "Under way",
       ]);
       assert.isTrue(entries.find((entry) => entry.id === real.id)!.planned === false);
+    }).pipe(Effect.provide(makeLayer(MASTER))),
+  );
+
+  it.effect("narrows the map to one project, reaching a planned feature by its slug", () =>
+    Effect.gen(function* () {
+      const registry = yield* FeatureMapRegistry;
+      const hub = ProjectCategorySlug.make("hub");
+      const catalog = yield* ProjectCatalogRegistry;
+      yield* catalog.upsert({ slug: hub, local: { bindings: [HUB_PROJECT] } });
+
+      yield* registry.create({ name: "Filed here", slug: hub });
+      yield* registry.create({ name: "Intended here", slug: hub, planned: true });
+      yield* registry.create({ name: "Filed elsewhere", slug: ProjectCategorySlug.make("other") });
+      // Unfiled, but its thread sits in a folder bound to hub.
+      yield* registry.create({ name: "Inherited", threadId: HUB_THREAD });
+      yield* registry.create({ name: "Unfiled and unbound" });
+
+      const listed = yield* call("feature_map_list", { slug: hub });
+      assert.deepEqual([...(listed.entries ?? [])].map((entry) => entry.name).toSorted(), [
+        "Filed here",
+        "Inherited",
+        "Intended here",
+      ]);
+
+      // Without a slug the tool still answers for the whole machine.
+      const all = yield* call("feature_map_list", {});
+      assert.lengthOf(all.entries ?? [], 5);
     }).pipe(Effect.provide(makeLayer(MASTER))),
   );
 });

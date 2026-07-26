@@ -10,6 +10,7 @@
  * @module ProjectHandlers
  */
 import {
+  featureMapEntryInProject,
   ProjectToolError,
   resolveLocalProjectMembership,
   type ProjectCatalogFileThreadMode,
@@ -21,8 +22,10 @@ import {
   type ProjectToolThread,
   type ThreadId,
 } from "@t3tools/contracts";
+import { HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
@@ -59,6 +62,16 @@ const storageFailed = (operation: "list" | "get" | "file_thread") => (cause: unk
 const isLiveThread = (thread: { readonly archivedAt: string | null }): boolean =>
   thread.archivedAt === null;
 
+/**
+ * Null rather than an empty string for a host that could not name itself: the
+ * planner has to be able to tell "this machine is called X" from "this machine
+ * did not say", and a blank reads as the first.
+ */
+const normalizeHostname = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
 const summarize = (input: {
   readonly category: ProjectCategoryRecord;
   readonly workspaceRootByProjectId: ReadonlyMap<string, string>;
@@ -89,7 +102,19 @@ const readMachineState = (operation: "list" | "get" | "file_thread") =>
 
     const [categories, shell] = yield* Effect.all(
       [
-        registry.list.pipe(Effect.mapError(storageFailed(operation))),
+        // An unreadable catalog is no projects, not a failed read (invariant
+        // 11). Refusing the read instead left an orchestrator on that machine
+        // unable to see its project or even file its own thread, over a file
+        // it could have been told was unreadable. The write path below still
+        // fails loudly, because a write against a catalog nobody could read
+        // would overwrite whatever is in it.
+        registry.list.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not read the project catalog; reporting no projects", {
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        ),
         projectionSnapshotQuery.getShellSnapshot().pipe(Effect.mapError(storageFailed(operation))),
       ],
       { concurrency: 2 },
@@ -164,14 +189,17 @@ const handlers = {
         )
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
-      // The feature map is this machine's own registry and is keyed by thread,
-      // so scoping it to a project is a set lookup rather than a second source
-      // of truth. A feature with no thread cannot be attributed to a project
-      // and is left out rather than guessed at.
+      // The feature map is this machine's own registry, scoped to the project by
+      // the one rule both this and the client's sky use. A feature filed under
+      // the slug counts even with no thread — which is the only way a *planned*
+      // feature can belong to a project at all — and an unfiled one counts when
+      // its thread does.
       const featureRegistry = yield* FeatureMapRegistry;
       const entries = yield* featureRegistry.list.pipe(Effect.catchCause(() => Effect.succeed([])));
       const features = entries
-        .filter((entry) => entry.threadId !== null && threadIds.has(entry.threadId))
+        .filter((entry) =>
+          featureMapEntryInProject(entry, category.slug, (threadId) => threadIds.has(threadId)),
+        )
         .map(
           (entry): ProjectToolFeature => ({
             featureId: entry.id,
@@ -197,6 +225,14 @@ const handlers = {
         })
         .filter((location): location is ProjectToolLocation => location !== null);
 
+      // Which host these paths are on. The orchestrator runs across four
+      // checkouts on four machines, and a folder it cannot place is a folder it
+      // cannot reason about — but the answer is a name, not a way in. See
+      // `ProjectToolMachine` for what this deliberately does not carry.
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const descriptor = yield* environment.getDescriptor;
+      const hostname = normalizeHostname(yield* HostProcessHostname);
+
       const masterThreadId = category.local.masterThreadId.trim();
       return {
         project: summarize({
@@ -206,6 +242,12 @@ const handlers = {
         }),
         notes: category.display.notes,
         links: category.display.links,
+        machine: {
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          hostname,
+          platform: descriptor.platform,
+        },
         locations,
         threads,
         features,

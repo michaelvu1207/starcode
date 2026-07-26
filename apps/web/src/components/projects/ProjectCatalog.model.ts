@@ -352,7 +352,7 @@ export function resolveProjectMembership(input: {
         }
       }
       for (const threadId of section.local.excludedThreadIds) {
-        excludedBySlugAndThread.add(`${project.slug} ${section.environmentId}:${threadId}`);
+        excludedBySlugAndThread.add(`${project.slug}\u0000${section.environmentId}:${threadId}`);
       }
     }
   }
@@ -368,7 +368,7 @@ export function resolveProjectMembership(input: {
 
     const slug =
       explicit ??
-      (derived !== undefined && !excludedBySlugAndThread.has(`${derived} ${threadKey}`)
+      (derived !== undefined && !excludedBySlugAndThread.has(`${derived}\u0000${threadKey}`)
         ? derived
         : undefined);
 
@@ -481,7 +481,24 @@ function locationIdentity(location: ProjectCatalogLocation): {
 export function buildProjectSeedPlan(input: {
   readonly projects: ReadonlyArray<ProjectCategoryView>;
   readonly locations: ReadonlyArray<ProjectSeedLocation>;
+  /**
+   * Machines whose catalog this fold could not read — pending, unsupported or
+   * unreadable, i.e. every `ProjectCatalogMachineNote`.
+   *
+   * Their locations are dropped, and that is a safety rule rather than tidiness.
+   * Both outputs here lead to a write that **replaces a machine's whole binding
+   * set**, and the set to preserve is read from the folded view. A machine that
+   * did not answer contributes no section, so that read returns empty — and an
+   * empty "existing" set is an erase, not a no-op. Offering an action against a
+   * machine whose state is unknown is how a stale locations page (a separate,
+   * slower poll that keeps serving its last good answer) unbinds folders nobody
+   * touched.
+   *
+   * Unavailable is not empty. Invariant 12.
+   */
+  readonly silentEnvironmentIds?: ReadonlyArray<EnvironmentId>;
 }): ProjectSeedPlan {
+  const silent = new Set(input.silentEnvironmentIds ?? []);
   // What each existing category already looks like, so an unbound location can
   // be matched against a project rather than against a naked string.
   const slugByIdentity = new Map<string, ProjectCategorySlug>();
@@ -508,7 +525,9 @@ export function buildProjectSeedPlan(input: {
     if (!slugByIdentity.has(bySlug)) slugByIdentity.set(bySlug, project.slug);
   }
 
-  const unbound = input.locations.filter((location) => location.boundSlug === null);
+  const unbound = input.locations.filter(
+    (location) => location.boundSlug === null && !silent.has(location.environmentId),
+  );
 
   const bindSuggestions: Array<ProjectBindSuggestion> = [];
   const groups = new Map<

@@ -217,6 +217,20 @@ describe("buildFeatureFlowView", () => {
 
     expect(view.unsupportedLabels).toEqual(["path-pc"]);
     expect(view.pendingLabels).toEqual(["simforge1"]);
+    expect(view.unreadableLabels).toEqual([]);
+  });
+
+  it("names a connected machine that claims it can report and did not", () => {
+    // The third silence, and the only one worth looking into. It used to fall
+    // through with no label at all, so one timed-out poll took that machine's
+    // whole set of features off the sky and out of every count without a word.
+    const view = buildFeatureFlowView([
+      environment({ environmentId: "env-mac", label: "mac", supported: true, pending: false }),
+    ]);
+
+    expect(view.unreadableLabels).toEqual(["mac"]);
+    expect(view.unsupportedLabels).toEqual([]);
+    expect(view.pendingLabels).toEqual([]);
   });
 
   it("attributes a project's diagnostics to the machine that reported them", () => {

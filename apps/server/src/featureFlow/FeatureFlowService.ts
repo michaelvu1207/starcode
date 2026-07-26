@@ -212,7 +212,7 @@ export const make = Effect.gen(function* () {
         if (left.branch === null || right.branch === null) continue;
         if (left.branch === right.branch) continue;
         if (left.stage !== "in-progress") continue;
-        const key = `${left.branch} ${right.branch}`;
+        const key = `${left.branch}\u0000${right.branch}`;
         if (ancestry.has(key)) continue;
         ancestry.set(
           key,
@@ -226,7 +226,7 @@ export const make = Effect.gen(function* () {
       }
     }
     const isAncestor = (ancestorBranch: string, descendantBranch: string): boolean =>
-      ancestry.get(`${ancestorBranch} ${descendantBranch}`) ?? false;
+      ancestry.get(`${ancestorBranch}\u0000${descendantBranch}`) ?? false;
 
     const features = yield* Effect.forEach(staged, (entry) =>
       Effect.gen(function* () {

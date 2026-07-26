@@ -202,6 +202,7 @@ export const make = Effect.gen(function* () {
             name: input.name,
             description: input.description ?? null,
             threadId: input.threadId ?? null,
+            slug: input.slug ?? null,
             stage: input.stage ?? "in-progress",
             dependsOn,
             // A feature bound to a thread is by definition under way, whatever
@@ -224,6 +225,10 @@ export const make = Effect.gen(function* () {
             name: input.name ?? existing.name,
             description: input.description === undefined ? existing.description : input.description,
             threadId,
+            // Null is a meaningful value here — it unfiles the feature and hands
+            // the question back to its thread — so absence is the only "leave
+            // it alone", exactly as for `description` above.
+            slug: input.slug === undefined ? existing.slug : input.slug,
             // Binding a thread is how intent becomes work; the call has to say
             // so explicitly to keep a feature planned once it has one.
             planned: input.planned ?? (threadId === null ? existing.planned : false),
@@ -279,10 +284,16 @@ export const make = Effect.gen(function* () {
       mutate((entries, timestamp) =>
         Effect.gen(function* () {
           const resolved = resolvePlan(input.features);
+          const slug = input.slug ?? null;
           // Real work is never touched by a plan. Only the previous sketch is
-          // replaced, which is what makes re-planning safe to do repeatedly.
-          const real = entries.filter((entry) => !entry.planned);
-          const removedCount = entries.length - real.length;
+          // replaced, which is what makes re-planning safe to do repeatedly —
+          // and when the call names a project, only *that* project's sketch,
+          // so two project masters on one machine cannot delete each other's
+          // plans without either of them being able to tell.
+          const kept = entries.filter(
+            (entry) => !entry.planned || (slug !== null && entry.slug !== slug),
+          );
+          const removedCount = entries.length - kept.length;
 
           const idByKey = new Map<string, FeatureMapEntryId>();
           for (const entry of resolved.entries) idByKey.set(entry.key, yield* mintId);
@@ -293,6 +304,7 @@ export const make = Effect.gen(function* () {
               name: entry.name,
               description: entry.description,
               threadId: null,
+              slug,
               stage: entry.stage,
               dependsOn: entry.dependsOnKeys.flatMap((key) => {
                 const id = idByKey.get(key);
@@ -304,7 +316,7 @@ export const make = Effect.gen(function* () {
             }),
           );
 
-          const next = pruneDanglingLinks([...real, ...planned]);
+          const next = pruneDanglingLinks([...kept, ...planned]);
           return { entries: next, result: { entries: planned, removedCount } };
         }),
       ),

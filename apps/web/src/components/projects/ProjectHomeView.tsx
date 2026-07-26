@@ -28,11 +28,12 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadActivities, useThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+import { useFeatureMapByEnvironment } from "../../state/featureFlow";
 import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../../threadRoutes";
 import { resolveSidebarV2Status } from "../Sidebar.logic";
 import { Button } from "../ui/button";
-import type { SkyMaster } from "../workbench/StarMap.model";
+import type { SkyMaster, SkyProjectScope } from "../workbench/StarMap.model";
 import {
   collectMasterCreatedThreadIds,
   resolveWorkbenchMaster,
@@ -45,6 +46,7 @@ import {
   toneForThreadStatus,
 } from "../workbench/Workbench.tone";
 import { projectMasterCandidates, projectSectionFor } from "./ProjectCatalog.model";
+import { describeProjectFeatures, foldProjectFeatures } from "./ProjectFeatures.model";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectGlyph } from "./ProjectGlyph";
@@ -186,6 +188,46 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
     [membership.threadKeysBySlug, slug],
   );
   const includeThreadKey = useCallback((key: string) => threadKeys.has(key), [threadKeys]);
+  const scope = useMemo(
+    (): SkyProjectScope => ({ slug: slug as ProjectCategorySlug, includeThreadKey }),
+    [includeThreadKey, slug],
+  );
+
+  /**
+   * What this project is building, gathered from every machine.
+   *
+   * The sky beside it draws the shape; this says the count. Both read the same
+   * union, because the map is one file per server and folding them is the
+   * client's job — a server that answered for another machine would be
+   * inventing.
+   */
+  const mapEntriesByEnvironment = useFeatureMapByEnvironment();
+  const featureRollup = useMemo(
+    () => foldProjectFeatures({ mapEntriesByEnvironment, scope }),
+    [mapEntriesByEnvironment, scope],
+  );
+  const featureCountByEnvironment = useMemo(
+    () => new Map(featureRollup.machines.map((machine) => [machine.environmentId, machine.count])),
+    [featureRollup.machines],
+  );
+  /**
+   * Machines that never told us what they hold.
+   *
+   * A machine present in the map answered, even with nothing; one that is
+   * absent did not. Keeping the two apart is what stops the summary below
+   * asserting a count it cannot support, and the chips claiming "no features
+   * here" about a machine nobody heard from. Unavailable is not empty.
+   */
+  const silentMachines = useMemo(
+    () =>
+      (project?.sections ?? [])
+        .filter((section) => !mapEntriesByEnvironment.has(section.environmentId))
+        .map((section) => section.label),
+    [mapEntriesByEnvironment, project?.sections],
+  );
+  const featureSummary = describeProjectFeatures(featureRollup, silentMachines);
+  /** Machines the catalog fold could not read at all — see the delete dialog. */
+  const unreachableLabels = useMemo(() => view.notes.map((note) => note.label), [view.notes]);
 
   const rows = useMemo(
     () =>
@@ -252,23 +294,47 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
               </p>
             ) : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {project.sections.map((section) => (
+              {project.sections.map((section) => {
+                // Which connections carry this project, and how much of it each
+                // one holds. Machines stay chips rather than becoming geography
+                // — the sky beside this is deliberately connection-independent.
+                const answered = mapEntriesByEnvironment.has(section.environmentId);
+                const features = featureCountByEnvironment.get(section.environmentId) ?? 0;
+                return (
+                  <span
+                    key={section.environmentId}
+                    className={cn(
+                      "rounded border border-border/50 px-1.5 py-px text-[10px] text-muted-foreground/70",
+                      section.isLocal && "border-border text-foreground/80",
+                    )}
+                    title={[
+                      section.local.bindings.length === 0
+                        ? "Knows this project, but no folder bound here"
+                        : `${section.local.bindings.length} folder(s) bound here`,
+                      // "Did not say" is not "said none". Asserting the second
+                      // about a machine that never answered is the lie this
+                      // distinction exists to prevent.
+                      !answered
+                        ? "could not read what this machine is building"
+                        : features === 0
+                          ? "no features on this machine"
+                          : `${features} feature(s) on this machine`,
+                    ].join(" · ")}
+                  >
+                    {section.label}
+                    {section.local.bindings.length === 0 ? " · no folder" : ""}
+                    {answered ? (features === 0 ? "" : ` · ${features}`) : " · ?"}
+                  </span>
+                );
+              })}
+              {featureSummary === null ? null : (
                 <span
-                  key={section.environmentId}
-                  className={cn(
-                    "rounded border border-border/50 px-1.5 py-px text-[10px] text-muted-foreground/70",
-                    section.isLocal && "border-border text-foreground/80",
-                  )}
-                  title={
-                    section.local.bindings.length === 0
-                      ? "Knows this project, but no folder bound here"
-                      : `${section.local.bindings.length} folder(s) bound here`
-                  }
+                  data-testid="project-feature-rollup"
+                  className="text-[10px] text-muted-foreground/60"
                 >
-                  {section.label}
-                  {section.local.bindings.length === 0 ? " · no folder" : ""}
+                  {featureSummary}
                 </span>
-              ))}
+              )}
               {/* Drift, stated. A machine that missed a rename is not an error
                   — it heals on the next write — but silently showing one title
                   while another machine shows a different one is worse. */}
@@ -367,7 +433,7 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
             masterThreadKey={masterThreadKey}
             master={skyMaster}
             masterCreatedThreadIds={masterCreatedThreadIds}
-            includeThreadKey={includeThreadKey}
+            scope={scope}
             emptyLabel="Nothing is filed here yet. Bind a folder to this project and its threads appear, or file one from the thread itself."
           />
         </div>
@@ -428,6 +494,11 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
         slug={project.slug}
         title={project.display.title}
         threadCount={threadKeys.size}
+        // Every machine the fold could not read, not just the ones carrying
+        // this project: a machine that did not answer cannot be asked whether
+        // it holds the category, and reporting the count as if it could is the
+        // claim invariant 12 forbids.
+        unreachableLabels={unreachableLabels}
         environmentLabelById={environmentLabelById}
         onDelete={writer.remove}
         onDeleted={() => void navigate({ to: "/projects" })}

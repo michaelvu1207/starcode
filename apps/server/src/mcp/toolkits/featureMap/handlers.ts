@@ -3,10 +3,19 @@
  *
  * @module FeatureMapHandlers
  */
-import { FeatureMapError, type FeatureMapOperation } from "@t3tools/contracts";
+import {
+  FeatureMapError,
+  featureMapEntryInProject,
+  resolveLocalProjectMembership,
+  type FeatureMapOperation,
+  type ProjectCategorySlug,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { FeatureMapToolkit } from "./tools.ts";
 
@@ -31,13 +40,46 @@ const requireOperate = (operation: FeatureMapOperation) =>
     return invocation;
   });
 
+/**
+ * The threads this machine files under a slug, as a predicate.
+ *
+ * Degrades to "claims nothing" rather than failing: a project filter that
+ * cannot read the catalog should narrow the answer to the features explicitly
+ * filed under the slug, not turn a read into an error. The slug half of
+ * `featureMapEntryInProject` still works without it.
+ */
+const localThreadsInProject = (slug: ProjectCategorySlug) =>
+  Effect.gen(function* () {
+    const catalog = yield* ProjectCatalogRegistry;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const categories = yield* catalog.list.pipe(Effect.catchCause(() => Effect.succeed([])));
+    const shell = yield* projectionSnapshotQuery
+      .getShellSnapshot()
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (shell === null) return new Set<ThreadId>();
+    const membership = resolveLocalProjectMembership({
+      categories,
+      threads: shell.threads
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread) => ({ id: thread.id, projectId: thread.projectId })),
+    });
+    return new Set<ThreadId>(membership.get(slug) ?? []);
+  });
+
 const handlers = {
   feature_map_list: (input) =>
     Effect.gen(function* () {
       const registry = yield* FeatureMapRegistry;
       const entries = yield* registry.list;
+      const withPlanned =
+        input.includePlanned === false ? entries.filter((e) => !e.planned) : entries;
+      if (input.slug === undefined) return { entries: withPlanned };
+      const slug = input.slug;
+      const threadIds = yield* localThreadsInProject(slug);
       return {
-        entries: input.includePlanned === false ? entries.filter((e) => !e.planned) : entries,
+        entries: withPlanned.filter((entry) =>
+          featureMapEntryInProject(entry, slug, (threadId) => threadIds.has(threadId)),
+        ),
       };
     }),
   feature_create: (input) =>

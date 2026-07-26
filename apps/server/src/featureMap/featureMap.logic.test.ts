@@ -11,6 +11,7 @@ const entry = (value: string, dependsOn: ReadonlyArray<string> = []): FeatureMap
     name: value,
     description: null,
     threadId: null,
+    slug: null,
     stage: "in-progress",
     dependsOn: dependsOn.map(id),
     planned: false,
