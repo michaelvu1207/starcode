@@ -47,9 +47,9 @@ import { projectAccentHue } from "../projects/ProjectsIndex.model";
 import { useProjectWriter } from "../projects/useProjectWriter";
 import { useProjectThreadStarter } from "../projects/useProjectThreadStarter";
 import {
-  resolveProjectStartLocations,
+  resolveProjectStartConnections,
+  type ProjectStartConnection,
   type ProjectStartFolder,
-  type ProjectStartLocation,
 } from "../projects/ProjectThreadStart.model";
 import type { ProjectSeedProposal } from "../projects/ProjectCatalog.model";
 import { useProjects } from "../../state/entities";
@@ -123,9 +123,10 @@ export function SidebarProjectsView(props: {
   // next render, which is not what "file this here" is asking for.
   const fileableProjects = groups;
 
-  // Every folder every machine reports, in the shape the start-location ranking
+  // Every folder every machine reports, in the shape the start-location model
   // wants. Built once for the view rather than once per project group: the list
-  // is the same for all of them and only the ranking differs.
+  // is the same for all of them and only the grouping differs. Order is the
+  // model's business — nothing here ranks, so nothing here has to agree with it.
   const startFolders = useMemo(
     (): ReadonlyArray<ProjectStartFolder> =>
       serverProjects.map((serverProject) => ({
@@ -169,10 +170,12 @@ export function SidebarProjectsView(props: {
     [writer],
   );
 
-  const startLocationsFor = (slug: ProjectCategorySlug): ReadonlyArray<ProjectStartLocation> => {
+  const startConnectionsFor = (
+    slug: ProjectCategorySlug,
+  ): ReadonlyArray<ProjectStartConnection> => {
     const project = projectBySlug.get(slug);
     if (project === undefined) return [];
-    return resolveProjectStartLocations({ project, folders: startFolders });
+    return resolveProjectStartConnections({ project, folders: startFolders });
   };
 
   /**
@@ -272,7 +275,7 @@ export function SidebarProjectsView(props: {
                 <SidebarProjectNewThread
                   slug={group.slug}
                   title={group.title}
-                  locations={startLocationsFor(group.slug)}
+                  connections={startConnectionsFor(group.slug)}
                   onStart={(slug, location) => void startThread(slug, location)}
                 />
                 <Link
