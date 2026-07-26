@@ -6,16 +6,19 @@
  * fan-out atom: reading history is lazy, and an atom that read every machine
  * would fetch from all four the moment the sidebar rendered.
  *
- * Only the session *listing* and a bounded *preview* are exposed. The
- * paginated transcript hook went with the history viewer it existed to feed —
- * starcode does not read old conversations, it resumes them — and what is
- * left here is the picker's data source: which sessions a machine has, and
- * enough of each to tell them apart.
+ * Three reads, and the third is narrower than it looks. The listing and the
+ * bounded preview are the picker's data source: which sessions a machine has,
+ * and enough of each to tell them apart. The paged reader is not the history
+ * viewer coming back — that was a destination, reachable for any session on
+ * any machine, and it is still gone. It serves one section inside one thread,
+ * scoped to the session that thread already carries in its model's context.
  */
 import {
   createEnvironmentTerminalHistoryAtoms,
   historySessionsAtomKey,
+  historyEntriesAtomKey,
   historyPreviewAtomKey,
+  type HistoryEntriesKey,
   type HistoryForkAttempt,
   type HistoryImportAttempt,
   type HistorySessionsKey,
@@ -29,6 +32,7 @@ import type {
   HistoryPreview,
   HistorySessionId,
   HistorySessionsPage,
+  HistoryTranscriptPage,
   ThreadId,
 } from "@t3tools/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
@@ -83,6 +87,25 @@ export function useHistoryPreview(
   key: HistoryPreviewKey | null,
 ): EnvironmentQueryView<HistoryPreview | null> {
   return useEnvironmentQuery(key === null ? null : previewViewAtom(historyPreviewAtomKey(key)));
+}
+
+const entriesViewAtom = Atom.family((serializedKey: string) =>
+  unwrap(environmentTerminalHistory.entriesAtom(serializedKey)),
+);
+
+/**
+ * One page of an imported or forked thread's earlier conversation.
+ *
+ * `key` is null while nothing should be fetched — a collapsed section, or a
+ * page nobody has scrolled back to yet — so the hook can sit unconditionally
+ * at the top of a component while the request stays lazy. That laziness is the
+ * feature: these sessions run past 38 MB, and none of this is read at
+ * thread-open time.
+ */
+export function useHistoryEntriesPage(
+  key: HistoryEntriesKey | null,
+): EnvironmentQueryView<HistoryTranscriptPage | null> {
+  return useEnvironmentQuery(key === null ? null : entriesViewAtom(historyEntriesAtomKey(key)));
 }
 
 const importsViewAtom = Atom.family((environmentId: EnvironmentId) =>

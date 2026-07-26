@@ -164,17 +164,33 @@ export interface SessionTail {
 }
 
 /**
- * Reads the newest `limit` renderable entries.
+ * Reads the `limit` newest renderable entries below `before`.
  *
- * There is no cursor and no way to ask for an earlier page: this backs a
- * bounded preview, not a reader. `oldestExamined` is kept only so the caller
- * can tell whether anything sits between the file's opening and this tail —
- * the difference between "a nine-message session" and "nine of four hundred".
+ * Two callers with one scan between them. The preview asks for the newest few
+ * and uses `oldestExamined` only to tell whether anything sits between the
+ * file's opening and its tail — the difference between "a nine-message
+ * session" and "nine of four hundred". The imported-thread history asks
+ * repeatedly, feeding each answer's `oldestExamined` back as the next
+ * `before`, which walks a session backwards a page at a time without ever
+ * parsing forward through it.
+ *
+ * `before` is an exclusive upper bound in bytes and is expected to be a line
+ * start — every offset this module hands out is one. A `before` landing
+ * mid-record (only reachable from the hard-budget escape below) truncates that
+ * record into something that fails to parse, so it is skipped rather than
+ * rendered wrong.
  */
 export const readSessionTail = async (input: {
   readonly path: string;
   readonly provider: HistoryProvider;
   readonly limit: number;
+  /**
+   * Exclusive byte ceiling. Absent, the scan starts at EOF. An imported
+   * thread passes the file size recorded when it was imported, so its history
+   * shows the conversation as it stood then and never the turns the thread
+   * itself has since appended to the same file.
+   */
+  readonly before?: number | undefined;
   /** Overridable so tests can force records to straddle a chunk boundary. */
   readonly chunkBytes?: number;
   readonly maxPageBytes?: number;
@@ -189,7 +205,7 @@ export const readSessionTail = async (input: {
   const handle = await NodeFSP.open(input.path, "r");
   try {
     const stats = await handle.stat();
-    const upperBound = stats.size;
+    const upperBound = Math.max(0, Math.min(input.before ?? stats.size, stats.size));
 
     const collected: HistoryTranscriptEntry[] = [];
     let regionEnd = upperBound;

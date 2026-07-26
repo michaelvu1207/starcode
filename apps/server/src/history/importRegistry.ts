@@ -1,5 +1,5 @@
 /**
- * HistoryImportRegistry - which CLI session became which thread.
+ * HistoryImportRegistry - where a thread's conversation came from.
  *
  * A JSON file under the state dir, mirroring `peers.json`. Not a table, and
  * deliberately so: a thread has no free-form metadata field, adding one is a
@@ -7,17 +7,32 @@
  * migrations are the highest-risk edit this fork makes. Provenance for a
  * feature that writes at most a handful of rows a week does not justify that.
  *
- * The registry is not the link itself. The authoritative binding between a
- * thread and a foreign session is the resume cursor on
- * `provider_session_runtime`, which is what actually makes the thread resume.
- * This file exists so the import picker can say "already imported — open it"
- * without reading every thread's binding, and so a stale row (thread deleted
- * outside t3) is a cheap lookup rather than a lie: callers check the
- * projection before honouring an entry.
+ * Two kinds of row, one file. An import row says a thread's conversation came
+ * from a CLI session on this machine's disk; a fork row says it came from
+ * another thread here. They are kept together because every reader wants both
+ * — a thread view asking "where did this come from?" should not have to ask
+ * twice and render its answer a frame late — and separated into two arrays
+ * because they are keyed differently: imports by the history session they
+ * claim (one row per session, re-import replaces), forks by the thread they
+ * created (one row per fork, and a thread can be forked repeatedly).
+ *
+ * The registry is not the link itself. The authoritative binding is the resume
+ * cursor on `provider_session_runtime`, which is what actually makes a thread
+ * resume — or, for a fork, what makes the provider fork rather than start
+ * fresh. This file exists so the picker can say "already imported — open it"
+ * without reading every thread's binding, and so an imported or forked thread
+ * can say what it inherited. A stale row (thread deleted outside t3) is a
+ * cheap lookup rather than a lie: callers check the projection before
+ * honouring an entry.
  *
  * @module HistoryImportRegistry
  */
-import { HistoryImportRecord, type HistorySessionId } from "@t3tools/contracts";
+import {
+  HistoryForkRecord,
+  HistoryImportRecord,
+  type HistorySessionId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -46,6 +61,13 @@ export class HistoryImportRegistryError extends Schema.TaggedErrorClass<HistoryI
 const HistoryImportRegistryFile = Schema.Struct({
   version: Schema.Literal(1),
   imports: Schema.Array(HistoryImportRecord),
+  /**
+   * Optional, and the version stays at 1, because a file written before forks
+   * were recorded is not a different version of this format — it is this
+   * format with nothing in one of its arrays. Bumping the version would mean
+   * writing a migration for a file whose only difference is an absent key.
+   */
+  forks: Schema.optionalKey(Schema.Array(HistoryForkRecord)),
 });
 type HistoryImportRegistryFile = typeof HistoryImportRegistryFile.Type;
 
@@ -69,6 +91,21 @@ export interface HistoryImportRegistryShape {
    * was gone.
    */
   readonly record: (entry: HistoryImportRecord) => Effect.Effect<void, HistoryImportRegistryError>;
+  readonly listForks: Effect.Effect<ReadonlyArray<HistoryForkRecord>, HistoryImportRegistryError>;
+  /**
+   * Records a fork, replacing any earlier row for the same *fork* thread.
+   *
+   * Keyed on the thread created rather than the thread forked, because one
+   * conversation can be forked as often as someone wants to try a different
+   * direction from it — and each of those forks needs its own provenance line.
+   */
+  readonly recordFork: (
+    entry: HistoryForkRecord,
+  ) => Effect.Effect<void, HistoryImportRegistryError>;
+  /** Which thread, if any, this fork was taken from. */
+  readonly findFork: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<HistoryForkRecord>, HistoryImportRegistryError>;
 }
 
 export class HistoryImportRegistry extends Context.Service<
@@ -122,6 +159,30 @@ export const make = Effect.gen(function* () {
     );
 
   const list = readFile.pipe(Effect.map((file) => file.imports));
+  const listForks = readFile.pipe(Effect.map((file) => file.forks ?? []));
+
+  /**
+   * Both writers re-read under the semaphore and write the whole file, so a
+   * fork recorded while an import is in flight cannot drop the import's row.
+   * `forks` is only ever written back when it has something in it, which keeps
+   * a machine that has never forked producing exactly the file it produced
+   * before this field existed.
+   */
+  const rewrite = (
+    update: (file: HistoryImportRegistryFile) => HistoryImportRegistryFile,
+  ): Effect.Effect<void, HistoryImportRegistryError> =>
+    writeSemaphore.withPermits(1)(
+      readFile.pipe(
+        Effect.flatMap((file) => {
+          const next = update(file);
+          return writeFile(
+            next.forks === undefined || next.forks.length === 0
+              ? { version: 1, imports: next.imports }
+              : next,
+          );
+        }),
+      ),
+    );
 
   return {
     list,
@@ -134,21 +195,30 @@ export const make = Effect.gen(function* () {
         ),
       ),
     record: (entry) =>
-      writeSemaphore.withPermits(1)(
-        readFile.pipe(
-          Effect.flatMap((file) =>
-            writeFile({
-              version: 1,
-              imports: [
-                ...file.imports.filter(
-                  (existing) => existing.historySessionId !== entry.historySessionId,
-                ),
-                entry,
-              ],
-            }),
+      rewrite((file) => ({
+        ...file,
+        imports: [
+          ...file.imports.filter(
+            (existing) => existing.historySessionId !== entry.historySessionId,
           ),
+          entry,
+        ],
+      })),
+    listForks,
+    findFork: (threadId) =>
+      listForks.pipe(
+        Effect.map((forks) =>
+          Option.fromNullishOr(forks.find((entry) => entry.threadId === threadId)),
         ),
       ),
+    recordFork: (entry) =>
+      rewrite((file) => ({
+        ...file,
+        forks: [
+          ...(file.forks ?? []).filter((existing) => existing.threadId !== entry.threadId),
+          entry,
+        ],
+      })),
   } satisfies HistoryImportRegistryShape;
 });
 

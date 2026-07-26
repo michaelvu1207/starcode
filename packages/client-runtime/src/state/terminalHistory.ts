@@ -36,6 +36,7 @@ import type {
   HistorySessionId,
   HistorySessionsPage,
   HistoryPreview,
+  HistoryTranscriptPage,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -151,6 +152,54 @@ export const fetchEnvironmentHistoryPreview = Effect.fn(
         headers,
         params: { sessionId: input.sessionId },
       }),
+    ),
+  );
+});
+
+/**
+ * One page of a session, for a thread that resumed it.
+ *
+ * Separate from the preview fetch rather than a mode on it, mirroring the
+ * routes: the preview is bounded and cursorless because it answers "which
+ * conversation is this?", and this pages backwards because it answers "what
+ * does my model already know?". Collapsing them would have given both callers
+ * a payload with a flag on it.
+ */
+export const fetchEnvironmentHistoryEntries = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentHistoryEntries",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly sessionId: HistorySessionId;
+  readonly before?: number | undefined;
+  readonly limit?: number | undefined;
+  readonly timeoutMs?: number;
+}) {
+  // Interpolated by hand as well as templated, for the reason every call in
+  // this module is: a relay connection's DPoP proof binds to the exact URL.
+  // The query string is part of that URL, so it is built once and used twice.
+  const query = {
+    ...(input.before === undefined ? {} : { before: String(input.before) }),
+    ...(input.limit === undefined ? {} : { limit: String(input.limit) }),
+  };
+  const search = new URLSearchParams(query).toString();
+  const requestUrl = environmentEndpointUrl(
+    input.prepared.httpBaseUrl,
+    `/api/history/sessions/${input.sessionId}/entries${search.length === 0 ? "" : `?${search}`}`,
+  );
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl,
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl,
+    input.timeoutMs ?? DEFAULT_HISTORY_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.history.entries({ headers, params: { sessionId: input.sessionId }, query }),
     ),
   );
 });
@@ -422,6 +471,19 @@ export class TerminalHistoryLoader extends Context.Service<
       readonly sessionId: HistorySessionId;
     }) => Effect.Effect<Option.Option<HistoryPreview>>;
     /**
+     * One page of a session, newest first, for the thread that resumed it.
+     *
+     * `before` is the byte cursor the previous page returned — or, for the
+     * first page, the boundary recorded when the thread took the session over,
+     * which is what keeps the thread's own turns out of its history.
+     */
+    readonly loadEntries: (input: {
+      readonly prepared: PreparedConnection;
+      readonly sessionId: HistorySessionId;
+      readonly before?: number | undefined;
+      readonly limit?: number | undefined;
+    }) => Effect.Effect<Option.Option<HistoryTranscriptPage>>;
+    /**
      * Every import this machine has ever performed. Served whole, so the
      * picker can badge already-imported rows without a request per row, and
      * `None` on a machine whose server predates the route.
@@ -494,6 +556,28 @@ export const terminalHistoryLoaderLayer: Layer.Layer<
             Effect.logDebug("Could not read a terminal-history preview over HTTP.").pipe(
               Effect.annotateLogs({ cause: Cause.pretty(cause) }),
               Effect.as(Option.none<HistoryPreview>()),
+            ),
+          ),
+        ),
+      loadEntries: (input) =>
+        fetchEnvironmentHistoryEntries({
+          prepared: input.prepared,
+          signer,
+          sessionId: input.sessionId,
+          before: input.before,
+          limit: input.limit,
+        }).pipe(
+          Effect.map(Option.some<HistoryTranscriptPage>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchCause((cause) =>
+            // `None` reads as "this machine cannot show the earlier
+            // conversation", which is what a pre-F12.2 server answering with
+            // the SPA's HTML amounts to. The provenance line above it still
+            // renders, so the thread says where it came from even where it
+            // cannot show it.
+            Effect.logDebug("Could not read a terminal-history page over HTTP.").pipe(
+              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<HistoryTranscriptPage>()),
             ),
           ),
         ),
@@ -609,6 +693,21 @@ export interface HistoryPreviewKey {
 }
 
 /**
+ * One page of one session's entries.
+ *
+ * `before` is part of the key rather than component state, which is what makes
+ * "show earlier" free to walk back over: each page is its own cached atom, so
+ * collapsing a history section and reopening it re-renders the pages already
+ * read instead of re-fetching them.
+ */
+export interface HistoryEntriesKey {
+  readonly environmentId: EnvironmentId;
+  readonly sessionId: HistorySessionId;
+  readonly before?: number | undefined;
+  readonly limit?: number | undefined;
+}
+
+/**
  * `Atom.family` keys on identity, so a fresh object per render would leak a
  * new atom every time. Both families take a serialized string key and unpack
  * it, which is why these two functions exist rather than passing the record.
@@ -624,6 +723,9 @@ export const historySessionsAtomKey = (key: HistorySessionsKey): string =>
 
 export const historyPreviewAtomKey = (key: HistoryPreviewKey): string =>
   JSON.stringify([key.environmentId, key.sessionId]);
+
+export const historyEntriesAtomKey = (key: HistoryEntriesKey): string =>
+  JSON.stringify([key.environmentId, key.sessionId, key.before ?? null, key.limit ?? null]);
 
 const parseSessionsKey = (serialized: string): HistorySessionsKey => {
   const [environmentId, since, until, cursor, limit] = JSON.parse(serialized) as [
@@ -645,6 +747,21 @@ const parseSessionsKey = (serialized: string): HistorySessionsKey => {
 const parsePreviewKey = (serialized: string): HistoryPreviewKey => {
   const [environmentId, sessionId] = JSON.parse(serialized) as [EnvironmentId, HistorySessionId];
   return { environmentId, sessionId };
+};
+
+const parseEntriesKey = (serialized: string): HistoryEntriesKey => {
+  const [environmentId, sessionId, before, limit] = JSON.parse(serialized) as [
+    EnvironmentId,
+    HistorySessionId,
+    number | null,
+    number | null,
+  ];
+  return {
+    environmentId,
+    sessionId,
+    ...(before === null ? {} : { before }),
+    ...(limit === null ? {} : { limit }),
+  };
 };
 
 export function createEnvironmentTerminalHistoryAtoms<R, E>(
@@ -695,6 +812,33 @@ export function createEnvironmentTerminalHistoryAtoms<R, E>(
       .pipe(
         Atom.setIdleTTL(HISTORY_IDLE_TTL_MS),
         Atom.withLabel(`environment-history-preview:${serializedKey}`),
+      );
+  });
+
+  const entriesAtom = Atom.family((serializedKey: string) => {
+    const key = parseEntriesKey(serializedKey);
+    return runtime
+      .atom(
+        runInEnvironment(
+          key.environmentId,
+          withPreparedConnection((prepared) =>
+            Effect.flatMap(TerminalHistoryLoader, (loader) =>
+              loader.loadEntries({
+                prepared,
+                sessionId: key.sessionId,
+                before: key.before,
+                limit: key.limit,
+              }),
+            ),
+          ),
+        ),
+      )
+      .pipe(
+        // No refresh, for the reason the sessions listing has none: the region
+        // of the file this page covers sits below a fixed boundary and is
+        // append-only, so it cannot change under the reader.
+        Atom.setIdleTTL(HISTORY_IDLE_TTL_MS),
+        Atom.withLabel(`environment-history-entries:${serializedKey}`),
       );
   });
 
@@ -767,5 +911,5 @@ export function createEnvironmentTerminalHistoryAtoms<R, E>(
     },
   });
 
-  return { sessionsAtom, previewAtom, importsAtom, importCommand, forkCommand };
+  return { sessionsAtom, previewAtom, entriesAtom, importsAtom, importCommand, forkCommand };
 }

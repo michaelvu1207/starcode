@@ -450,6 +450,13 @@ export const makeHistoryImporter = Effect.gen(function* () {
       importedAt: DateTime.formatIso(yield* DateTime.now),
       messageCount: stats.messageCount,
       startedAt: stats.startedAt,
+      // The boundary between the conversation this thread inherited and the
+      // conversation it is about to have. Resuming appends to the CLI's own
+      // file, so without it the thread's earlier-conversation section would
+      // grow to include the turns the thread itself takes — every message
+      // shown twice, once as history and once live.
+      sourceSizeBytes: entry.sizeBytes,
+      lastActivityAt: DateTime.formatIso(DateTime.makeUnsafe(entry.mtimeMs)),
     };
     // Provenance is best-effort on purpose: the thread resumes off its binding
     // row whether or not this file was written, and failing an import that has

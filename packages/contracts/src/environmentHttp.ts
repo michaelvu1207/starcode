@@ -37,6 +37,7 @@ import {
   HistorySessionId,
   HistorySessionsPage,
   HistoryPreview,
+  HistoryTranscriptPage,
 } from "./history.ts";
 import {
   ClientOrchestrationCommand,
@@ -128,6 +129,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "feature_flow_failed",
   "history_sessions_failed",
   "history_preview_failed",
+  "history_entries_failed",
   "history_import_failed",
   "history_imports_failed",
   "history_fork_failed",
@@ -714,6 +716,41 @@ export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ sessionId: HistorySessionId }),
       success: HistoryPreview,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * A page of a session, for the one surface allowed to read one: the earlier
+   * conversation behind a thread that resumed it.
+   *
+   * This does not reopen the history viewer. That was a destination — its own
+   * route, reachable for any session on any machine — and it is still gone.
+   * This is addressed the same way the preview is, but it exists to serve a
+   * thread that already carries the session in its model's context, where the
+   * alternative is a transcript starting mid-conversation with no way to see
+   * what came before.
+   *
+   * Additive rather than a reshape of `preview`, deliberately. The preview is
+   * two disjoint slices with no cursor, which is the right shape for telling
+   * two sessions apart and the wrong one for reading a conversation; merging
+   * them would have given both callers a payload with a mode flag. And an old
+   * client keeps working against a new server, which a reshape would have
+   * broken.
+   *
+   * Both parameters are optional strings parsed by the handler, matching the
+   * listing: a garbled `limit` should clamp and a stale `before` should serve
+   * the newest page, rather than failing a request a thread made on open.
+   */
+  .add(
+    HttpApiEndpoint.get("entries", "/api/history/sessions/:sessionId/entries", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ sessionId: HistorySessionId }),
+      query: Schema.Struct({
+        /** Exclusive byte ceiling; absent means the end of the session. */
+        before: Schema.optionalKey(Schema.String),
+        limit: Schema.optionalKey(Schema.String),
+      }),
+      success: HistoryTranscriptPage,
       error: [...EnvironmentScopedOperationErrors, EnvironmentResourceNotFoundError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

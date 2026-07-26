@@ -21,18 +21,26 @@
  * identical to one that worked and would only be caught by asking the model
  * something it should have remembered.
  *
- * Two things this deliberately does not do. It does not touch the import
- * registry — that file maps a *history session* to the thread that imported it,
- * one row per session, and a fork is neither. And it does not copy the source's
- * settled/snoozed state: a fork is new work, and new work is active.
+ * One thing this deliberately does not do: copy the source's settled/snoozed
+ * state. A fork is new work, and new work is active.
+ *
+ * What it does do, after the fork is safely bound, is leave a provenance row —
+ * in the same registry file imports write to, in its own array. Without one a
+ * fork is the very trap the import prelude exists to defuse: a thread that
+ * opens empty and answers as though it remembers a conversation nobody can
+ * see. The row is written best-effort and after the binding, because a fork
+ * that works but is unlabelled is recoverable and a fork that was refused
+ * because a JSON file would not save is not.
  *
  * @module HistoryFork
  */
 import {
   type ClientOrchestrationCommand,
   CommandId,
+  type HistoryForkRecord,
   type HistoryForkRefusalReason,
   type HistoryForkResult,
+  type HistorySessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -45,6 +53,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { normalizeDispatchCommand } from "../orchestration/Normalizer.ts";
 import { ProviderSessionDirectory } from "../provider/Services/ProviderSessionDirectory.ts";
+import { HistoryIndex, type HistoryIndexEntry } from "./HistoryIndex.ts";
 import {
   forkResumeCursor,
   forkThreadTitle,
@@ -52,6 +61,9 @@ import {
   readBindingCwd,
   readForkableSessionId,
 } from "./forkFacts.ts";
+import { claudeNativeSessionIdForPath } from "./importFacts.ts";
+import { HistoryImportRegistry } from "./importRegistry.ts";
+import { readSessionOpening } from "./tailReader.ts";
 
 /** A precondition failed. Nothing was written. */
 export class HistoryForkRefusal extends Schema.TaggedErrorClass<HistoryForkRefusal>()(
@@ -78,7 +90,57 @@ export const makeHistoryForker = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngineService;
   const directory = yield* ProviderSessionDirectory;
+  const historyIndex = yield* HistoryIndex;
+  const registry = yield* HistoryImportRegistry;
   const crypto = yield* Crypto.Crypto;
+
+  /**
+   * Finds the file behind a provider session id.
+   *
+   * The reverse of the lookup the rest of this module never needs: a
+   * `HistorySessionId` is a hash of a path, so there is no way back from one,
+   * but Claude names each session file after the session itself. Scanning the
+   * index for the file whose name is this id is therefore exact rather than a
+   * guess — and it is a scan of an in-memory array that already exists, once
+   * per fork.
+   *
+   * Null is a normal answer. A session written by a CLI whose store has since
+   * been pruned, or one under a home this index does not walk, still forks
+   * fine — the provider resumes it through its own store, not through us — and
+   * only the fork's earlier-conversation section is unavailable.
+   */
+  const findSourceSessionFile = (
+    sourceSessionId: string,
+  ): Effect.Effect<HistoryIndexEntry | null> =>
+    historyIndex
+      .snapshot()
+      .pipe(
+        Effect.map(
+          (index) =>
+            index.entries.find(
+              (entry) =>
+                entry.provider === "claude" &&
+                claudeNativeSessionIdForPath(entry.path) === sourceSessionId,
+            ) ?? null,
+        ),
+      );
+
+  /**
+   * The one line the forked thread will wear, assembled from bounded reads.
+   *
+   * Deliberately no message count: import affords a full forward scan because
+   * it happens once on a file the operator explicitly chose and the thread is
+   * already created by then, whereas a fork is a menu click that should land
+   * in the new thread immediately. `startedAt` comes from the head read the
+   * opening already needs, and the honest-null rendering the import prelude
+   * uses for a count it could not take covers the rest.
+   */
+  const readSourceFacts = (entry: HistoryIndexEntry) =>
+    Effect.promise(() =>
+      readSessionOpening({ path: entry.path, provider: entry.provider })
+        .then((opening) => opening?.timestamp ?? null)
+        .catch(() => null),
+    );
 
   const dispatch = (command: ClientOrchestrationCommand) =>
     normalizeDispatchCommand(command).pipe(
@@ -200,6 +262,45 @@ export const makeHistoryForker = Effect.gen(function* () {
           }),
         ),
       );
+
+    // Provenance, after the write and best-effort — the same trade import
+    // makes. The fork resumes off its binding row whether or not this file was
+    // written, and failing a fork that has already succeeded because a JSON
+    // file would not save would be the wrong way round.
+    const sourceFile = yield* findSourceSessionFile(sourceSessionId).pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    const startedAt =
+      sourceFile === null
+        ? null
+        : yield* readSourceFacts(sourceFile).pipe(Effect.orElseSucceed(() => null));
+    const record: HistoryForkRecord = {
+      threadId,
+      sourceThreadId: input.threadId,
+      sourceTitle: source.title.trim().length > 0 ? source.title.trim() : null,
+      sourceSessionId,
+      provider: "claude",
+      projectId: source.projectId,
+      forkedAt: DateTime.formatIso(yield* DateTime.now),
+      historySessionId: sourceFile === null ? null : (sourceFile.id as HistorySessionId),
+      // The boundary, for the same reason an import has one: the source thread
+      // keeps talking into this file after the fork is taken, and the fork's
+      // history is what it inherited, not what its source did next.
+      ...(sourceFile === null ? {} : { sourceSizeBytes: sourceFile.sizeBytes }),
+      startedAt,
+      ...(sourceFile === null
+        ? {}
+        : { lastActivityAt: DateTime.formatIso(DateTime.makeUnsafe(sourceFile.mtimeMs)) }),
+    };
+    yield* registry.recordFork(record).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("history fork registry write failed", {
+          threadId,
+          sourceThreadId: input.threadId,
+          cause,
+        }),
+      ),
+    );
 
     return {
       threadId,

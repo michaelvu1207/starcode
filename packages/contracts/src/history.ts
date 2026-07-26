@@ -68,6 +68,22 @@ export const HISTORY_TRANSCRIPT_MAX_TOOL_CALLS = 12;
 export const HISTORY_SNIPPET_MAX_CHARS = 240;
 
 /**
+ * Entries in one page of an imported thread's earlier conversation.
+ *
+ * Larger than a preview and smaller than a chapter. This backs a section a
+ * reader scrolls up through to find what the model already knows, so a page
+ * has to be worth the round trip without being worth a spinner.
+ */
+export const HISTORY_PAGE_DEFAULT_ENTRIES = 30;
+/**
+ * Ceiling on a page. Each entry costs a parse and up to
+ * `HISTORY_TRANSCRIPT_ENTRY_MAX_CHARS`, and the backwards reader's byte budget
+ * will cut a page short long before this on the sessions that matter — so this
+ * bounds the response, and the byte budget bounds the disk work.
+ */
+export const HISTORY_PAGE_MAX_ENTRIES = 100;
+
+/**
  * Which CLI wrote the session. Not `ProviderDriverKind`: these are on-disk
  * stores belonging to the CLIs themselves, discovered by path, with no
  * relationship to the provider instances this server has configured.
@@ -207,6 +223,34 @@ export const HistoryPreview = Schema.Struct({
   gap: Schema.Boolean,
 });
 export type HistoryPreview = typeof HistoryPreview.Type;
+
+/**
+ * One page of a session, newest first.
+ *
+ * The preview above is bounded and cursorless because it answers a question a
+ * bounded answer settles. This one has a cursor because it answers a different
+ * question — what an imported thread's model already knows — and that question
+ * has as many messages behind it as the session does.
+ *
+ * The cursor still only ever runs *backwards*. A reader opens at the end of a
+ * conversation and works up, which is also the only direction a 38 MB
+ * append-only log can be read cheaply, so "newest page, then earlier" is both
+ * the natural reading order and the only affordable one.
+ */
+export const HistoryTranscriptPage = Schema.Struct({
+  /** Ascending by offset: oldest first, newest last. */
+  entries: Schema.Array(HistoryTranscriptEntry),
+  /**
+   * Pass as `before` to fetch the page immediately earlier. Null when this
+   * page reached the top of the session, which is what ends "show earlier".
+   *
+   * Not simply the first entry's offset: it is the oldest byte the scan
+   * *looked at*, so a long run of records that render to nothing is walked
+   * past once rather than re-scanned by every later page.
+   */
+  nextBefore: Schema.NullOr(NonNegativeInt),
+});
+export type HistoryTranscriptPage = typeof HistoryTranscriptPage.Type;
 
 /**
  * Import: turning one of those on-disk sessions into a real starcode thread.
@@ -376,12 +420,89 @@ export const HistoryImportRecord = Schema.Struct({
   /** Counted once at import; see `HistoryImportThreadResult`. */
   messageCount: Schema.NullOr(NonNegativeInt),
   startedAt: Schema.NullOr(IsoDateTime),
+  /**
+   * Where the session ended when this thread took it over, in bytes.
+   *
+   * The boundary between "the conversation this thread inherited" and "the
+   * conversation this thread has had". Resuming appends to the CLI's own file,
+   * so without a boundary an imported thread's earlier-conversation section
+   * would grow to include the turns the thread itself just took — showing
+   * every message twice, once as history and once live.
+   *
+   * Optional because the registry predates it: a row written before this
+   * field existed reads its history from the end of the file, which is
+   * correct until the thread takes its first turn and harmless after.
+   */
+  sourceSizeBytes: Schema.optionalKey(NonNegativeInt),
+  /**
+   * The session's last write at import time. With `startedAt` this is the date
+   * range the collapsed history summary shows; alone it is the better of the
+   * two, since a session's `startedAt` is null whenever its opening records
+   * carry no timestamp.
+   */
+  lastActivityAt: Schema.optionalKey(IsoDateTime),
 });
 export type HistoryImportRecord = typeof HistoryImportRecord.Type;
+
+/**
+ * One line of the fork registry: which thread was forked into which.
+ *
+ * A separate shape rather than a nullable-everything union with the import
+ * record, because the two answer different questions. An import row says a
+ * conversation came from a CLI session on disk; a fork row says it came from
+ * another thread here. The provenance line reads differently in each case
+ * ("Resumed from a Claude Code terminal session" versus "Forked from
+ * <thread>"), and a caller that had to reconstruct which it was holding from
+ * which fields happened to be null would get it wrong.
+ *
+ * Like the import registry this is provenance, not state: the authoritative
+ * link is the fork marker on the new thread's resume cursor, which is what
+ * makes the provider fork rather than start fresh.
+ */
+export const HistoryForkRecord = Schema.Struct({
+  /** The fork. */
+  threadId: ThreadId,
+  /** The thread it was forked from — which may itself no longer exist. */
+  sourceThreadId: ThreadId,
+  /** The source thread's title when the fork was taken, for a line that reads as a sentence. */
+  sourceTitle: Schema.NullOr(TrimmedNonEmptyString),
+  /** The provider session the fork resumes from. */
+  sourceSessionId: TrimmedNonEmptyString,
+  provider: HistoryProvider,
+  projectId: ProjectId,
+  forkedAt: IsoDateTime,
+  /**
+   * The source session's file, as this machine's index knew it at fork time.
+   *
+   * Null when the fork could not be matched to a file on disk — a session
+   * whose store has been pruned, or one the index has not discovered — in
+   * which case the fork still works (it resumes through the provider, not
+   * through this) and only its earlier-conversation section is unavailable.
+   */
+  historySessionId: Schema.NullOr(HistorySessionId),
+  /** Byte boundary, with the same meaning it has on an import row. */
+  sourceSizeBytes: Schema.optionalKey(NonNegativeInt),
+  /** When the source session began, from a bounded read of its opening. */
+  startedAt: Schema.NullOr(IsoDateTime),
+  /** The source session's last write at fork time. */
+  lastActivityAt: Schema.optionalKey(IsoDateTime),
+});
+export type HistoryForkRecord = typeof HistoryForkRecord.Type;
 
 export const HistoryImportsPage = Schema.Struct({
   /** The whole registry. It is one row per import and never paginated. */
   imports: Schema.Array(HistoryImportRecord),
+  /**
+   * Forks taken on this machine, served alongside the imports because both
+   * answer one question — *where did this thread's conversation come from?* —
+   * and a thread view that had to ask twice would render its provenance a
+   * frame late.
+   *
+   * Optional so that a machine running a server from before forks were
+   * recorded still decodes: absent reads as "this machine cannot say", which
+   * renders as no provenance rather than as "this thread was not forked".
+   */
+  forks: Schema.optionalKey(Schema.Array(HistoryForkRecord)),
 });
 export type HistoryImportsPage = typeof HistoryImportsPage.Type;
 

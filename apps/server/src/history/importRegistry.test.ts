@@ -4,6 +4,7 @@ import {
   HistorySessionId,
   ProjectId,
   ThreadId,
+  type HistoryForkRecord,
   type HistoryImportRecord,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -84,6 +85,103 @@ it.effect("keeps one row per session, replacing the earlier import", () =>
       Option.getOrUndefined(yield* registry.find(first.historySessionId))?.threadId,
       ThreadId.make("thread-2"),
     );
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+/**
+ * The file a server from before forks existed wrote.
+ *
+ * At module scope so the encoding stays out of an Effect context, matching the
+ * fixture convention in `preview.test.ts` and `HistoryIndex.test.ts`.
+ */
+const legacyRegistryContents = (entry: HistoryImportRecord): string =>
+  JSON.stringify({ version: 1, imports: [entry] });
+
+const forkRecord = (overrides?: Partial<HistoryForkRecord>): HistoryForkRecord => ({
+  threadId: ThreadId.make("thread-fork-1"),
+  sourceThreadId: ThreadId.make("thread-1"),
+  sourceTitle: "Reworking the picker",
+  sourceSessionId: "9f2b6c1a-4d3e-4f5a-8b7c-0d1e2f3a4b5c",
+  provider: "claude",
+  projectId: ProjectId.make("project-1"),
+  forkedAt: "2026-07-26T00:00:00.000Z",
+  historySessionId: HistorySessionId.make("d".repeat(32)),
+  sourceSizeBytes: 4096,
+  startedAt: "2026-07-23T09:00:00.000Z",
+  lastActivityAt: "2026-07-25T18:00:00.000Z",
+  ...overrides,
+});
+
+it.effect("round-trips a fork alongside the imports", () =>
+  Effect.gen(function* () {
+    const registry = yield* HistoryImportRegistry;
+    const imported = record();
+    const forked = forkRecord();
+
+    yield* registry.record(imported);
+    yield* registry.recordFork(forked);
+
+    // Both arrays survive the other's write: a thread asking where its
+    // conversation came from reads one file and gets both answers.
+    assert.deepEqual([...(yield* registry.list)], [imported]);
+    assert.deepEqual([...(yield* registry.listForks)], [forked]);
+    assert.deepEqual(Option.getOrUndefined(yield* registry.findFork(forked.threadId)), forked);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("keeps one row per fork, not per source thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* HistoryImportRegistry;
+    // One conversation forked twice, to try two directions from the same
+    // point. Both forks need their own provenance line.
+    const first = forkRecord();
+    const second = forkRecord({ threadId: ThreadId.make("thread-fork-2") });
+
+    yield* registry.recordFork(first);
+    yield* registry.recordFork(second);
+
+    assert.lengthOf(yield* registry.listForks, 2);
+    assert.deepEqual(
+      Option.getOrUndefined(yield* registry.findFork(second.threadId))?.sourceThreadId,
+      first.sourceThreadId,
+    );
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("reads a registry file written before forks existed", () =>
+  Effect.gen(function* () {
+    const registry = yield* HistoryImportRegistry;
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const imported = record();
+
+    // Exactly the file a pre-F12.2 server wrote: no `forks` key at all. It
+    // must read as "no forks", not as a decode failure that costs the machine
+    // its import badges too.
+    yield* fileSystem.writeFileString(config.historyImportsPath, legacyRegistryContents(imported));
+
+    assert.deepEqual([...(yield* registry.list)], [imported]);
+    assert.deepEqual([...(yield* registry.listForks)], []);
+
+    // And writing a fork into it does not cost the import its row.
+    yield* registry.recordFork(forkRecord());
+    assert.deepEqual([...(yield* registry.list)], [imported]);
+    assert.lengthOf(yield* registry.listForks, 1);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("leaves the file shaped as it was on a machine that has never forked", () =>
+  Effect.gen(function* () {
+    const registry = yield* HistoryImportRegistry;
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+
+    yield* registry.record(record());
+
+    // An older server reading this file decodes `forks: []` fine, but writing
+    // a key nobody asked for is how a format drifts. Absent stays absent.
+    const contents = yield* fileSystem.readFileString(config.historyImportsPath);
+    assert.isFalse(contents.includes("forks"));
   }).pipe(Effect.provide(makeLayer())),
 );
 

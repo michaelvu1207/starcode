@@ -1,11 +1,17 @@
 /**
  * Terminal history HTTP routes.
  *
- * Three reads and one write, and none of them returns a conversation. The
+ * Four reads and two writes, and only one of them returns a conversation. The
  * listing serves a page of an in-memory index and opens files only for the
  * rows it is about to return, the preview reads a bounded slice from each end
- * of one file, and the import registry is a small JSON file. None of them
+ * of one file, and the provenance registry is a small JSON file. None of them
  * touch SQLite.
+ *
+ * The exception is `entries`, which does return a conversation — one page of
+ * one session, backwards from a byte cursor, for the thread that resumed it.
+ * It is not the history viewer this group replaced: that was a destination
+ * reachable for any session on any machine, and this is scoped to the session
+ * a thread already carries in its model's context.
  *
  * The write — import — is the exception in every sense, and it lives here
  * rather than in its own group because it is addressed by history session id
@@ -26,6 +32,7 @@ import {
   type HistoryImportsPage,
   type HistoryPreview,
   type HistorySessionsPage,
+  type HistoryTranscriptPage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -45,6 +52,7 @@ import { makeHistoryForker } from "./fork.ts";
 import { makeHistoryImporter } from "./import.ts";
 import { HistoryImportRegistry } from "./importRegistry.ts";
 import { clampSessionsLimit, parseCursor, resolveWindow, selectPage } from "./query.ts";
+import { clampPageEntries, parsePageCursor, readSessionPage } from "./page.ts";
 import { readSessionPreview } from "./preview.ts";
 
 /**
@@ -183,6 +191,36 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "entries",
+        Effect.fn("environment.history.entries")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+
+          // Same traversal guard as the preview, and it is the whole of the
+          // guard: the path below is whatever the server's own index minted an
+          // id for, and nothing a caller sends can widen that set.
+          const entry = yield* historyIndex.resolve(args.params.sessionId);
+          if (entry === null) {
+            return yield* failEnvironmentNotFound("history_session_not_found");
+          }
+
+          const page = yield* Effect.tryPromise({
+            try: () =>
+              readSessionPage({
+                path: entry.path,
+                provider: entry.provider,
+                before: parsePageCursor(args.query.before) ?? undefined,
+                limit: clampPageEntries(args.query.limit),
+              }),
+            catch: (cause) => new HistoryPreviewReadError({ cause }),
+          }).pipe(
+            Effect.catch((cause) => failEnvironmentInternal("history_entries_failed", cause)),
+          );
+
+          return page satisfies HistoryTranscriptPage;
+        }),
+      )
+      .handle(
         "import",
         Effect.fn("environment.history.import")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
@@ -221,10 +259,15 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
 
-          const imports = yield* importRegistry.list.pipe(
-            Effect.catch((cause) => failEnvironmentInternal("history_imports_failed", cause)),
-          );
-          return { imports } satisfies HistoryImportsPage;
+          // One read of one file for both arrays. A thread asking where its
+          // conversation came from does not know yet whether the answer is an
+          // import or a fork, and making it ask twice would render the answer
+          // a frame late for whichever it turned out to be.
+          const [imports, forks] = yield* Effect.all(
+            [importRegistry.list, importRegistry.listForks],
+            { concurrency: 1 },
+          ).pipe(Effect.catch((cause) => failEnvironmentInternal("history_imports_failed", cause)));
+          return { imports, forks } satisfies HistoryImportsPage;
         }),
       )
       .handle(

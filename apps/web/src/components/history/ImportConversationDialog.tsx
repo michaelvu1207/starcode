@@ -23,7 +23,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   HistorySessionId,
-  HistoryTranscriptEntry,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -42,7 +41,7 @@ import {
   useRefreshHistoryImports,
 } from "~/state/terminalHistory";
 import { buildThreadRouteParams } from "~/threadRoutes";
-import ChatMarkdown from "../ChatMarkdown";
+import { HistoryMessage } from "./HistoryMessage";
 import { subscribeImportPicker } from "../sidebar/importPicker";
 import { HistoryProviderIcon, historyProviderLabel } from "../sidebar/HistoryProviderIcon";
 import { Button } from "../ui/button";
@@ -634,57 +633,11 @@ function ImportPreviewPane(props: {
             </div>
           ) : null}
           {timeline.entries.map((entry) => (
-            <PreviewEntry key={entry.offset} entry={entry} cwd={props.row.projectPath} />
+            <HistoryMessage key={entry.offset} entry={entry} cwd={props.row.projectPath} />
           ))}
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
-    </div>
-  );
-}
-
-/**
- * One message, wearing the same clothes the real transcript gives it.
- *
- * The role labels this used to print are gone: a right-aligned bubble is the
- * user and full-bleed prose is the assistant, everywhere else in the app, and
- * a preview that invents its own vocabulary for the same two things reads as a
- * different product. Assistant text goes through `ChatMarkdown` for the same
- * reason — the CLIs write markdown, and a preview showing literal asterisks
- * looks broken rather than lossy.
- */
-function PreviewEntry(props: {
-  readonly entry: HistoryTranscriptEntry;
-  readonly cwd: string | null;
-}): ReactNode {
-  const { entry } = props;
-  const text = entry.truncated ? `${entry.text}…` : entry.text;
-  if (entry.role === "user") {
-    return (
-      <div className="flex flex-col items-end">
-        <div className="max-w-[85%] min-w-0 break-words rounded-2xl bg-accent px-3 py-2 text-xs">
-          {/* `lineBreaks` for the same reason the real timeline sets it: a
-              human typing into a composer means their newlines. */}
-          <ChatMarkdown
-            text={text}
-            cwd={props.cwd ?? undefined}
-            className="text-foreground"
-            lineBreaks
-          />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="min-w-0 text-xs">
-      {text.trim().length > 0 ? <ChatMarkdown text={text} cwd={props.cwd ?? undefined} /> : null}
-      {/* Names only, never payloads — the server's renderer is lossy by design
-          and this is the one trace that work happened between two messages. */}
-      {entry.toolCalls.length > 0 ? (
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground/50">
-          {entry.toolCalls.join(" · ")}
-        </p>
-      ) : null}
     </div>
   );
 }
