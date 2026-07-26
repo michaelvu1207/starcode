@@ -358,7 +358,7 @@ export const PeerThreadCreateInput = Schema.Struct({
   project: Schema.optional(
     ProjectCategorySlug.annotate({
       description:
-        "Project slug to create the thread under. The peer resolves it to whichever of its folders is bound to that project. Use this instead of projectId when you know the project by name.",
+        "Project slug to create the thread under. The peer resolves it to whichever of its folders is bound to that project, and the new thread starts with that project's configured provider, model and modes. If the peer binds several folders and names no preferred one, the call is refused rather than guessed — pass projectId then. Use this instead of projectId when you know the project by name.",
     }),
   ),
   title: TrimmedNonEmptyString.annotate({ description: "Short name for the new thread." }),
@@ -378,13 +378,14 @@ export const PeerThreadCreateInput = Schema.Struct({
   ),
   runtimeMode: Schema.optional(
     RuntimeMode.annotate({
-      description: "How much the new thread may do without asking. Defaults to approval-required.",
+      description:
+        "How much the new thread may do without asking. Defaults to the project's setting on that peer, or approval-required.",
     }),
   ),
   interactionMode: Schema.optional(
     ProviderInteractionMode.annotate({
       description:
-        "plan keeps the new thread read-only; default lets it edit. Defaults to default.",
+        "plan keeps the new thread read-only; default lets it edit. Defaults to the project's setting on that peer, or default.",
     }),
   ),
 });
