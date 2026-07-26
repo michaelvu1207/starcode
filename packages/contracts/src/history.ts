@@ -384,3 +384,94 @@ export const HistoryImportsPage = Schema.Struct({
   imports: Schema.Array(HistoryImportRecord),
 });
 export type HistoryImportsPage = typeof HistoryImportsPage.Type;
+
+/**
+ * Forking a thread's conversation.
+ *
+ * The import above binds a *new* thread to a session the CLI already has on
+ * disk. This binds a new thread to the session a *running t3 thread* is
+ * already using — the same seam, reached from the other side, and addressed by
+ * thread id rather than by session id.
+ *
+ * Addressed by thread id deliberately, and it is the whole reason this is a
+ * route rather than a client-side call. A `HistorySessionId` is a hash of a
+ * file path with no reverse lookup, and the client is never told a thread's
+ * native session id (`OrchestrationSession` does not carry one). So the only
+ * party that can name the session behind a thread is the server, reading the
+ * thread's own resume cursor out of `ProviderSessionDirectory`.
+ *
+ * **The fork never shares the source's session.** The new thread's cursor
+ * carries a marker that makes the provider fork on its first turn — the Agent
+ * SDK's `forkSession`, which resumes the transcript and then writes to a *new*
+ * session id. Two threads appending to one transcript is the failure this
+ * feature exists to avoid, and it is silent when it happens, so the marker is
+ * not optional decoration: it is the safety property.
+ */
+export const HistoryForkRefusalReason = Schema.Literals([
+  /** No such thread on this machine, or it has been deleted. */
+  "thread_not_found",
+  /**
+   * The thread runs on a driver with no fork primitive. Codex's app-server
+   * offers only `thread/start` and `thread/resume`, and resuming appends to
+   * the same rollout — so a "fork" there would be the corruption, not the
+   * feature.
+   */
+  "provider_unsupported",
+  /**
+   * The thread has never held a session worth resuming — nothing has been said
+   * in it yet, or its binding carries no provider session id.
+   */
+  "no_resumable_session",
+  /** Creating the forked thread failed. */
+  "thread_create_failed",
+  /** The fork binding could not be written, so the fork would start blank. */
+  "binding_write_failed",
+]);
+export type HistoryForkRefusalReason = typeof HistoryForkRefusalReason.Type;
+
+/**
+ * Separate from the import refusal, though the shape is identical, because the
+ * reasons are disjoint and a caller that switched on a merged set would have
+ * to handle cases its endpoint can never return.
+ */
+export class HistoryForkRefusedError extends Schema.TaggedErrorClass<HistoryForkRefusedError>()(
+  "HistoryForkRefusedError",
+  {
+    code: Schema.Literal("history_fork_refused"),
+    reason: HistoryForkRefusalReason,
+    /** Free text for the caller: which driver, which thread. */
+    detail: Schema.optional(Schema.String),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(HistoryForkRefusedError)(this, { status: 409 });
+  }
+}
+
+export const HistoryForkRequest = Schema.Struct({
+  /**
+   * What to call the fork. Absent, the server names it after the source — the
+   * client has the source's title on screen and the server has it in the
+   * projection, so neither needs to guess.
+   */
+  title: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type HistoryForkRequest = typeof HistoryForkRequest.Type;
+
+export const HistoryForkResult = Schema.Struct({
+  /** The fork. Empty of turns, and already bound to its own session-to-be. */
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  provider: HistoryProvider,
+  /**
+   * The session the fork will resume *from* on its first turn. Not the session
+   * it will end up owning — that id does not exist until the provider forks —
+   * which is why this is named for the source rather than for the result.
+   */
+  sourceSessionId: TrimmedNonEmptyString,
+});
+export type HistoryForkResult = typeof HistoryForkResult.Type;

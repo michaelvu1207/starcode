@@ -27,6 +27,9 @@ import {
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  HistoryForkRefusedError,
+  HistoryForkRequest,
+  HistoryForkResult,
   HistoryImportRefusedError,
   HistoryImportRequest,
   HistoryImportResult,
@@ -127,6 +130,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "history_preview_failed",
   "history_import_failed",
   "history_imports_failed",
+  "history_fork_failed",
   "project_catalog_load_failed",
   "project_catalog_save_failed",
   "project_catalog_locations_failed",
@@ -752,6 +756,38 @@ export class EnvironmentHistoryHttpApi extends HttpApiGroup.make("history")
       headers: OptionalBearerHeaders,
       success: HistoryImportsPage,
       error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Fork: import's mirror image, and the reason it lives in this group.
+   *
+   * Import binds a new thread to a session a CLI left on disk; fork binds a new
+   * thread to the session a thread here is already using. Same seam, same
+   * resume binding, same refusal-rather-than-fallback discipline — reached from
+   * the other side.
+   *
+   * Keyed by **thread id, never session id**, because the client cannot name a
+   * session: `HistorySessionId` is a path hash with no reverse lookup, and
+   * `OrchestrationSession` carries no native session id. The server reads the
+   * source's cursor out of its own directory, which makes this the only place
+   * the fork can be decided.
+   *
+   * `orchestration:operate`, and a POST on the source thread's path for the
+   * same reason import is a POST on the session's: a relay client's DPoP proof
+   * binds to the fully interpolated URL, so *which thread was forked* is
+   * covered by the proof rather than buried in a body.
+   */
+  .add(
+    HttpApiEndpoint.post("fork", "/api/history/threads/:threadId/fork", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ threadId: ThreadId }),
+      payload: HistoryForkRequest,
+      success: HistoryForkResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentResourceNotFoundError,
+        HistoryForkRefusedError,
+      ],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
