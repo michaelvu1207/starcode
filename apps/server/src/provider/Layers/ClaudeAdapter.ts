@@ -121,6 +121,13 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  /**
+   * Resume the session named above, then write to a NEW one instead of
+   * continuing it. Set by a thread fork, and consumed exactly once: the cursor
+   * is rebuilt from scratch by `updateResumeCursor` on the first durable
+   * message, so this field does not survive the turn that spends it.
+   */
+  readonly fork?: boolean;
 }
 
 interface ClaudeTurnState {
@@ -591,6 +598,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
+    ...((cursor as { readonly fork?: unknown }).fork === true ? { fork: true } : {}),
   };
 }
 
@@ -3172,6 +3180,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
+      // A forked thread resumes someone else's session and must not continue
+      // it: two threads appending to one transcript corrupts both, silently.
+      const forkResumedSession =
+        resumeState?.fork === true && existingResumeSessionId !== undefined;
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -3545,6 +3557,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
+        ...(forkResumedSession ? { forkSession: true } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,

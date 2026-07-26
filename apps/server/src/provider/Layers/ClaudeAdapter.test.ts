@@ -3043,6 +3043,68 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.resume, "550e8400-e29b-41d4-a716-446655440000");
       assert.equal(createInput?.options.sessionId, undefined);
       assert.equal(createInput?.options.resumeSessionAt, undefined);
+      // An ordinary resume continues the session in place. Asserted alongside
+      // the fork case below, because "did not fork" is the property that makes
+      // every existing thread keep its own transcript.
+      assert.equal(createInput?.options.forkSession, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forks a resumed session instead of continuing it when the cursor says so", () => {
+    // The safety property behind thread forking. A forked thread is bound to
+    // the SOURCE thread's session id, so without `forkSession` both threads
+    // would resume the same session and append to one transcript file — and
+    // nothing anywhere detects that: the adapter's session map is keyed by
+    // thread id, so each gets its own process and neither notices the other.
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          fork: true,
+          turnCount: 0,
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, "550e8400-e29b-41d4-a716-446655440000");
+      assert.equal(createInput?.options.forkSession, true);
+      // Still no explicit id: the SDK mints the forked session's own.
+      assert.equal(createInput?.options.sessionId, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores a fork marker with no session to fork from", () => {
+    // `forkSession` without `resume` is not a fork, it is a fresh session with
+    // a flag the SDK would refuse. A cursor in that state is corrupt rather
+    // than meaningful, and starting clean is the only safe reading of it.
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: { threadId: RESUME_THREAD_ID, fork: true, turnCount: 0 },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.forkSession, undefined);
+      assert.equal(createInput?.options.resume, undefined);
+      assert.notEqual(createInput?.options.sessionId, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
