@@ -48,11 +48,9 @@ describe("splitStore", () => {
     expect(useSplitStore.getState().secondary).toEqual(threadB);
   });
 
-  it("drops the second pane when its thread is the one that went away", () => {
+  it("empties the second pane back to the picker", () => {
     useSplitStore.getState().setSecondary(threadA);
-    useSplitStore.getState().clearSecondaryIfMatches(threadB);
-    expect(useSplitStore.getState().secondary).toEqual(threadA);
-    useSplitStore.getState().clearSecondaryIfMatches(threadA);
+    useSplitStore.getState().setSecondary(null);
     expect(useSplitStore.getState().secondary).toBeNull();
   });
 

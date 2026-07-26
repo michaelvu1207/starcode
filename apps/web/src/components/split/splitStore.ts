@@ -16,7 +16,6 @@
  *
  * @module splitStore
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -56,8 +55,6 @@ export interface SplitStoreState {
   setRatio: (ratio: number) => void;
   resetRatio: () => void;
   focusPane: (pane: SplitPaneId) => void;
-  /** Drop the second pane if it points at a thread that is gone. */
-  clearSecondaryIfMatches: (ref: ScopedThreadRef) => void;
 }
 
 export const useSplitStore = create<SplitStoreState>()(
@@ -84,12 +81,6 @@ export const useSplitStore = create<SplitStoreState>()(
       setRatio: (ratio) => set({ ratio }),
       resetRatio: () => set({ ratio: SPLIT_DEFAULT_RATIO }),
       focusPane: (pane) => set({ focusedPane: pane }),
-      clearSecondaryIfMatches: (ref) =>
-        set((state) =>
-          state.secondary !== null && scopedThreadKey(state.secondary) === scopedThreadKey(ref)
-            ? { secondary: null, focusedPane: "secondary" }
-            : state,
-        ),
     }),
     {
       name: SPLIT_STORAGE_KEY,

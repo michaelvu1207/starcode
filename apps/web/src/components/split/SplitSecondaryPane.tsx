@@ -11,6 +11,7 @@
  */
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useParams } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { useCallback } from "react";
 
@@ -18,7 +19,7 @@ import ChatView from "../ChatView";
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentShell } from "../../state/shell";
-import { resolveThreadRouteRenderState } from "../../threadRoutes";
+import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WorkbenchMasterPicker } from "../workbench/WorkbenchMasterPicker";
@@ -80,6 +81,12 @@ function ChooseAnotherThreadButton() {
 function SplitThreadPicker() {
   const setSecondary = useSplitStore((state) => state.setSecondary);
   const closeSplit = useSplitStore((state) => state.closeSplit);
+  // Marks the thread already open in the left pane, so choosing it twice is a
+  // decision rather than a surprise.
+  const routeThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
 
   const handlePick = useCallback(
     (environmentId: EnvironmentId, threadId: string) => {
@@ -124,7 +131,7 @@ function SplitThreadPicker() {
             message, and this pane renders server threads — a fast-follow, not
             a silent half-feature. */}
         <WorkbenchMasterPicker
-          currentThreadKey={null}
+          currentThreadKey={routeThreadRef === null ? null : scopedThreadKey(routeThreadRef)}
           onPick={handlePick}
           onCreate={() => {}}
           showCreate={false}

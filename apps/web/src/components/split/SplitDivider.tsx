@@ -13,7 +13,12 @@
  *
  * @module SplitDivider
  */
-import { useCallback, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import {
+  useCallback,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 
 import { nextRatioForKey } from "./Split.logic";
 import { useSplitStore } from "./splitStore";
@@ -49,6 +54,21 @@ export function SplitDivider({
     [containerRef, ratio, setRatio],
   );
 
+  // `onPointerDown` calls `preventDefault` to stop text selection mid-drag,
+  // and that suppresses the browser's synthesised `dblclick` entirely. So the
+  // reset is recognised from the click count on the pointer event instead.
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.detail >= 2) {
+        event.preventDefault();
+        resetRatio();
+        return;
+      }
+      handlers.onPointerDown(event);
+    },
+    [handlers, resetRatio],
+  );
+
   return (
     <div
       role="separator"
@@ -63,9 +83,8 @@ export function SplitDivider({
       data-dragging={dragging ? "true" : "false"}
       className="sc-split-divider"
       onKeyDown={onKeyDown}
-      // The only fast way back from a lopsided drag.
-      onDoubleClick={resetRatio}
       {...handlers}
+      onPointerDown={onPointerDown}
     />
   );
 }
