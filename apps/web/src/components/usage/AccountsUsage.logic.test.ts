@@ -629,3 +629,4 @@ describe("formatting", () => {
     expect(formatResetCountdown("not-a-date", now)).toBeNull();
   });
 });
+

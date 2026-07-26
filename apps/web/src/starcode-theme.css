@@ -220,6 +220,13 @@
   --sidebar-row-selected: var(--sc-linen-50);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
+
+  /* Usage chart series. One hue per CLI, held apart by hue rather than by
+     lightness so the stack reads at a two-pixel bar width and survives a
+     colour-blind reader. Deepened here because linen is a bright ground and
+     the dot values would wash out against it. */
+  --usage-series-claude: var(--sc-amber-deep);
+  --usage-series-codex: var(--sc-starlight-deep);
 }
 
 :root:is(.dark, .dark *) {
@@ -264,6 +271,11 @@
   --sidebar-row-selected: color-mix(in srgb, var(--sc-cream-100) 7%, transparent);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
+
+  /* The same two hues at their `*-dot` weight: on ink they carry themselves,
+     and the deep values used in light would sink into the background. */
+  --usage-series-claude: var(--sc-amber-dot);
+  --usage-series-codex: var(--sc-starlight);
 }
 
 /* ---------------------------------------------------------------------------

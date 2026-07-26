@@ -15,7 +15,7 @@
  * @module AccountsUsagePanel
  */
 import { CircleAlertIcon, HistoryIcon, LoaderIcon, MonitorIcon, RefreshCwIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 import type {
   CliProviderUsage,
@@ -52,6 +52,12 @@ import {
   peakUsedPercent,
   unpricedShare,
 } from "./AccountsUsage.logic";
+import { UsageDailyChart } from "./UsageDailyChart";
+import {
+  buildUsageDailyChartView,
+  DEFAULT_USAGE_CHART_RANGE,
+  type UsageChartRange,
+} from "./UsageDailyChart.logic";
 
 function driverLabel(driver: string): string {
   return (
@@ -475,6 +481,8 @@ function CliHistoryMachine({
  * without saying which is which.
  */
 function CliHistorySection({ view }: { view: AccountsUsageView }) {
+  const [range, setRange] = useState<UsageChartRange>(DEFAULT_USAGE_CHART_RANGE);
+  const chart = useMemo(() => buildUsageDailyChartView(view.groups, range), [view.groups, range]);
   const history = view.cliHistory;
   // Nothing to say when no connected machine's server knows about CLI history
   // — an empty section would read as "you have spent nothing".
@@ -499,6 +507,13 @@ function CliHistorySection({ view }: { view: AccountsUsageView }) {
         )
       }
     >
+      {/* The chart leads. Four cumulative tiles answer "how much"; only this
+          answers "when", and it is the first thing a reader wants from a month
+          of history. */}
+      {chart.reported ? (
+        <UsageDailyChart onRangeChange={setRange} range={range} view={chart} />
+      ) : null}
+
       <div className="px-3 sm:px-4">
         <CliWindowStats windows={history.windows} pending={history.pending} emphasis />
       </div>
@@ -568,6 +583,7 @@ function EnvironmentGroup({
           <AccountCard key={account.instanceId} account={account} nowMs={nowMs} />
         ))
       )}
+
       {group.accounts.length > 0 && !group.usageAvailable ? (
         <p className="flex items-center gap-1.5 px-3 pt-1 text-xs text-muted-foreground/70 sm:px-4">
           <CircleAlertIcon className="size-3.5 shrink-0" />

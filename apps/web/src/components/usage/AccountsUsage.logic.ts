@@ -164,6 +164,12 @@ export interface AccountsUsageEnvironmentGroup {
   readonly label: string;
   /** Null until the machine's first usage read lands, or if it never does. */
   readonly timeZone: string | null;
+  /**
+   * `YYYY-MM-DD` for "today" **on that machine**, not in the viewer's zone.
+   * The daily chart's right edge is the latest of these, so a browser open
+   * past a machine's midnight does not draw a phantom empty column.
+   */
+  readonly localDay: string | null;
   readonly usageAvailable: boolean;
   readonly configAvailable: boolean;
   readonly accounts: ReadonlyArray<AccountUsageRow>;
@@ -472,6 +478,7 @@ function buildEnvironmentGroup(
     environmentId: input.environmentId,
     label: input.label,
     timeZone: input.usage?.timeZone ?? null,
+    localDay: input.usage?.today ?? null,
     usageAvailable: input.usage !== null,
     configAvailable: input.config !== null,
     accounts,
