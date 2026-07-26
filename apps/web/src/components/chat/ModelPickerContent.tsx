@@ -28,6 +28,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 
 type ModelPickerItem = {
   slug: string;
@@ -96,6 +97,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     getModelDisabledReason,
     onInstanceModelChange,
   } = props;
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
@@ -474,7 +476,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) {
+      if (event.defaultPrevented || event.repeat || !paneOwnsKeyboard()) {
         return;
       }
 
@@ -502,7 +504,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
-  }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
+  }, [
+    handleModelSelect,
+    keybindings,
+    modelJumpModelKeys,
+    modelJumpShortcutContext,
+    paneOwnsKeyboard,
+  ]);
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);

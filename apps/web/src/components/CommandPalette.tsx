@@ -125,6 +125,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
+import { resolveFocusedComposerHandle } from "./split/SplitPaneContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -1869,7 +1870,9 @@ function OpenCommandPaletteDialog(props: {
       data-command-palette="true"
       data-testid="command-palette"
       finalFocus={() => {
-        composerHandleRef?.current?.focusAtEnd();
+        // Fork: with a split open, "insert into the composer" means the
+        // focused pane's composer, not whichever one mounted last.
+        resolveFocusedComposerHandle(composerHandleRef)?.focusAtEnd();
         return false;
       }}
       onBackdropPointerDown={() => {

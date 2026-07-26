@@ -134,7 +134,6 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
-import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -271,6 +270,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
+import { usePaneKeyboardGate } from "./split/SplitPaneContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
@@ -1239,7 +1239,13 @@ function ChatViewContent(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  // Fork: in split view each pane provides its own handle context, so this
+  // resolves per pane instead of app-wide and the two composers stop driving
+  // each other. Outside a split it is the app-wide ref, exactly as before.
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  // Fork: two mounted ChatViews each register the window key handler below.
+  // Stable, and true whenever this is not a live two-pane split.
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -3299,9 +3305,11 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(
     () =>
       subscribePreviewAction((action) => {
+        // The bus is an untargeted window event, so both panes hear it.
+        if (!paneOwnsKeyboard()) return;
         if (action === "toggle-panel") togglePreviewPanel();
       }),
-    [togglePreviewPanel],
+    [paneOwnsKeyboard, togglePreviewPanel],
   );
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -3743,12 +3751,16 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
+      // Both panes autofocus in the same rAF batch when a split opens, and a
+      // re-render in the other pane would otherwise yank the cursor out of
+      // this one mid-sentence.
+      if (!paneOwnsKeyboard()) return;
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, paneOwnsKeyboard, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4221,6 +4233,7 @@ function ChatViewContent(props: ChatViewProps) {
     } else if (previous && !current) {
       terminalUiOpenByThreadRef.current[activeThreadKey] = current;
       const frame = window.requestAnimationFrame(() => {
+        if (!paneOwnsKeyboard()) return;
         focusComposer();
       });
       return () => {
@@ -4229,11 +4242,11 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThreadKey, focusComposer, paneOwnsKeyboard, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (!activeThreadId || isCommandPaletteOpen() || !paneOwnsKeyboard()) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -4374,6 +4387,7 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
+    paneOwnsKeyboard,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -5661,6 +5675,7 @@ function ChatViewContent(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+          threadRefOverride={activeThreadRef}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
@@ -6088,9 +6103,7 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
-  return (
-    <DiffWorkerPoolProvider>
-      <ChatViewContent {...props} />
-    </DiffWorkerPoolProvider>
-  );
+  // The diff worker pool moved up to the app shell (`routes/__root.tsx`) so
+  // two panes share one pool instead of spawning two.
+  return <ChatViewContent {...props} />;
 }

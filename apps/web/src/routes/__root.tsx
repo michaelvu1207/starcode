@@ -14,6 +14,7 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
@@ -122,12 +123,18 @@ function RootRouteView() {
     );
   }
 
+  // Fork: the diff worker pool used to be mounted per `ChatView`. Split view
+  // mounts two, and each pool spawns up to six workers plus its own 240-entry
+  // highlight cache. One pool for the app is correct for the single-pane case
+  // too — the pane you switch away from stops paying for a warm cache.
   const appShell = (
-    <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
+    <DiffWorkerPoolProvider>
+      <CommandPalette>
+        <AppSidebarLayout>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    </DiffWorkerPoolProvider>
   );
 
   return (

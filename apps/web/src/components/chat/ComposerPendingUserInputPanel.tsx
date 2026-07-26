@@ -7,6 +7,8 @@ import {
 } from "../../pendingUserInput";
 import { CheckIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { resolvePendingUserInputDigitSelection } from "../split/Split.logic";
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -59,6 +61,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -119,24 +122,29 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
   // outside editable fields. Multi-select prompts toggle options in place; single-
   // select prompts keep the existing auto-advance behavior.
+  //
+  // Fork: the decision lives in `Split.logic` so the two-pane case can be
+  // asserted in a unit test. In split view both agents can be waiting on a
+  // question at once, and an answer sent to the wrong one cannot be taken
+  // back — so the gate here is not a nicety.
   useEffect(() => {
     if (!activeQuestion || isResponding) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      if (
-        target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
-      ) {
-        return;
-      }
-      const digit = Number.parseInt(event.key, 10);
-      if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
-      const optionIndex = digit - 1;
-      if (optionIndex >= activeQuestion.options.length) return;
+      const optionIndex = resolvePendingUserInputDigitSelection({
+        ownsKeyboard: paneOwnsKeyboard(),
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        key: event.key,
+        isEditableTarget:
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement &&
+            target.closest('[contenteditable]:not([contenteditable="false"])') !== null),
+        optionCount: activeQuestion.options.length,
+      });
+      if (optionIndex === null) return;
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
@@ -144,7 +152,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isResponding]);
+  }, [activeQuestion, isResponding, paneOwnsKeyboard]);
 
   if (!activeQuestion) {
     return null;

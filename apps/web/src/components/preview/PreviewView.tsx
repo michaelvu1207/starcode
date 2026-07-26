@@ -23,6 +23,7 @@ import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments"
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
@@ -69,6 +70,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const pickActiveRef = useRef(false);
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
@@ -551,6 +553,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => {
+      // In split view both panes can have a visible preview; refresh, zoom
+      // and the URL-bar focus race belong to the focused one only.
+      if (!paneOwnsKeyboard()) return;
       switch (action) {
         case "refresh":
           handleRefresh();
@@ -571,7 +576,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           return;
       }
     });
-  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, visible]);
+  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, paneOwnsKeyboard, visible]);
 
   return (
     <div
