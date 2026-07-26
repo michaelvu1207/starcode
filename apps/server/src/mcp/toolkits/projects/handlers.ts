@@ -10,6 +10,7 @@
  * @module ProjectHandlers
  */
 import {
+  featureMapEntryInProject,
   ProjectToolError,
   resolveLocalProjectMembership,
   type ProjectCatalogFileThreadMode,
@@ -164,14 +165,17 @@ const handlers = {
         )
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
-      // The feature map is this machine's own registry and is keyed by thread,
-      // so scoping it to a project is a set lookup rather than a second source
-      // of truth. A feature with no thread cannot be attributed to a project
-      // and is left out rather than guessed at.
+      // The feature map is this machine's own registry, scoped to the project by
+      // the one rule both this and the client's sky use. A feature filed under
+      // the slug counts even with no thread — which is the only way a *planned*
+      // feature can belong to a project at all — and an unfiled one counts when
+      // its thread does.
       const featureRegistry = yield* FeatureMapRegistry;
       const entries = yield* featureRegistry.list.pipe(Effect.catchCause(() => Effect.succeed([])));
       const features = entries
-        .filter((entry) => entry.threadId !== null && threadIds.has(entry.threadId))
+        .filter((entry) =>
+          featureMapEntryInProject(entry, category.slug, (threadId) => threadIds.has(threadId)),
+        )
         .map(
           (entry): ProjectToolFeature => ({
             featureId: entry.id,

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -203,5 +203,105 @@ it.effect("survives a reload, because the map is the file and not memory", () =>
       [created.id],
     );
     assert.strictEqual(reloaded[0]!.stage, "in-staging");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+const atlas = ProjectCategorySlug.make("atlas");
+const beacon = ProjectCategorySlug.make("beacon");
+
+it.effect("files a feature under a project, and keeps it filed across a reload", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    const created = yield* registry.create({ name: "Star map", slug: atlas });
+    assert.strictEqual(created.slug, atlas);
+
+    const reopened = yield* makeFeatureMapRegistry;
+    assert.strictEqual((yield* reopened.list)[0]!.slug, atlas);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("leaves a feature unfiled when the call does not say otherwise", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    // Deliberately not derived from the bound thread's project: a stored answer
+    // would be a snapshot that goes stale the moment the thread is refiled.
+    const created = yield* registry.create({ name: "Star map", threadId: ThreadId.make("t-1") });
+    assert.strictEqual(created.slug, null);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("refiles a feature, and unfiles it when told null", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    const created = yield* registry.create({ name: "Star map", slug: atlas });
+
+    const moved = yield* registry.update({ id: created.id, slug: beacon });
+    assert.strictEqual(moved.slug, beacon);
+
+    // Absence means "leave it", which is why null has to be sayable at all.
+    const renamed = yield* registry.update({ id: created.id, name: "Sky map" });
+    assert.strictEqual(renamed.slug, beacon);
+
+    const unfiled = yield* registry.update({ id: created.id, slug: null });
+    assert.strictEqual(unfiled.slug, null);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("scopes a project's plan replacement to that project", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    // One machine, two project masters. Before the slug scoped this call, the
+    // second plan silently deleted the first — and neither agent could tell
+    // from inside the call that caused it.
+    yield* registry.planSet({ slug: atlas, features: [{ key: "a", name: "Atlas step" }] });
+    const second = yield* registry.planSet({
+      slug: beacon,
+      features: [{ key: "b", name: "Beacon step" }],
+    });
+
+    assert.strictEqual(second.removedCount, 0);
+    assert.deepEqual(
+      [...(yield* registry.list)].map((entry) => entry.name).toSorted(),
+      ["Atlas step", "Beacon step"],
+    );
+    assert.deepEqual(
+      [...(yield* registry.list)].map((entry) => entry.slug).toSorted(),
+      [atlas, beacon],
+    );
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("replaces only its own project's plan on a re-plan", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    yield* registry.planSet({ slug: atlas, features: [{ key: "a", name: "Atlas step" }] });
+    yield* registry.planSet({ slug: beacon, features: [{ key: "b", name: "Beacon step" }] });
+
+    const replanned = yield* registry.planSet({
+      slug: atlas,
+      features: [{ key: "c", name: "Atlas step two" }],
+    });
+    assert.strictEqual(replanned.removedCount, 1);
+    assert.deepEqual(
+      [...(yield* registry.list)].map((entry) => entry.name).toSorted(),
+      ["Atlas step two", "Beacon step"],
+    );
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("still replaces every plan when the call names no project", () =>
+  Effect.gen(function* () {
+    const registry = yield* FeatureMapRegistry;
+    // The original contract, kept: a quietly narrowed destructive call is worse
+    // than a wide one, so the fleet master's plan_set still means everything.
+    yield* registry.planSet({ slug: atlas, features: [{ key: "a", name: "Atlas step" }] });
+    const wide = yield* registry.planSet({ features: [{ key: "b", name: "Fleet step" }] });
+
+    assert.strictEqual(wide.removedCount, 1);
+    assert.deepEqual(
+      [...(yield* registry.list)].map((entry) => entry.name),
+      ["Fleet step"],
+    );
+    assert.strictEqual((yield* registry.list)[0]!.slug, null);
   }).pipe(Effect.provide(makeLayer())),
 );
