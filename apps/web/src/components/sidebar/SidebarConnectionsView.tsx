@@ -19,6 +19,11 @@
  * Group names are renameable in place: the pencil swaps the header for an
  * input, and the alias it writes is the same one Settings → Connections edits.
  * The header is a button, so the pencil is its sibling rather than its child.
+ *
+ * Beside the dot, the machine's own mark (`ConnectionMark`) — a computer in a
+ * colour derived from the environment id. The dot and the mark answer different
+ * questions and neither substitutes for the other: the dot is *how is it*, and
+ * changes; the mark is *which one is it*, and never does.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -40,6 +45,7 @@ import {
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
+import { ConnectionMark } from "./ConnectionMark";
 import { SidebarImportConversationRow } from "./SidebarImportConversationRow";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 
@@ -129,6 +135,9 @@ export function SidebarConnectionsView(props: {
                     <ConnectionStatusDot
                       dotClassName={sidebarConnectionDotClassName(group.connection)}
                     />
+                    {/* Also while renaming, so the row does not change width
+                        the moment you start typing in it. */}
+                    <ConnectionMark environmentId={group.environmentId} />
                     <ConnectionNameInput
                       environmentId={group.environmentId}
                       serverLabel={group.serverLabel}
@@ -154,6 +163,7 @@ export function SidebarConnectionsView(props: {
                             : null
                         }
                       />
+                      <ConnectionMark environmentId={group.environmentId} />
                       <span className="min-w-0 truncate text-xs font-medium text-sidebar-foreground/80">
                         {group.label}
                       </span>

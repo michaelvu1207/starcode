@@ -33,6 +33,7 @@ import { formatUsd } from "../usage/AccountsUsage.logic";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ConnectionMark } from "./ConnectionMark";
 import { openImportPicker } from "./importPicker";
 import {
   buildConnectionMenuSummary,
@@ -59,6 +60,14 @@ function useSecondTicker(active: boolean): number {
   }, [active]);
   return nowMs;
 }
+
+/**
+ * The hang-indent the status line and the meter share, so both align under the
+ * machine's name rather than under its dot. It is the width of everything that
+ * precedes the name on the row above: the 8px health dot, the 14px machine
+ * mark, and the two 8px gaps between them.
+ */
+const ROW_BODY_INDENT_CLASS = "pl-[38px]";
 
 const HEALTH_DOT_CLASS: Record<ConnectionHealth, string> = {
   connected: "bg-success",
@@ -119,6 +128,9 @@ function ConnectionRow({
           aria-hidden
           className={cn("size-2 shrink-0 rounded-full", HEALTH_DOT_CLASS[row.health])}
         />
+        {/* Same mark the sidebar's connection groups wear, so the machine you
+            are reading about here is the one you recognise there. */}
+        <ConnectionMark environmentId={row.environmentId} />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-foreground">
           {row.label}
         </span>
@@ -135,7 +147,7 @@ function ConnectionRow({
           {row.pingLabel}
         </span>
       </div>
-      <div className="mt-0.5 flex items-baseline gap-1.5 pl-4 text-[11px]">
+      <div className={cn("mt-0.5 flex items-baseline gap-1.5 text-[11px]", ROW_BODY_INDENT_CLASS)}>
         <span
           className={cn(
             "min-w-0 truncate",
@@ -161,7 +173,7 @@ function ConnectionRow({
           </button>
         ) : null}
       </div>
-      <div className="mt-1 flex items-center gap-2 pl-4">
+      <div className={cn("mt-1 flex items-center gap-2", ROW_BODY_INDENT_CLASS)}>
         <RateLimitTrack percent={row.peakRateLimitPercent} />
         <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground/60">
           {row.peakRateLimitPercent === null ? "—" : `${Math.round(row.peakRateLimitPercent)}%`}

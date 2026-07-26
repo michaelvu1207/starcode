@@ -30,6 +30,7 @@ import { refreshProjectCatalogs, useFileThreadIntoProject } from "../../state/pr
 import { ProjectGlyph } from "../projects/ProjectGlyph";
 import { projectAccentHue } from "../projects/ProjectsIndex.model";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ConnectionMark } from "./ConnectionMark";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { SidebarProjectGroup } from "../Sidebar.projects";
 import "../projects/Projects.css";
@@ -113,7 +114,8 @@ export function SidebarUnfiledTriage({
                         {thread.title}
                       </span>
                       {machine === null ? null : (
-                        <span className="shrink-0 text-[10px] text-muted-foreground/55">
+                        <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/55">
+                          <ConnectionMark environmentId={thread.environmentId} className="size-3" />
                           {machine}
                         </span>
                       )}

@@ -133,6 +133,7 @@ import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
+import { ConnectionMark } from "./sidebar/ConnectionMark";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
 import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
@@ -946,9 +947,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   // One list spans every connected machine, so the glyph names
                   // the machine: which one a thread runs on decides where its
                   // worktree, ports and logs live, and a bare server icon
-                  // answers "not here" without answering "then where".
+                  // answers "not here" without answering "then where". The mark
+                  // carries that machine's own colour, the same one the
+                  // connection groups and the connections dropdown use.
                   <span className="inline-flex shrink-0 items-center gap-1 text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5" />
+                    <ConnectionMark environmentId={thread.environmentId} />
                     {props.environmentLabel ? (
                       <span className="max-w-24 truncate">{props.environmentLabel}</span>
                     ) : null}
