@@ -463,6 +463,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onCancelRename, onCommitRename, renamingTitle, thread.title, threadRef],
   );
+  // The menu's Rename entry and the row's double-click are the same act, so
+  // they share one handler rather than one of them reaching around the row.
+  const handleStartRename = useCallback(() => {
+    onStartRename(threadRef, thread.title);
+  }, [onStartRename, thread.title, threadRef]);
   const handleRenameBlur = useCallback(() => {
     if (!renameCommittedRef.current) {
       onCommitRename(threadRef, renamingTitle, thread.title);
@@ -534,6 +539,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         onRenameChange: onRenameTitleChange,
         onRenameKeyDown: handleRenameKeyDown,
         onRenameBlur: handleRenameBlur,
+        onStartRename: handleStartRename,
         onSettle: handleSettleClick,
         onUnsettle: handleUnsettleClick,
         onUnsnooze: handleUnsnoozeClick,

@@ -22,6 +22,7 @@ const actions: SidebarThreadRowActions = {
   onRenameChange: noop,
   onRenameKeyDown: noop,
   onRenameBlur: noop,
+  onStartRename: noop,
   onSettle: noop,
   onUnsettle: noop,
   onUnsnooze: noop,
@@ -201,57 +202,59 @@ describe("SidebarThreadRow", () => {
   });
 
   it("shows no menu button when the row has nothing to offer", () => {
-    // An empty ··· is a lie, and on a server that predates settlement every
-    // row would have worn one.
+    // This used to be a real state: when every entry in the menu was
+    // capability-gated, a server that predated settlement left rows wearing an
+    // empty `···`. It cannot happen any more. Rename, move, fork and archive
+    // ask the server for nothing, so the menu always has entries and the guard
+    // that hid the button is gone — asserted here rather than deleted, because
+    // "the oldest server still gets a usable row menu" is the property that
+    // replaced it.
     const markup = render({
       settlementSupported: false,
       snoozeAllowed: false,
       snoozeSupported: false,
     });
 
-    expect(markup).not.toContain('data-testid="sidebar-v2-row-menu"');
-    // The time then never fades, because nothing is coming to replace it.
-    expect(markup).not.toContain("group-hover/v2-row:opacity-0");
+    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
+    // And the time makes way for it, on every row, for the same reason.
+    expect(markup).toContain("group-hover/v2-row:opacity-0");
   });
 
-  it("earns the menu on the split alone, where the row has no other action", () => {
-    // The split entry is the only thing in this menu that opens something
-    // rather than filing it away, so it has to be able to put the `···` there
-    // by itself — on a server too old for settlement, on a row that cannot be
-    // snoozed, on any row at all. Whether it *may* is decided upstream; all the
-    // row does is count it as an action.
-    const noOtherActions = {
-      settlementSupported: false,
-      snoozeAllowed: false,
-      snoozeSupported: false,
-    };
-
-    expect(render({ ...noOtherActions, splitState: "ready" })).toContain(
-      'data-testid="sidebar-v2-row-menu"',
+  it("keeps the lifecycle entries capability-gated even though the menu is not", () => {
+    // The menu is unconditional now; its *contents* are not. Settle, un-settle
+    // and wake are still the entries a pre-settlement server has no verb for,
+    // and the separator above them still has to disappear with them or the menu
+    // grows a rule with nothing under it.
+    expect(rowSource).toContain(
+      'rowAction === "unsnooze" ? snoozeSupported : settlementSupported || snoozeAllowed',
     );
-    expect(render({ ...noOtherActions, splitState: "hidden" })).not.toContain(
-      'data-testid="sidebar-v2-row-menu"',
-    );
+    expect(rowSource).toContain("{hasLifecycleEntries ? <MenuSeparator /> : null}");
   });
 
-  it("does not summon a menu for a split entry that is only there to be grey", () => {
-    // The disabled states are worth a line next to real actions and not worth a
-    // button of their own — a ··· holding one greyed line is the same lie as an
-    // empty one, and it would land on the row you are currently reading.
-    const noOtherActions = {
-      settlementSupported: false,
-      snoozeAllowed: false,
-      snoozeSupported: false,
-    };
+  it("mounts the thread verbs only while the popup is open", () => {
+    // They carry hooks — the project catalog, the thread commands, the router —
+    // and this component is rendered once per thread in a list that runs to
+    // hundreds. Gating on `open` is what keeps one row's menu from charging
+    // every other row for it. Source-level: SSR never opens a base-ui popup, so
+    // a render cannot tell the two apart.
+    expect(rowSource).toContain(
+      "{open ? <ThreadRowFilingActions thread={thread} onRename={onRename} /> : null}",
+    );
+    expect(rowSource).toContain("{open ? <ThreadRowArchiveAction thread={thread} /> : null}");
+  });
 
-    for (const splitState of ["already-primary", "already-secondary"] as const) {
-      expect(render({ ...noOtherActions, splitState })).not.toContain(
-        'data-testid="sidebar-v2-row-menu"',
-      );
-    }
-    // …but it still rides along on a row that has something else to offer.
-    expect(render({ splitState: "already-primary" })).toContain(
-      'data-testid="sidebar-v2-row-menu"',
+  it("puts archive last, alone, below its own separator", () => {
+    // Ordering is the whole safety story for this entry: it is the only one
+    // that takes the thread off the list, and it sits directly under the snooze
+    // presets, which are what a fast hand is actually aiming for.
+    const archiveAt = rowSource.indexOf("<ThreadRowArchiveAction");
+    const filingAt = rowSource.indexOf("<ThreadRowFilingActions");
+    const snoozeAt = rowSource.indexOf("resolveSnoozePresets(new Date())");
+
+    expect(filingAt).toBeLessThan(archiveAt);
+    expect(snoozeAt).toBeLessThan(archiveAt);
+    expect(rowSource.slice(0, archiveAt).lastIndexOf("<MenuSeparator />")).toBeGreaterThan(
+      filingAt,
     );
   });
 
@@ -283,18 +286,26 @@ describe("SidebarThreadRow", () => {
     expect(splitItem).toContain("event.stopPropagation()");
   });
 
-  it("offers the menu on a snoozed row only where waking is supported", () => {
-    expect(
-      render({ rowAction: "unsnooze", snoozeWakeLabelText: "2h", snoozeSupported: true }),
-    ).toContain('data-testid="sidebar-v2-row-menu"');
-    expect(
-      render({
-        rowAction: "unsnooze",
-        snoozeWakeLabelText: "2h",
-        snoozeSupported: false,
-        snoozeAllowed: false,
-      }),
-    ).not.toContain('data-testid="sidebar-v2-row-menu"');
+  it("offers the menu on a snoozed row whether or not waking is supported", () => {
+    // A snoozed row on a server that cannot wake it still renames, moves, forks
+    // and archives — the wake entry is the only one that goes missing.
+    for (const snoozeSupported of [true, false]) {
+      expect(
+        render({
+          rowAction: "unsnooze",
+          snoozeWakeLabelText: "2h",
+          snoozeSupported,
+          snoozeAllowed: snoozeSupported,
+        }),
+      ).toContain('data-testid="sidebar-v2-row-menu"');
+    }
+  });
+
+  it("routes the menu's Rename at the same handler double-click uses", () => {
+    // Two ways in, one act: the rename input is row state, so the entry cannot
+    // own it and must call back out. Source-level — the entry lives inside the
+    // popup, which SSR never opens.
+    expect(rowSource).toContain("onRename={actions.onStartRename}");
   });
 
   it("swaps the title for an input while renaming", () => {

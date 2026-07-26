@@ -58,6 +58,7 @@ import { resolveSnoozePresets } from "../Sidebar.snooze";
 import { Menu, MenuGroup, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { ConnectionMark } from "./ConnectionMark";
+import { ThreadRowArchiveAction, ThreadRowFilingActions } from "./SidebarThreadRowActions";
 import { ThreadTaskProgress } from "./ThreadTaskProgress";
 import { hasThreadTaskProgress } from "./ThreadTaskProgress.logic";
 import { resolveThreadRowStatusChip, type ThreadRowStatusTone } from "./SidebarThreadRow.status";
@@ -139,18 +140,26 @@ const SPLIT_MENU_LABEL: Readonly<Record<Exclude<OpenInSplitState, "hidden">, str
  * dismiss targets for something that is one decision; a labelled group in the
  * menu that is already open costs neither.
  *
+ * Four blocks, separated, in the order you reach for them: open it beside what
+ * you are reading; edit it (rename, file, fork); park it (settle, snooze);
+ * archive it. Archive is last and alone because it is the only entry that takes
+ * the thread off the list, and the snooze presets are the thing directly above
+ * it that a fast hand is aiming for.
+ *
  * `stopPropagation` on the trigger is not defensive: the whole row is a click
  * target that navigates, so without it opening the menu also opens the thread.
  */
 function ThreadRowMenu({
   open,
   onOpenChange,
+  thread,
   rowAction,
   settlementSupported,
   snoozeAllowed,
   snoozeSupported,
   splitState,
   onOpenInSplit,
+  onRename,
   onSettle,
   onUnsettle,
   onUnsnooze,
@@ -158,6 +167,8 @@ function ThreadRowMenu({
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  /** The thread the verbs below act on; they resolve their own state from it. */
+  readonly thread: SidebarThreadSummary;
   readonly rowAction: "settle" | "unsettle" | "unsnooze";
   readonly settlementSupported: boolean;
   readonly snoozeAllowed: boolean;
@@ -165,6 +176,7 @@ function ThreadRowMenu({
   /** Whether this thread can go in the right pane — see `openInSplit`. */
   readonly splitState: OpenInSplitState;
   readonly onOpenInSplit: () => void;
+  readonly onRename: () => void;
   readonly onSettle: (event: ReactMouseEvent) => void;
   readonly onUnsettle: (event: ReactMouseEvent) => void;
   readonly onUnsnooze: (event: ReactMouseEvent) => void;
@@ -173,6 +185,11 @@ function ThreadRowMenu({
   // Resolved at open time so "In 1 hour" is an hour from the click rather than
   // from whenever this row mounted.
   const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
+  // Whether the lifecycle block has anything in it. Its entries are the only
+  // ones in this menu the server can refuse to support, so it is the only block
+  // whose separator has to be conditional.
+  const hasLifecycleEntries =
+    rowAction === "unsnooze" ? snoozeSupported : settlementSupported || snoozeAllowed;
 
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
@@ -216,12 +233,17 @@ function ThreadRowMenu({
               <Columns2Icon aria-hidden className="size-3.5" />
               {SPLIT_MENU_LABEL[splitState]}
             </MenuItem>
-            {rowAction === "unsnooze" ? snoozeSupported ? <MenuSeparator /> : null : null}
-            {rowAction !== "unsnooze" && (settlementSupported || snoozeAllowed) ? (
-              <MenuSeparator />
-            ) : null}
+            <MenuSeparator />
           </>
         )}
+        {/* What you do TO the thread, above what you do WITH its lifecycle:
+            renaming, filing and forking are edits to the thread itself, and
+            they are the ones that ask nothing of the server, so they are the
+            block that is always here. Mounted only while the popup is open —
+            they carry their own hooks, and the row is rendered hundreds of
+            times. */}
+        {open ? <ThreadRowFilingActions thread={thread} onRename={onRename} /> : null}
+        {hasLifecycleEntries ? <MenuSeparator /> : null}
         {rowAction === "unsnooze" ? (
           snoozeSupported ? (
             <MenuItem closeOnClick onClick={onUnsnooze} className="sm:text-xs">
@@ -270,24 +292,14 @@ function ThreadRowMenu({
             ) : null}
           </>
         )}
+        {/* Alone below the last separator: archive is the only entry here that
+            takes the thread off the list, and the one you must not reach for by
+            accident on the way to Snooze. */}
+        <MenuSeparator />
+        {open ? <ThreadRowArchiveAction thread={thread} /> : null}
       </MenuPopup>
     </Menu>
   );
-}
-
-/** Whether the menu would have anything in it. An empty `···` is a lie. */
-function hasRowActions(input: {
-  readonly rowAction: "settle" | "unsettle" | "unsnooze";
-  readonly settlementSupported: boolean;
-  readonly snoozeAllowed: boolean;
-  readonly snoozeSupported: boolean;
-  readonly splitState: OpenInSplitState;
-}): boolean {
-  // Only a *usable* split entry earns the row a menu. A disabled line is worth
-  // showing next to real actions and not worth a button of its own.
-  if (input.splitState === "ready") return true;
-  if (input.rowAction === "unsnooze") return input.snoozeSupported;
-  return input.settlementSupported || input.snoozeAllowed;
 }
 
 export interface SidebarThreadRowFlags {
@@ -308,6 +320,8 @@ export interface SidebarThreadRowActions {
   readonly onRenameChange: (title: string) => void;
   readonly onRenameKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
   readonly onRenameBlur: () => void;
+  /** Puts the row into its rename input. Double-click and the menu share it. */
+  readonly onStartRename: () => void;
   readonly onSettle: (event: ReactMouseEvent) => void;
   readonly onUnsettle: (event: ReactMouseEvent) => void;
   readonly onUnsnooze: (event: ReactMouseEvent) => void;
@@ -372,13 +386,6 @@ export function SidebarThreadRow({
   // and keeping it in the row is what lets the `···` stay pinned while the
   // pointer is off in the menu.
   const [menuOpen, setMenuOpen] = useState(false);
-  const showMenu = hasRowActions({
-    rowAction,
-    settlementSupported,
-    snoozeAllowed,
-    snoozeSupported,
-    splitState,
-  });
   const hasProgress = hasThreadTaskProgress(thread.planSummary);
   // A snoozed row shows when it comes BACK rather than when it was last
   // touched: the return ticket is that row's whole story.
@@ -481,11 +488,15 @@ export function SidebarThreadRow({
               </span>
             )}
             <span className="relative flex h-6 min-w-7 shrink-0 items-center justify-end">
+              {/* The time always makes way now. It used to hold its place on
+                  rows whose menu would have been empty — a real case when the
+                  only entries were capability-gated — but rename, move, fork
+                  and archive ask the server for nothing, so every row has a
+                  menu and every row's time steps aside for it. */}
               <span
                 className={cn(
-                  "text-xs tabular-nums text-muted-foreground/55",
-                  showMenu && "transition-opacity group-hover/v2-row:opacity-0",
-                  showMenu && menuOpen && "opacity-0",
+                  "text-xs tabular-nums transition-opacity text-muted-foreground/55 group-hover/v2-row:opacity-0",
+                  menuOpen && "opacity-0",
                   rowAction === "unsnooze" &&
                     snoozeWakeLabelText !== null &&
                     "text-blue-600 dark:text-blue-400",
@@ -493,32 +504,32 @@ export function SidebarThreadRow({
               >
                 {trailingLabel}
               </span>
-              {showMenu ? (
-                // Focus-reachable, not hover-only: the row is tabbable and this
-                // is the next stop after it, so the menu opens from the
-                // keyboard without a pointer ever touching the row.
-                <span
-                  className={cn(
-                    "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
-                    menuOpen && "opacity-100",
-                  )}
-                >
-                  <ThreadRowMenu
-                    open={menuOpen}
-                    onOpenChange={setMenuOpen}
-                    rowAction={rowAction}
-                    settlementSupported={settlementSupported}
-                    snoozeAllowed={snoozeAllowed}
-                    snoozeSupported={snoozeSupported}
-                    splitState={splitState}
-                    onOpenInSplit={onOpenInSplit}
-                    onSettle={actions.onSettle}
-                    onUnsettle={actions.onUnsettle}
-                    onUnsnooze={actions.onUnsnooze}
-                    onSnooze={actions.onSnooze}
-                  />
-                </span>
-              ) : null}
+              {/* Focus-reachable, not hover-only: the row is tabbable and this
+                  is the next stop after it, so the menu opens from the keyboard
+                  without a pointer ever touching the row. */}
+              <span
+                className={cn(
+                  "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                  menuOpen && "opacity-100",
+                )}
+              >
+                <ThreadRowMenu
+                  open={menuOpen}
+                  onOpenChange={setMenuOpen}
+                  thread={thread}
+                  rowAction={rowAction}
+                  settlementSupported={settlementSupported}
+                  snoozeAllowed={snoozeAllowed}
+                  snoozeSupported={snoozeSupported}
+                  splitState={splitState}
+                  onOpenInSplit={onOpenInSplit}
+                  onRename={actions.onStartRename}
+                  onSettle={actions.onSettle}
+                  onUnsettle={actions.onUnsettle}
+                  onUnsnooze={actions.onUnsnooze}
+                  onSnooze={actions.onSnooze}
+                />
+              </span>
             </span>
           </span>
 
