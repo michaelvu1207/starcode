@@ -31,7 +31,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  IsoDateTime,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ExecutionEnvironmentPlatform } from "./environment.ts";
 import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 import { WorkbenchMasterDefaults } from "./settings.ts";
@@ -453,6 +460,34 @@ export const ProjectToolLocation = Schema.Struct({
 });
 export type ProjectToolLocation = typeof ProjectToolLocation.Type;
 
+/**
+ * Where this machine physically is.
+ *
+ * The orchestrator's job runs across four checkouts on four hosts, and every
+ * path in `locations` above is a path *somewhere*. Without saying where, a
+ * planner reading this cannot tell a folder it can look at from one it cannot,
+ * and the honest way to close that gap is to say which host, not to move files
+ * (invariant 8) or to have starcode run commands on the operator's behalf.
+ *
+ * **What this is not.** It carries no credential, no port, no user, and no
+ * connection string, and nothing in starcode uses it to reach anywhere. It is a
+ * name the operator's own SSH config may or may not already know. Observation
+ * is the operator's tooling doing what it always could; work is still
+ * dispatched as threads, through `peer_thread_create`.
+ *
+ * `hostname` is null on a machine that could not report one, which is a fact
+ * worth stating rather than a value worth inventing.
+ */
+export const ProjectToolMachine = Schema.Struct({
+  environmentId: EnvironmentId,
+  /** The connection's display name, as the operator sees it in the sidebar. */
+  label: TrimmedNonEmptyString,
+  /** The host's own name. What `ssh <host>` would take, if it is configured. */
+  hostname: Schema.NullOr(TrimmedNonEmptyString),
+  platform: ExecutionEnvironmentPlatform,
+});
+export type ProjectToolMachine = typeof ProjectToolMachine.Type;
+
 /** What the sky says this project is building, for the features bound to its threads. */
 export const ProjectToolFeature = Schema.Struct({
   featureId: Schema.String,
@@ -468,6 +503,8 @@ export const ProjectGetResult = Schema.Struct({
   /** Operator-authored. The reason this tool exists: it is what the human wrote. */
   notes: Schema.String,
   links: Schema.Array(ProjectCategoryLink),
+  /** The machine every path and id below belongs to. */
+  machine: ProjectToolMachine,
   locations: Schema.Array(ProjectToolLocation),
   threads: Schema.Array(ProjectToolThread),
   features: Schema.Array(ProjectToolFeature),

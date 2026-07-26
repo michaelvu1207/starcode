@@ -22,8 +22,10 @@ import {
   type ProjectToolThread,
   type ThreadId,
 } from "@t3tools/contracts";
+import { HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
@@ -59,6 +61,16 @@ const storageFailed = (operation: "list" | "get" | "file_thread") => (cause: unk
 /** A thread is this machine's business only while it exists and is not archived. */
 const isLiveThread = (thread: { readonly archivedAt: string | null }): boolean =>
   thread.archivedAt === null;
+
+/**
+ * Null rather than an empty string for a host that could not name itself: the
+ * planner has to be able to tell "this machine is called X" from "this machine
+ * did not say", and a blank reads as the first.
+ */
+const normalizeHostname = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
 
 const summarize = (input: {
   readonly category: ProjectCategoryRecord;
@@ -201,6 +213,14 @@ const handlers = {
         })
         .filter((location): location is ProjectToolLocation => location !== null);
 
+      // Which host these paths are on. The orchestrator runs across four
+      // checkouts on four machines, and a folder it cannot place is a folder it
+      // cannot reason about — but the answer is a name, not a way in. See
+      // `ProjectToolMachine` for what this deliberately does not carry.
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const descriptor = yield* environment.getDescriptor;
+      const hostname = normalizeHostname(yield* HostProcessHostname);
+
       const masterThreadId = category.local.masterThreadId.trim();
       return {
         project: summarize({
@@ -210,6 +230,12 @@ const handlers = {
         }),
         notes: category.display.notes,
         links: category.display.links,
+        machine: {
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          hostname,
+          platform: descriptor.platform,
+        },
         locations,
         threads,
         features,

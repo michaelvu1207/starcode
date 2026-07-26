@@ -19,6 +19,18 @@
  * worker to gate a use most of them will never reach for, which is exactly the
  * mistake that list's own comment warns about for `peer_thread_send`.
  *
+ * **Where things physically are, and what starcode does about it.** An
+ * orchestrator's project spans four checkouts on four hosts, and it needs to
+ * see the state of all of them — including the uncommitted state no push has
+ * carried anywhere. `project_get` answers that by naming the machine and its
+ * hostname beside the paths, and stops there: the operator's own SSH config is
+ * how a planner goes and looks, and it is theirs, not ours to hold. Nothing
+ * here stores or transmits a credential, and there is no tool that runs a
+ * command somewhere else — observation is a read the planner performs with its
+ * own tooling, and *work* is dispatched as threads through
+ * `peer_thread_create`. The alternative, a synced filesystem, is refused by
+ * doctrine (invariant 8): a project is mutual awareness, not mutual state.
+ *
  * @module ProjectTools
  */
 import {
@@ -32,6 +44,7 @@ import {
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
@@ -48,6 +61,8 @@ const dependencies = [
   ProjectCatalogRegistry,
   ProjectionSnapshotQuery,
   FeatureMapRegistry,
+  // Which host all of the above is on. Named, never dialled.
+  ServerEnvironment.ServerEnvironment,
 ];
 
 const readTool = <T extends Tool.Any>(tool: T): T =>
@@ -71,7 +86,7 @@ export const ProjectListTool = readTool(
 export const ProjectGetTool = readTool(
   Tool.make("project_get", {
     description:
-      "Read one project in full: the notes and links a human wrote about it, the folders bound to it on this machine, its threads with whether each is waiting on a person, the features it has on the workbench sky, and its orchestrator. Use it when you have been asked to work on something and want to know what the project actually is before starting.",
+      "Read one project in full: the notes and links a human wrote about it, the machine answering and its hostname, the folders bound to it there, its threads with whether each is waiting on a person, the features it has on the workbench sky, and its orchestrator. Use it when you have been asked to work on something and want to know what the project actually is before starting. Everything it returns describes this one machine — the same project has its own folders, threads and features on every other connection, and reading those means asking them.",
     parameters: ProjectGetInput,
     success: ProjectGetResult,
     failure: ProjectToolError,
