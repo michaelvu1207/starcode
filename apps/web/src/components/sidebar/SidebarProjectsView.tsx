@@ -174,15 +174,39 @@ export function SidebarProjectsView(props: {
     return resolveProjectStartLocations({ project, folders: startFolders });
   };
 
-  const renderGroup = (group: SidebarProjectGroup): ReactNode => {
+  /**
+   * What a group actually shows, once collapse and paging are applied.
+   *
+   * Shared by the project groups and the docked Chats section so the one rule
+   * that matters here cannot drift between them: a collapsed group still
+   * renders the thread you are reading, because the chat pane and the sidebar
+   * must never disagree about what is open.
+   */
+  const visibleRowsFor = (group: SidebarProjectGroup) => {
     const expanded = resolveSidebarProjectGroupExpanded(projectExpandedById, group.key);
-    // A collapsed group still renders the thread you are reading: the chat
-    // pane and the sidebar must never disagree about what is open.
     const { rows, hiddenCount } = limitSidebarProjectRows(
       group.rows,
       expanded ? (visibleCountByGroup[group.key] ?? SIDEBAR_PROJECT_ROWS_INITIAL_COUNT) : 0,
       props.routeThreadKey,
     );
+    return { expanded, rows, hiddenCount };
+  };
+
+  const renderShowMore = (group: SidebarProjectGroup, hiddenCount: number): ReactNode => (
+    <li className="list-none">
+      <button
+        type="button"
+        onClick={() => showMore(group.key)}
+        className="mt-1 flex h-[30px] w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border font-mono text-[11px] text-muted-foreground transition-colors hover:border-solid hover:border-input hover:bg-background/45 hover:text-foreground dark:border-white/15 dark:hover:border-white/30 dark:hover:bg-transparent"
+      >
+        Show {Math.min(hiddenCount, SIDEBAR_PROJECT_ROWS_PAGE_COUNT)} more
+        <span className="text-muted-foreground/50">({hiddenCount} hidden)</span>
+      </button>
+    </li>
+  );
+
+  const renderGroup = (group: SidebarProjectGroup): ReactNode => {
+    const { expanded, rows, hiddenCount } = visibleRowsFor(group);
     return (
       <Fragment key={group.key}>
         <li
@@ -191,28 +215,23 @@ export function SidebarProjectsView(props: {
           data-testid="sidebar-v2-project-group"
           data-project-slug={group.slug ?? SIDEBAR_UNFILED_GROUP_KEY}
         >
-          {/* A section header, not a label. The threads below are this
-              project's, and the header has to carry enough weight to say so at
-              a glance — so it leads with the disclosure triangle every list on
-              every platform uses for "this opens", and the name is set two
-              steps larger and heavier than the rows it governs. The hairline
-              that used to run to the right edge is gone: it was there to give
-              a 12px label some presence, and at this size it only competed. */}
+          {/* A heading, not a label. The threads below are this project's, and
+              the name is set two steps larger and heavier than the rows it
+              governs so it says so at a glance.
+              No disclosure triangle: the whole heading is the toggle, and a
+              column of chevrons down the left edge was reading as chrome in a
+              list whose left edge is otherwise the project's own glyph. The
+              button keeps `aria-expanded`, and carries a title so the hover
+              still tells you the heading opens and closes. */}
           <div className="group/project mb-0.5 mt-5 flex items-center gap-1.5 px-2.5">
             <button
               type="button"
               onClick={() => toggleGroup(group.key, expanded)}
               aria-expanded={expanded}
+              title={`${expanded ? "Collapse" : "Expand"} ${group.title}`}
               data-testid="sidebar-v2-project-group-toggle"
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
             >
-              <ChevronRightIcon
-                aria-hidden
-                className={cn(
-                  "size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
-                  expanded && "rotate-90",
-                )}
-              />
               {group.slug === null ? (
                 // The Chats group is not a project and does not pretend to
                 // be one: no constellation, no accent, just a mark that reads
@@ -276,19 +295,69 @@ export function SidebarProjectsView(props: {
           </li>
         ) : null}
         {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
-        {expanded && hiddenCount > 0 ? (
-          <li className="list-none">
-            <button
-              type="button"
-              onClick={() => showMore(group.key)}
-              className="mt-1 flex h-[30px] w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border font-mono text-[11px] text-muted-foreground transition-colors hover:border-solid hover:border-input hover:bg-background/45 hover:text-foreground dark:border-white/15 dark:hover:border-white/30 dark:hover:bg-transparent"
-            >
-              Show {Math.min(hiddenCount, SIDEBAR_PROJECT_ROWS_PAGE_COUNT)} more
-              <span className="text-muted-foreground/50">({hiddenCount} hidden)</span>
-            </button>
-          </li>
-        ) : null}
+        {expanded && hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
       </Fragment>
+    );
+  };
+
+  /**
+   * Chats, docked to the bottom of the sidebar.
+   *
+   * Not the last item in the list — the bottom of the *viewport*. `mt-auto`
+   * hugs it to the floor when the projects are short (the list is given a
+   * full-height minimum for exactly this), and `sticky bottom-0` holds it there
+   * once they are long enough to scroll. Threads with no home are the pile you
+   * work off, so it has to be somewhere your eye can always find without
+   * scrolling to the end of everything else.
+   *
+   * The rows go in a nested list with its own scroll, capped so a hundred loose
+   * threads cannot eat the projects above them. Nesting is safe here: thread
+   * selection resolves through `closest()`, not through direct children.
+   *
+   * It needs the sidebar's own background AND its grain — rows scroll under
+   * this, and a plain `bg-sidebar` panel over a grained surface leaves a seam
+   * exactly at the line where the texture stops.
+   */
+  const renderChatsSection = (group: SidebarProjectGroup): ReactNode => {
+    const { expanded, rows, hiddenCount } = visibleRowsFor(group);
+    return (
+      <li
+        data-thread-selection-safe
+        data-testid="sidebar-v2-chats-dock"
+        className="sticky bottom-0 z-10 mt-auto list-none bg-sidebar surface-grain pb-1"
+      >
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => toggleGroup(group.key, expanded)}
+            aria-expanded={expanded}
+            title={expanded ? "Collapse Chats" : "Expand Chats"}
+            data-testid="sidebar-v2-chats-toggle"
+            className="starcode-section-rule w-full cursor-pointer px-2.5 pb-1.5 pt-3 text-center"
+          >
+            <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
+              Chats
+            </span>
+          </button>
+          {/* Absolutely placed so the engraved rule stays centred on the title
+              rather than on the title plus a button. */}
+          <span className="absolute bottom-1.5 right-2.5">
+            <SidebarUnfiledTriage
+              threads={group.rows.map((row) => row.thread)}
+              projects={fileableProjects}
+              environmentLabelById={environmentLabelById}
+            />
+          </span>
+        </div>
+        {expanded ? (
+          <div className="max-h-[38vh] overflow-y-auto">
+            <ul role="list" className="flex flex-col gap-px">
+              {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
+              {hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
+            </ul>
+          </div>
+        ) : null}
+      </li>
     );
   };
 
@@ -296,6 +365,24 @@ export function SidebarProjectsView(props: {
 
   return (
     <>
+      {/* The two section headings this view has, and the only two engraved
+          rules in the app outside a dialog. They exist because the list now has
+          two halves that answer different questions — what you organised, and
+          what you have not — and a docked panel at the bottom needs something
+          at the top saying what the rest of the list is. Centred and engraved
+          rather than a left-aligned label, so they read as chapter marks over
+          the headings rather than as one more heading among them. */}
+      <li data-thread-selection-safe className="list-none">
+        <div
+          data-testid="sidebar-v2-projects-heading"
+          className="starcode-section-rule px-2.5 pb-1 pt-1 text-center"
+        >
+          <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
+            Projects
+          </span>
+        </div>
+      </li>
+
       {/* The invitation shows whenever no project exists — NOT only when the
           list is empty. Before you have filed anything every thread is in
           Chats, so the view is never empty, and gating this on "nothing to
@@ -357,12 +444,11 @@ export function SidebarProjectsView(props: {
       ) : null}
       {showArchived ? archivedGroups.map(renderGroup) : null}
 
-      {/* Chats last, below the archived disclosure and below everything else.
-          These are the threads that have not been given a home; the projects
-          are the point of this view and they get the top of it. The header
-          carries the filing popover, so putting one away is still one click
-          from where it sits. */}
-      {chatsGroup === null ? null : renderGroup(chatsGroup)}
+      {/* Chats is docked to the bottom of the viewport rather than laid after
+          the archived disclosure — see `renderChatsSection`. The projects are
+          the point of this view and they get the top of it; the threads with no
+          home get a floor you can always see. */}
+      {chatsGroup === null ? null : renderChatsSection(chatsGroup)}
 
       <ProjectSeedDialog
         open={seedOpen}

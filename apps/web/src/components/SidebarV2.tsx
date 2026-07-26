@@ -1740,7 +1740,15 @@ export default function SidebarV2() {
             closeDelay={0}
             timeout={400}
           >
-            <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
+            {/* `min-h-full` so a section can dock itself to the bottom of the
+                scroller with `mt-auto` (the projects view's Chats) rather than
+                sitting wherever the content happens to end. No effect on the
+                views that do not use it. */}
+            <ul
+              ref={attachListAutoAnimateRef}
+              role="list"
+              className="flex min-h-full flex-col gap-px"
+            >
               {(() => {
                 const renderThreadRow = (
                   thread: EnvironmentThreadShell,

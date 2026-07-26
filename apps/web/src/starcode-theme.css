@@ -945,6 +945,54 @@ html.dark body {
   mask-size: 96px 16px;
 }
 
+/* The same asterism, mirrored either side of a centred title.
+ *
+ * `.starcode-section-head` hangs one constellation off the end of a title that
+ * starts at the left margin. A centred title has two ends, so it takes two —
+ * the second mirrored, which is what makes the pair read as one engraved rule
+ * broken around a word rather than as two ornaments that happen to be nearby.
+ * No new shape and no new token: it is the third arrangement of the same
+ * hairline and the same star.
+ *
+ * Sized by `--sc-rule-width` because the two places this is used are 236px of
+ * usable sidebar apart from a settings pane, and the 96px the left-aligned
+ * variant fixes is wider than half a sidebar. Height is derived rather than set
+ * so the mask never distorts: the source is 96x16, and anything other than 6:1
+ * squashes the stars into narrow diamonds.
+ *
+ * The repeat rule from section 7 still holds. Two of these exist in the whole
+ * app — one over Projects, one over Chats — and neither is inside anything that
+ * repeats. A constellation on every project header would be wallpaper. */
+.starcode-section-rule {
+  --sc-rule-width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+}
+
+.starcode-section-rule::before,
+.starcode-section-rule::after {
+  content: "";
+  flex: 0 0 auto;
+  width: var(--sc-rule-width);
+  height: calc(var(--sc-rule-width) / 6);
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-constellation);
+  mask-image: var(--sc-glyph-constellation);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+.starcode-section-rule::before {
+  scale: -1 1;
+}
+
 /* ---------------------------------------------------------------------------
  * 8. The shooting star
  *
