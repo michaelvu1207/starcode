@@ -15,18 +15,19 @@
  * @module AccountsUsagePanel
  */
 import { CircleAlertIcon, HistoryIcon, LoaderIcon, MonitorIcon, RefreshCwIcon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import type {
   CliProviderUsage,
   CliUsageProvider,
   CliUsageTotals,
+  EnvironmentId,
   UsageRateLimitSnapshot,
   UsageTotals,
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
-import { useAccountsUsage } from "../../state/usage";
+import { useAccountsUsage, useUsageModelAliases, useUsageModelAliasWriter } from "../../state/usage";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import {
   SettingsPageContainer,
@@ -40,6 +41,7 @@ import {
   type AccountUsageRow,
   type AccountsUsageEnvironmentGroup,
   type AccountsUsageView,
+  CLI_MODEL_ROW_LIMIT,
   type CliHistoryMachineView,
   cliProviderWindows,
   type CliUsageWindows,
@@ -52,6 +54,7 @@ import {
   peakUsedPercent,
   unpricedShare,
 } from "./AccountsUsage.logic";
+import { ModelPriceAssignment } from "./ModelPriceAssignment";
 import { UsageDailyChart } from "./UsageDailyChart";
 import {
   buildUsageDailyChartView,
@@ -336,9 +339,36 @@ function UnpricedNote({ totals }: { totals: CliUsageTotals }) {
   );
 }
 
-function CliModelRows({ models }: { models: CliProviderUsage["models"] }) {
-  const { rows, shareBasis } = foldCliModelRows(models);
+function CliModelRows({
+  models,
+  provider,
+  priceable,
+  pendingModel,
+  onAssign,
+}: {
+  models: CliProviderUsage["models"];
+  provider: CliUsageProvider;
+  priceable: ReadonlyArray<string>;
+  pendingModel: string | null;
+  onAssign:
+    | ((input: {
+        readonly provider: CliUsageProvider;
+        readonly model: string;
+        readonly pricedAs: string | null;
+      }) => void)
+    | null;
+}) {
+  // Michael's machine has fourteen Codex models and the eighth is where the
+  // interesting ones start, so the cap has to be openable — a model folded
+  // into "6 more models" cannot be assigned a price, which is exactly the
+  // thing the tail is full of.
+  const [showAll, setShowAll] = useState(false);
+  const { rows, shareBasis } = foldCliModelRows(
+    models,
+    showAll ? models.length : CLI_MODEL_ROW_LIMIT,
+  );
   if (rows.length === 0) return null;
+  const hiddenModels = showAll ? 0 : Math.max(models.length - CLI_MODEL_ROW_LIMIT, 0);
 
   return (
     <div className="grid gap-1.5">
@@ -351,8 +381,16 @@ function CliModelRows({ models }: { models: CliProviderUsage["models"] }) {
           row.totals.cacheReadTokens;
         return (
           <div key={row.model} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-            <span className="w-36 shrink-0 truncate text-muted-foreground" title={row.model}>
-              {row.model}
+            <span
+              className="flex w-36 shrink-0 items-baseline gap-1 truncate text-muted-foreground"
+              title={row.pricedAs === null ? row.model : `${row.model} priced as ${row.pricedAs}`}
+            >
+              <span className="truncate">{row.model}</span>
+              {row.pricedAs === null ? null : (
+                // Provenance, inline and permanent. An assigned price is a
+                // stand-in and every figure derived from it says so.
+                <span className="shrink-0 text-warning-foreground">→ {row.pricedAs}</span>
+              )}
             </span>
             {row.priced ? (
               <div
@@ -384,14 +422,51 @@ function CliModelRows({ models }: { models: CliProviderUsage["models"] }) {
                 <span className="text-muted-foreground/60">no price</span>
               )}
             </span>
+            {onAssign !== null && row.assignable && (!row.priced || row.pricedAs !== null) ? (
+              <ModelPriceAssignment
+                model={row.model}
+                onAssign={onAssign}
+                pending={pendingModel === row.model}
+                priceable={priceable}
+                pricedAs={row.pricedAs}
+                provider={provider}
+              />
+            ) : null}
           </div>
         );
       })}
+      {hiddenModels > 0 ? (
+        <button
+          className="w-fit rounded-md text-[11px] text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+          onClick={() => {
+            setShowAll(true);
+          }}
+          type="button"
+        >
+          Show all {models.length} models
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function CliProviderCard({ usage }: { usage: CliProviderUsage }) {
+function CliProviderCard({
+  usage,
+  priceable,
+  pendingModel,
+  onAssign,
+}: {
+  usage: CliProviderUsage;
+  priceable: ReadonlyArray<string>;
+  pendingModel: string | null;
+  onAssign:
+    | ((input: {
+        readonly provider: CliUsageProvider;
+        readonly model: string;
+        readonly pricedAs: string | null;
+      }) => void)
+    | null;
+}) {
   const meta = CLI_PROVIDER_META[usage.provider];
   const range = formatDayRange(usage.firstDay, usage.lastDay);
 
@@ -420,21 +495,64 @@ function CliProviderCard({ usage }: { usage: CliProviderUsage }) {
       ) : null}
 
       <div className="pt-2.5">
-        <CliModelRows models={usage.models} />
+        <CliModelRows
+          models={usage.models}
+          onAssign={onAssign}
+          pendingModel={pendingModel}
+          priceable={priceable}
+          provider={usage.provider}
+        />
       </div>
     </div>
   );
 }
 
+/**
+ * One machine's history, and the only place the alias writer is bound.
+ *
+ * The registry belongs to the machine whose session files produced these rows,
+ * so the hook is called per machine rather than once for the panel — an
+ * assignment made here can only ever be written where the numbers came from.
+ */
 function CliHistoryMachine({
+  environmentId,
   label,
   history,
   showLabel,
 }: {
+  environmentId: EnvironmentId;
   label: string;
   history: CliHistoryMachineView;
   showLabel: boolean;
 }) {
+  const catalog = useUsageModelAliases(environmentId);
+  const writer = useUsageModelAliasWriter(environmentId);
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
+
+  const priceableByProvider = useMemo(() => {
+    const map = new Map<CliUsageProvider, ReadonlyArray<string>>();
+    for (const entry of catalog?.priceable ?? []) map.set(entry.provider, entry.models);
+    return map;
+  }, [catalog]);
+
+  const onAssign = useCallback(
+    (input: {
+      readonly provider: CliUsageProvider;
+      readonly model: string;
+      readonly pricedAs: string | null;
+    }) => {
+      setPendingModel(input.model);
+      void writer.assign(input).finally(() => {
+        setPendingModel(null);
+      });
+    },
+    [writer],
+  );
+
+  // No catalog means the machine never answered the alias route — an older
+  // server. The affordance is withheld rather than offered and then refused.
+  const assignHandler = catalog === null ? null : onAssign;
+
   return (
     <div className="space-y-2 px-3 sm:px-4">
       {showLabel ? (
@@ -465,7 +583,13 @@ function CliHistoryMachine({
         </p>
       ) : (
         history.providers.map((provider) => (
-          <CliProviderCard key={provider.provider} usage={provider} />
+          <CliProviderCard
+            key={provider.provider}
+            onAssign={assignHandler}
+            pendingModel={pendingModel}
+            priceable={priceableByProvider.get(provider.provider) ?? []}
+            usage={provider}
+          />
         ))
       )}
     </div>
@@ -542,6 +666,7 @@ function CliHistorySection({ view }: { view: AccountsUsageView }) {
 
       {machines.map((group) => (
         <CliHistoryMachine
+          environmentId={group.environmentId}
           key={group.environmentId}
           label={group.label}
           history={group.cliHistory}

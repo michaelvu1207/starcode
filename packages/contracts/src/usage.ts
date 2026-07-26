@@ -159,6 +159,16 @@ export const CliUsageModelTotals = Schema.Struct({
   model: TrimmedNonEmptyString,
   /** False when no vendored rate matched, which forces `costUsd` to 0. */
   priced: Schema.Boolean,
+  /**
+   * The model whose vendored rate paid for this row, when it is not this row's
+   * own model — an operator-assigned alias for a model the rate table has
+   * never heard of.
+   *
+   * Present only on aliased rows, so a reader can tell a real price from a
+   * stand-in one. `optionalKey` in both directions: an older server omits it,
+   * an older client ignores it.
+   */
+  pricedAs: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   totals: CliUsageTotals,
 });
 export type CliUsageModelTotals = typeof CliUsageModelTotals.Type;
@@ -228,6 +238,61 @@ export const CliHistoricalUsage = Schema.Struct({
   filesScanned: NonNegativeInt,
 });
 export type CliHistoricalUsage = typeof CliHistoricalUsage.Type;
+
+/**
+ * "Price this model as that one."
+ *
+ * The vendored rate table is a transcription and it goes stale: a CLI shipping
+ * a model the table has never heard of reports tokens with no dollars, and on
+ * a machine that lives on preview models that is most of the history. This is
+ * the operator's answer — a machine-local statement that an unknown model
+ * bills like a known one.
+ *
+ * It never overrides a real rate. A model the table *does* price is priced by
+ * the table no matter what an alias says, so an alias written today cannot
+ * corrupt a number tomorrow when the model is added upstream.
+ */
+export const CliUsageModelAlias = Schema.Struct({
+  provider: CliUsageProvider,
+  /** The model id as the session files spell it, e.g. `gpt-5.6-sol`. */
+  model: TrimmedNonEmptyString,
+  /** A model id the vendored rate table prices, e.g. `gpt-5.5`. */
+  pricedAs: TrimmedNonEmptyString,
+});
+export type CliUsageModelAlias = typeof CliUsageModelAlias.Type;
+
+/** Every model one CLI's vendored table can price, for the assignment picker. */
+export const CliUsageProviderPriceCatalog = Schema.Struct({
+  provider: CliUsageProvider,
+  /** Sorted by id, so the picker's order does not depend on table order. */
+  models: Schema.Array(TrimmedNonEmptyString),
+});
+export type CliUsageProviderPriceCatalog = typeof CliUsageProviderPriceCatalog.Type;
+
+/**
+ * The machine's alias registry, plus what it is legal to point at.
+ *
+ * Both halves travel together because a picker needs both and neither is
+ * large: the catalog is the vendored table's key set, fixed at build time.
+ */
+export const CliUsageModelAliasCatalog = Schema.Struct({
+  aliases: Schema.Array(CliUsageModelAlias),
+  priceable: Schema.Array(CliUsageProviderPriceCatalog),
+});
+export type CliUsageModelAliasCatalog = typeof CliUsageModelAliasCatalog.Type;
+
+/**
+ * A whole-registry replacement, not a patch.
+ *
+ * The registry is a handful of rows the user edits one at a time in a panel
+ * that already holds all of them, so sending the full set makes removal the
+ * same operation as assignment and leaves no way for a dropped request to
+ * strand a half-applied edit.
+ */
+export const CliUsageModelAliasUpdate = Schema.Struct({
+  aliases: Schema.Array(CliUsageModelAlias),
+});
+export type CliUsageModelAliasUpdate = typeof CliUsageModelAliasUpdate.Type;
 
 export const EnvironmentUsageSnapshot = Schema.Struct({
   generatedAt: IsoDateTime,

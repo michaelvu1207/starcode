@@ -321,3 +321,79 @@ describe("aggregateCliUsage day buckets", () => {
   });
 });
 
+describe("aggregateCliUsage model aliases", () => {
+  const aliasing = (provider: string, model: string, pricedAs: string) => ({
+    ...options,
+    modelAliases: new Map([[provider, new Map([[model, pricedAs]])]]) as never,
+  });
+
+  it("prices an unknown model at its alias's rate", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.6-sol", "gpt-5.5"),
+    );
+    const codex = providerNamed(result, "codex");
+    assert.strictEqual(codex?.allTime.costUsd, 30);
+    assert.strictEqual(codex?.allTime.unpricedMessages, 0);
+    assert.strictEqual(codex?.models[0]?.priced, true);
+    assert.strictEqual(codex?.models[0]?.pricedAs, "gpt-5.5");
+  });
+
+  it("leaves a model the vendored table prices alone", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ model: "gpt-5.4", output: 1_000_000 })])],
+      // gpt-5.4 is $15/M output; gpt-5.5 is $30/M. The alias must not win.
+      aliasing("codex", "gpt-5.4", "gpt-5.5"),
+    );
+    const codex = providerNamed(result, "codex");
+    assert.strictEqual(codex?.allTime.costUsd, 15);
+    assert.strictEqual(codex?.models[0]?.pricedAs, null);
+  });
+
+  it("does not let one provider's alias price the other's model", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
+      aliasing("claude", "gpt-5.6-sol", "claude-opus-5"),
+    );
+    const codex = providerNamed(result, "codex");
+    assert.strictEqual(codex?.allTime.costUsd, 0);
+    assert.strictEqual(codex?.allTime.unpricedMessages, 1);
+  });
+
+  it("stays unpriced when the alias names a model this build cannot price", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.6-sol", "gpt-9-imaginary"),
+    );
+    const codex = providerNamed(result, "codex");
+    assert.strictEqual(codex?.allTime.costUsd, 0);
+    assert.strictEqual(codex?.models[0]?.priced, false);
+    // No provenance is claimed for a stand-in that bought nothing.
+    assert.strictEqual(codex?.models[0]?.pricedAs, null);
+  });
+
+  it("prices an aliased model into its day buckets too", () => {
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ day: "2026-07-24", model: "gpt-5.6-sol", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.6-sol", "gpt-5.5"),
+    );
+    const day = (providerNamed(result, "codex")?.days ?? [])[0];
+    assert.strictEqual(day?.totals.costUsd, 30);
+    assert.strictEqual(day?.totals.unpricedMessages, 0);
+  });
+
+  it("applies the priority-tier multiplier of the alias, not of the unknown model", () => {
+    const priority = {
+      ...options,
+      codexPriorityTier: true,
+      modelAliases: new Map([["codex", new Map([["gpt-5.6-sol", "gpt-5.5"]])]]) as never,
+    };
+    const result = aggregateCliUsage(
+      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
+      priority,
+    );
+    // gpt-5.5's priority multiplier is 2.5, not the 2.0 default an unnamed
+    // model would have taken.
+    assert.strictEqual(providerNamed(result, "codex")?.allTime.costUsd, 75);
+  });
+});

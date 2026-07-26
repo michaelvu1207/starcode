@@ -119,6 +119,17 @@ export const rateFor = (provider: CliUsageProvider, model: string): ModelRate | 
   (provider === "claude" ? CLAUDE_RATES : CODEX_RATES)[model] ?? null;
 
 /**
+ * Every model this build can price, sorted, for the alias picker.
+ *
+ * Sorted here rather than at the call site so the order a user picks from is a
+ * property of the table and not of whichever iteration happened to read it.
+ */
+export const priceableModels = (provider: CliUsageProvider): ReadonlyArray<string> =>
+  Object.keys(provider === "claude" ? CLAUDE_RATES : CODEX_RATES).sort((left, right) =>
+    left.localeCompare(right),
+  );
+
+/**
  * OpenAI's priority service tier bills at a multiple of the standard rate.
  *
  * Codex records the tier it ran under nowhere in the rollout, so this is read

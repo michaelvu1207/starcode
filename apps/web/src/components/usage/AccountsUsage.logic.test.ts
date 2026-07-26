@@ -632,6 +632,42 @@ describe("formatting", () => {
   });
 });
 
+describe("foldCliModelRows provenance", () => {
+  it("carries an assigned price onto the row and marks it assignable", () => {
+    const { rows } = foldCliModelRows([
+      { ...model("gpt-5.6-sol", 4_120), pricedAs: "gpt-5.5" },
+    ]);
+    expect(rows[0]?.pricedAs).toBe("gpt-5.5");
+    expect(rows[0]?.priced).toBe(true);
+    expect(rows[0]?.assignable).toBe(true);
+  });
+
+  it("leaves an unassigned row's provenance null", () => {
+    const { rows } = foldCliModelRows([model("gpt-5.5", 10)]);
+    expect(rows[0]?.pricedAs).toBe(null);
+  });
+
+  it("refuses to make the folded tail assignable — it names no single model", () => {
+    const models = Array.from({ length: 11 }, (_unused, index) =>
+      model(`model-${index}`, 11 - index),
+    );
+    const { rows } = foldCliModelRows(models, 8);
+    expect(rows[8]?.model).toBe("3 more models");
+    expect(rows[8]?.assignable).toBe(false);
+    expect(rows[8]?.pricedAs).toBe(null);
+  });
+
+  it("shows every model when the limit is raised to the list's length", () => {
+    const models = Array.from({ length: 14 }, (_unused, index) =>
+      model(`model-${index}`, 14 - index),
+    );
+    const { rows } = foldCliModelRows(models, models.length);
+    expect(rows).toHaveLength(14);
+    // No tail row means every row can be assigned a price.
+    expect(rows.every((row) => row.assignable)).toBe(true);
+  });
+});
+
 describe("isDormantAccount", () => {
   const account = (overrides: Partial<AccountUsageRow> = {}): AccountUsageRow => ({
     instanceId: "grok",

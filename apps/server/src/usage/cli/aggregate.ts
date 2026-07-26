@@ -30,6 +30,17 @@ export interface ProviderFileUsage {
   readonly parsed: ParsedFileUsage;
 }
 
+/**
+ * Operator-assigned stand-in rates, `provider -> model -> pricedAs`.
+ *
+ * Consulted only where the vendored table has nothing, never over it. That
+ * ordering is the whole safety property: an alias written for a model upstream
+ * later adds cannot silently keep costing it at the stand-in rate.
+ */
+export type ModelAliasMap = ReadonlyMap<CliUsageProvider, ReadonlyMap<string, string>>;
+
+export const EMPTY_MODEL_ALIASES: ModelAliasMap = new Map();
+
 export interface AggregateOptions {
   /** `YYYY-MM-DD` in the reporting machine's zone. */
   readonly today: string;
@@ -39,6 +50,8 @@ export interface AggregateOptions {
   readonly earliest30Day: string;
   /** True when Codex bills at OpenAI's priority tier on this machine. */
   readonly codexPriorityTier: boolean;
+  /** Defaults to none, so an aggregate without aliases needs no argument. */
+  readonly modelAliases?: ModelAliasMap;
 }
 
 interface MutableTotals {
@@ -106,6 +119,8 @@ const totalTokensOf = (tokens: MessageTokens): number =>
 
 interface ModelAccumulator {
   readonly priced: boolean;
+  /** The aliased model that paid for it, or null when the table did. */
+  readonly pricedAs: string | null;
   readonly totals: MutableTotals;
 }
 
@@ -150,9 +165,15 @@ const foldInto = (
   messages: number,
   options: AggregateOptions,
 ): void => {
-  const rate = rateFor(provider, model);
+  // The alias is a fallback, not an override: a model the vendored table
+  // prices is priced by the table even if an alias names it.
+  const vendored = rateFor(provider, model);
+  const alias =
+    vendored === null ? (options.modelAliases?.get(provider)?.get(model) ?? null) : null;
+  const pricingModel = alias ?? model;
+  const rate = vendored ?? (alias === null ? null : rateFor(provider, alias));
   const multiplier =
-    provider === "codex" && options.codexPriorityTier ? codexFastMultiplier(model) : 1;
+    provider === "codex" && options.codexPriorityTier ? codexFastMultiplier(pricingModel) : 1;
   // `tokens` is already the sum over `messages` messages for a pre-folded
   // bucket, so the rate applies to it once, not once per message.
   const costUsd = costOf(rate, tokens, multiplier);
@@ -177,7 +198,10 @@ const foldInto = (
 
   let modelEntry = accumulator.models.get(model);
   if (modelEntry === undefined) {
-    modelEntry = { priced, totals: emptyMutable() };
+    // An alias that resolves to nothing — pointed at a model this build does
+    // not price — leaves the row exactly as unpriced as it was, rather than
+    // claiming a provenance that bought it no dollars.
+    modelEntry = { priced, pricedAs: priced ? alias : null, totals: emptyMutable() };
     accumulator.models.set(model, modelEntry);
   }
   accumulate(modelEntry.totals, tokens, messages, costUsd, priced);
@@ -191,7 +215,12 @@ const toProviderUsage = (
   accumulator: ProviderAccumulator,
 ): CliProviderUsage => {
   const models: Array<CliUsageModelTotals> = [...accumulator.models.entries()]
-    .map(([model, entry]) => ({ model, priced: entry.priced, totals: freeze(entry.totals) }))
+    .map(([model, entry]) => ({
+      model,
+      priced: entry.priced,
+      pricedAs: entry.pricedAs,
+      totals: freeze(entry.totals),
+    }))
     .sort(
       (left, right) =>
         right.totals.costUsd - left.totals.costUsd ||

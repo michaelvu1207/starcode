@@ -343,11 +343,21 @@ export interface CliModelRow {
   readonly model: string;
   /** False when no vendored rate matched, which pins this row's cost at 0. */
   readonly priced: boolean;
+  /**
+   * The model whose rate paid for this row, when an operator assigned one.
+   * Null on rows the vendored table priced itself, and on the tail.
+   */
+  readonly pricedAs: string | null;
   readonly totals: CliUsageTotals;
   /** 0-1 against the largest row, for the bar width. */
   readonly share: number;
   /** How many models this row stands for; 1 for everything but the tail. */
   readonly modelCount: number;
+  /**
+   * A real single model, so an assignment affordance may address it. False for
+   * the folded tail, which names no model the server would accept.
+   */
+  readonly assignable: boolean;
 }
 
 export interface CliModelRows {
@@ -373,13 +383,19 @@ export function foldCliModelRows(
   const head = models.slice(0, limit);
   const tail = models.slice(limit);
 
-  const entries: Array<{ model: string; priced: boolean; totals: CliUsageTotals; count: number }> =
-    head.map((entry) => ({
-      model: entry.model,
-      priced: entry.priced,
-      totals: entry.totals,
-      count: 1,
-    }));
+  const entries: Array<{
+    model: string;
+    priced: boolean;
+    pricedAs: string | null;
+    totals: CliUsageTotals;
+    count: number;
+  }> = head.map((entry) => ({
+    model: entry.model,
+    priced: entry.priced,
+    pricedAs: entry.pricedAs ?? null,
+    totals: entry.totals,
+    count: 1,
+  }));
 
   if (tail.length > 0) {
     entries.push({
@@ -387,6 +403,7 @@ export function foldCliModelRows(
       // The tail is priced when any of its models is: its cost figure is then
       // a real one, even if an incomplete one.
       priced: tail.some((entry) => entry.priced),
+      pricedAs: null,
       totals: tail.reduce(
         (totals, entry) => addCliUsageTotals(totals, entry.totals),
         EMPTY_CLI_USAGE_TOTALS,
@@ -405,12 +422,14 @@ export function foldCliModelRows(
     rows: entries.map((entry) => ({
       model: entry.model,
       priced: entry.priced,
+      pricedAs: entry.pricedAs,
       totals: entry.totals,
       share:
         denominator === 0
           ? 0
           : (shareBasis === "cost" ? entry.totals.costUsd : entry.totals.messages) / denominator,
       modelCount: entry.count,
+      assignable: entry.count === 1,
     })),
   };
 }
