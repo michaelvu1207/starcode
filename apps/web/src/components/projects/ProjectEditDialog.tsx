@@ -48,7 +48,7 @@ import type { ProjectCategoryView } from "./ProjectCatalog.model";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { encodeProjectIcon } from "./projectIconEncode";
 import { ProjectGlyph } from "./ProjectGlyph";
-import { PROJECT_ACCENTS, PROJECT_GLYPH_VARIANTS, projectAccentHue } from "./ProjectsIndex.model";
+import { PROJECT_ACCENTS, PROJECT_GLYPH_VARIANTS, projectAccentHue } from "./ProjectMark.model";
 import { useProjectWriter } from "./useProjectWriter";
 import "./Projects.css";
 

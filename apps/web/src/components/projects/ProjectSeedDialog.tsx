@@ -34,7 +34,7 @@ import {
 } from "../ui/dialog";
 import { ProjectGlyph } from "./ProjectGlyph";
 import type { ProjectSeedProposal } from "./ProjectCatalog.model";
-import { projectAccentHue } from "./ProjectsIndex.model";
+import { projectAccentHue } from "./ProjectMark.model";
 import "./Projects.css";
 
 export function ProjectSeedDialog({

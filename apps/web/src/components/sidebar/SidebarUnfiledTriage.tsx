@@ -28,7 +28,7 @@ import { cn } from "~/lib/utils";
 
 import { refreshProjectCatalogs, useFileThreadIntoProject } from "../../state/projectCatalog";
 import { ProjectGlyph } from "../projects/ProjectGlyph";
-import { projectAccentHue } from "../projects/ProjectsIndex.model";
+import { projectAccentHue } from "../projects/ProjectMark.model";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ConnectionMark } from "./ConnectionMark";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";

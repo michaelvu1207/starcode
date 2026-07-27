@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { projectGlyph, projectGlyphSeed } from "./ProjectsIndex.model";
+import { projectGlyph, projectGlyphSeed } from "./ProjectMark.model";
 
 export function ProjectGlyph({
   slug,

@@ -40,7 +40,7 @@ import { WorkbenchMasterPicker } from "../workbench/WorkbenchMasterPicker";
 import { WorkbenchStarMap } from "../workbench/WorkbenchStarMap";
 import { projectMasterCandidates, projectSectionFor } from "./ProjectCatalog.model";
 import { ProjectGlyph } from "./ProjectGlyph";
-import { projectAccentHue } from "./ProjectsIndex.model";
+import { projectAccentHue } from "./ProjectMark.model";
 import { useProjectWriter } from "./useProjectWriter";
 import "./Projects.css";
 

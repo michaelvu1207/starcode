@@ -1,20 +1,16 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { SidebarInset } from "~/components/ui/sidebar";
-
-import { ProjectsIndexView } from "../components/projects/ProjectsIndexView";
-
-function ProjectsRouteView() {
-  return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ProjectsIndexView />
-    </SidebarInset>
-  );
-}
-
-// Under `/_chat` for the same reasons `/workbench` is: the same auth gate, the
-// same global shortcuts, the same sidebar. A static segment beats
-// `$environmentId`, so `/projects` can never be read as a machine id.
+// The global projects index is gone (F16.6, Michael: *"There should not be a
+// global projects view. That's not something that we really needed."*). The
+// sidebar's projects view is the list now.
+//
+// The route stays, as a redirect rather than a deletion: `/projects` is a URL
+// an operator may have kept, and a bookmark that 404s is a worse answer than
+// the app's own landing page. Individual projects are unaffected — they live at
+// `/projects/$slug`, which is its own route file (`projects_`) and was never
+// nested under this one.
 export const Route = createFileRoute("/_chat/projects")({
-  component: ProjectsRouteView,
+  beforeLoad: () => {
+    throw redirect({ to: "/" });
+  },
 });

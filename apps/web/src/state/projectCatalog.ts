@@ -33,8 +33,6 @@ import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-
 import {
   applyPendingProjectDisplays,
   buildProjectCatalogView,
@@ -46,19 +44,7 @@ import {
   type ProjectSeedLocation,
   type ProjectSeedPlan,
 } from "../components/projects/ProjectCatalog.model";
-import {
-  buildProjectCards,
-  sortProjectCards,
-  type ProjectCard,
-  type ProjectRollupThread,
-} from "../components/projects/ProjectsIndex.model";
-import { resolveSidebarV2Status } from "../components/Sidebar.logic";
-import { partitionSidebarV2Threads } from "../components/Sidebar.partition";
-import { useClientSettings } from "../hooks/useSettings";
-import { useNowMinute } from "../hooks/useNowMinute";
-import { useUiStateStore } from "../uiStateStore";
 import { useThreadShells } from "./entities";
-import { useFeatureFlowView } from "./featureFlow";
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -465,68 +451,3 @@ export function useProjectMembership(view: ProjectCatalogView): ProjectMembershi
     [threads, view.projects],
   );
 }
-
-/**
- * The index's cards.
- *
- * The feature-flow view is read unfiltered here — one fetch for the whole
- * index rather than one per card — and each card picks its own stages out of it
- * by membership.
- */
-export function useProjectCards(
-  view: ProjectCatalogView,
-  membership: ProjectMembership,
-): ReadonlyArray<ProjectCard> {
-  const threads = useThreadShells();
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
-  const nowMinute = useNowMinute();
-  const flow = useFeatureFlowView(null);
-
-  return useMemo(() => {
-    const partition = partitionSidebarV2Threads({
-      threads,
-      scopedProjectKeys: null,
-      serverConfigs,
-      changeRequestStateByKey: NO_CHANGE_REQUESTS,
-      autoSettleAfterDays,
-      threadLastVisitedAtById,
-      threadSortOrder: "activity",
-      nowMinute,
-    });
-    // Snoozed work counts as active for a card: it is still this project's, it
-    // is coming back, and burying it under "settled" would make a project look
-    // finished because somebody hit snooze.
-    const rollupThreads = [
-      ...[...partition.activeThreads, ...partition.snoozedThreads].map((thread) =>
-        toRollupThread(thread, false),
-      ),
-      ...partition.settledThreads.map((thread) => toRollupThread(thread, true)),
-    ];
-    return sortProjectCards(
-      buildProjectCards({ projects: view.projects, membership, threads: rollupThreads, flow }),
-    );
-  }, [
-    autoSettleAfterDays,
-    flow,
-    membership,
-    nowMinute,
-    serverConfigs,
-    threadLastVisitedAtById,
-    threads,
-    view.projects,
-  ]);
-}
-
-const toRollupThread = (thread: EnvironmentThreadShell, settled: boolean): ProjectRollupThread => ({
-  environmentId: thread.environmentId,
-  id: thread.id,
-  title: thread.title,
-  status: resolveSidebarV2Status(thread),
-  updatedAt: thread.updatedAt,
-  settled,
-});
-
-/** The partition needs one, and no project view has change-request state. */
-const NO_CHANGE_REQUESTS: ReadonlyMap<string, "open" | "closed" | "merged"> = new Map();

@@ -9,7 +9,7 @@
  * colour on the laptop, on the desktop, and after you rename it to `mbp`.
  *
  * The output is a hue *rotation*, not a colour, for the reason the project
- * accent gives (`ProjectsIndex.model.ts`): rotating the theme's one chromatic
+ * accent gives (`ProjectMark.model.ts`): rotating the theme's one chromatic
  * constant keeps every machine at the palette's chroma level, so a machine can
  * be distinguishable without any of them coming out neon in light mode or
  * muddy in dark. The hash is restated here rather than imported from the

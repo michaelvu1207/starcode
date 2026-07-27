@@ -59,7 +59,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProjectGlyph } from "../projects/ProjectGlyph";
-import { projectAccentHue } from "../projects/ProjectsIndex.model";
+import { projectAccentHue } from "../projects/ProjectMark.model";
 import { MenuItem, MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { planThreadFiling, resolveThreadFilingState } from "./threadProjectFiling";

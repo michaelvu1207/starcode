@@ -29,7 +29,7 @@
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ProjectCategorySlug } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, MapIcon } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 
@@ -41,9 +41,10 @@ import {
   useProjectMembership,
   useProjectSeedPlan,
 } from "../../state/projectCatalog";
+import { ProjectCreateDialog } from "../projects/ProjectCreateDialog";
 import { ProjectGlyph } from "../projects/ProjectGlyph";
 import { ProjectSeedDialog } from "../projects/ProjectSeedDialog";
-import { projectAccentHue } from "../projects/ProjectsIndex.model";
+import { projectAccentHue } from "../projects/ProjectMark.model";
 import { useProjectWriter } from "../projects/useProjectWriter";
 import { useProjectThreadStarter } from "../projects/useProjectThreadStarter";
 import {
@@ -92,6 +93,7 @@ export function SidebarProjectsView(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverProjects = useProjects();
   const startThread = useProjectThreadStarter();
+  const navigate = useNavigate();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   // Paging is per group and lives in component state for the same reason the
@@ -103,6 +105,7 @@ export function SidebarProjectsView(props: {
   const [showArchived, setShowArchived] = useState(false);
   const [seedOpen, setSeedOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { groups, archivedGroups, chatsGroup } = useMemo(
     () =>
@@ -433,13 +436,18 @@ export function SidebarProjectsView(props: {
               Set up {seedPlan.proposals.length}
             </button>
           ) : (
-            <Link
-              to="/projects"
-              data-testid="sidebar-v2-project-empty-link"
+            // Was a link to the global index until F16.6 deleted it. The view
+            // that is about projects has to be able to make one, and the
+            // popover's copy of this control is two clicks away behind an icon
+            // whose meaning you only know if you already found it.
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              data-testid="sidebar-v2-project-empty-create"
               className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             >
-              Open projects
-            </Link>
+              New project
+            </button>
           )}
         </li>
       ) : null}
@@ -478,6 +486,16 @@ export function SidebarProjectsView(props: {
           the point of this view and they get the top of it; the threads with no
           home get a floor you can always see. */}
       {chatsGroup === null ? null : renderChatsSection(chatsGroup)}
+
+      <ProjectCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        takenSlugs={new Set(view.projects.map((project) => project.slug))}
+        onCreate={async (title) => {
+          const slug = await writer.create(title);
+          if (slug !== null) void navigate({ to: "/projects/$slug", params: { slug } });
+        }}
+      />
 
       <ProjectSeedDialog
         open={seedOpen}
