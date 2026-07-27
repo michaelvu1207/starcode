@@ -759,6 +759,11 @@ const make = Effect.gen(function* () {
           commandId: yield* serverCommandId("thread-title-rename"),
           threadId: input.threadId,
           title: generated.title,
+          // Said explicitly so a later automatic rename — the plan title, once
+          // the thread proposes one — knows it may replace this guess. Without
+          // it the decider would record `manual` and this title would outlive
+          // every better description of the work.
+          titleSource: "generated",
         });
       }).pipe(
         Effect.catchCause((cause) =>

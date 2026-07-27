@@ -12,6 +12,7 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveSubagentTasks,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -1684,5 +1685,143 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+/**
+ * The tasks panel's reducer.
+ *
+ * The token rule is the one that matters: `total_tokens` is a running total per
+ * task, so a reducer that accumulates reports roughly the square of the truth —
+ * and it does so plausibly, climbing smoothly, which is exactly the kind of
+ * wrong nobody notices. Two of these exist to make that regression loud.
+ */
+describe("deriveSubagentTasks", () => {
+  const started = (taskId: string, overrides: Record<string, unknown> = {}) =>
+    makeActivity({
+      kind: "task.started",
+      createdAt: "2026-07-27T00:00:00.000Z",
+      payload: {
+        taskId,
+        detail: "Find the thing",
+        subagentType: "Explore",
+        toolUseId: `toolu_${taskId}`,
+        ...overrides,
+      },
+    });
+
+  const progress = (taskId: string, totalTokens: number, overrides: Record<string, unknown> = {}) =>
+    makeActivity({
+      kind: "task.progress",
+      createdAt: "2026-07-27T00:00:01.000Z",
+      payload: {
+        taskId,
+        title: "Running Search",
+        lastToolName: "Bash",
+        usage: { total_tokens: totalTokens, tool_uses: 2, duration_ms: 4000 },
+        ...overrides,
+      },
+    });
+
+  it("folds the four task events into one row per subagent", () => {
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 18945),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "a1", status: "completed", summary: "Search complete." },
+      }),
+    ]);
+
+    expect(task?.taskId).toBe("a1");
+    expect(task?.subagentType).toBe("Explore");
+    expect(task?.toolUseId).toBe("toolu_a1");
+    expect(task?.status).toBe("completed");
+    expect(task?.summary).toBe("Search complete.");
+    // Nothing is running, so the live subtitle must not linger.
+    expect(task?.lastToolName).toBeNull();
+  });
+
+  it("replaces token totals instead of accumulating them", () => {
+    // Real numbers from a logged run: one subagent climbed 18,945 -> 81,724
+    // across 117 progress events. Summed, that would read as millions.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 18945),
+      progress("a1", 22490),
+      progress("a1", 81724),
+    ]);
+
+    expect(task?.totalTokens).toBe(81724);
+  });
+
+  it("keeps the last token figure when the terminal event carries no usage", () => {
+    // Only a minority of completions carry usage; treating the omission as zero
+    // would blank the number exactly when it becomes final.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 81724),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "a1", status: "completed" },
+      }),
+    ]);
+
+    expect(task?.totalTokens).toBe(81724);
+    expect(task?.status).toBe("completed");
+  });
+
+  it("surfaces a killed subagent instead of leaving it running forever", () => {
+    // A killed task never reaches a terminal notification, so without the patch
+    // it reads as still working — the bug this event was wired up to fix.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 500),
+      makeActivity({
+        kind: "task.updated",
+        createdAt: "2026-07-27T00:00:03.000Z",
+        payload: { taskId: "a1", status: "killed", detail: "user interrupted" },
+      }),
+    ]);
+
+    expect(task?.status).toBe("stopped");
+    expect(task?.error).toBe("user interrupted");
+  });
+
+  it("still builds a row for a task first seen mid-flight", () => {
+    // After a reconnect the first event a client sees may be progress, not
+    // start. Dropping those would make the panel decay over a long session.
+    const [task] = deriveSubagentTasks([progress("a1", 4200, { subagentType: "code-reviewer" })]);
+
+    expect(task?.taskId).toBe("a1");
+    expect(task?.subagentType).toBe("code-reviewer");
+    expect(task?.totalTokens).toBe(4200);
+    expect(task?.status).toBe("running");
+  });
+
+  it("sorts live subagents above finished ones", () => {
+    const tasks = deriveSubagentTasks([
+      started("done"),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "done", status: "completed" },
+      }),
+      started("live"),
+      progress("live", 100),
+    ]);
+
+    expect(tasks.map((task) => task.taskId)).toEqual(["live", "done"]);
+  });
+
+  it("ignores activities that are not tasks", () => {
+    expect(
+      deriveSubagentTasks([
+        makeActivity({ kind: "tool.started", payload: { toolCallId: "t-1" } }),
+        makeActivity({ kind: "turn.plan.updated", payload: { plan: [] } }),
+      ]),
+    ).toEqual([]);
   });
 });

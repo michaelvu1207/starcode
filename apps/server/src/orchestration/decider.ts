@@ -654,6 +654,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
+          // Provenance is recorded only when the title is, so a model or branch
+          // change cannot silently relabel who named the thread. An unstated
+          // source means a person: every automatic renamer says so explicitly,
+          // and a client that knows nothing about this field is a person typing.
+          ...(command.title !== undefined ? { titleSource: command.titleSource ?? "manual" } : {}),
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),

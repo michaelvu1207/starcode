@@ -1,7 +1,9 @@
-export function proposedPlanTitle(planMarkdown: string): string | null {
-  const heading = planMarkdown.match(/^\s{0,3}#{1,6}\s+(.+)$/m)?.[1]?.trim();
-  return heading && heading.length > 0 ? heading : null;
-}
+// Imported rather than defined here: the server picks thread titles with the
+// same function, and the sidebar name has to match the plan's own heading.
+// Re-exported because this module is where the web app already looks for it.
+import { proposedPlanTitle } from "@t3tools/shared/proposedPlanTitle";
+
+export { proposedPlanTitle };
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   const lines = planMarkdown.trimEnd().split(/\r?\n/);

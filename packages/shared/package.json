@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./proposedPlanTitle": {
+      "types": "./src/proposedPlanTitle.ts",
+      "import": "./src/proposedPlanTitle.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

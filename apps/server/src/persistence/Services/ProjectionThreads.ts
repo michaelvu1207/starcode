@@ -14,6 +14,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  ThreadTitleSource,
   TurnId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -27,6 +28,9 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  // Optional to match the contract: a required field would make every caller
+  // that builds a row name a provenance it has no opinion about.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,

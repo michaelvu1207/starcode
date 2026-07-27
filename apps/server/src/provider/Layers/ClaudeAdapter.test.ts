@@ -1913,6 +1913,172 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  /**
+   * The SDK reports a subagent's type, its transcript row and its token usage,
+   * and the adapter used to forward only the last of those — so a tasks panel
+   * could say how much a subagent cost but not which agent it was or where it
+   * came from. These pin the three fields that were being dropped.
+   */
+  it.effect("forwards a subagent's type, tool call and named model on task.started", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "go", attachments: [] });
+
+      // The Task call carries the model. It arrives before any task event, and
+      // is the only place a subagent's model is ever stated.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-subagent",
+        uuid: "stream-task-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_sub_1",
+            name: "Task",
+            input: {
+              description: "Find the thing",
+              subagent_type: "Explore",
+              model: "claude-opus-5",
+              prompt: "look",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-sub-1",
+        tool_use_id: "toolu_sub_1",
+        description: "Find the thing",
+        subagent_type: "Explore",
+        task_type: "local_agent",
+        session_id: "sdk-session-subagent",
+        uuid: "task-started-1",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const startedEvent = runtimeEvents.find((event) => event.type === "task.started");
+      assert.equal(startedEvent?.type, "task.started");
+      if (startedEvent?.type === "task.started") {
+        assert.equal(startedEvent.payload.subagentType, "Explore");
+        assert.equal(startedEvent.payload.toolUseId, "toolu_sub_1");
+        // Joined across two unrelated messages by tool_use_id.
+        assert.equal(startedEvent.payload.model, "claude-opus-5");
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves the model absent when the caller never named one", () => {
+    // The common case: a subagent inherits the thread's model. Reporting the
+    // thread's model here would be the server restating something the client
+    // already holds, and would then have to be kept in sync with it.
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-sub-2",
+        tool_use_id: "toolu_sub_2",
+        description: "Review it",
+        subagent_type: "code-reviewer",
+        session_id: "sdk-session-subagent",
+        uuid: "task-started-2",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const startedEvent = runtimeEvents.find((event) => event.type === "task.started");
+      if (startedEvent?.type === "task.started") {
+        assert.equal(startedEvent.payload.model, undefined);
+        assert.equal(startedEvent.payload.subagentType, "code-reviewer");
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps a task state patch onto task.updated", () => {
+    // A killed subagent never reaches a terminal notification, so before this
+    // was mapped it stayed "running" forever from any consumer's point of view.
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-sub-3",
+        patch: { status: "killed", error: "user interrupted", is_backgrounded: false },
+        session_id: "sdk-session-subagent",
+        uuid: "task-updated-1",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const updatedEvent = runtimeEvents.find((event) => event.type === "task.updated");
+      assert.equal(updatedEvent?.type, "task.updated");
+      if (updatedEvent?.type === "task.updated") {
+        assert.equal(updatedEvent.payload.taskId, "task-sub-3");
+        assert.equal(updatedEvent.payload.status, "killed");
+        assert.equal(updatedEvent.payload.error, "user interrupted");
+        assert.equal(updatedEvent.payload.isBackgrounded, false);
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("consumes undeclared and UX-internal system subtypes without warning rows", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

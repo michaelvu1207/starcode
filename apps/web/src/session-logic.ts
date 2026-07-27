@@ -109,6 +109,33 @@ export interface ActivePlanState {
   }>;
 }
 
+/** A subagent, as the tasks panel shows it. One row per `taskId`. */
+export interface SubagentTaskState {
+  taskId: string;
+  /** The task's own label — "Find starcode thread background". */
+  description: string;
+  /** The named agent: `Explore`, `code-reviewer`. Null when the run predates it. */
+  subagentType: string | null;
+  /**
+   * Null means "inherits this thread's model", which is the common case — the
+   * server only reports a model the caller named outright.
+   */
+  model: string | null;
+  status: "running" | "paused" | "completed" | "failed" | "stopped";
+  totalTokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
+  /** What it is doing right now, while it is still running. */
+  lastToolName: string | null;
+  summary: string | null;
+  error: string | null;
+  isBackgrounded: boolean;
+  /** Links the row to its Task call in the transcript. */
+  toolUseId: string | null;
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface LatestProposedPlanState {
   id: OrchestrationProposedPlanId;
   createdAt: string;
@@ -505,6 +532,191 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+const asPayloadRecord = (activity: OrchestrationThreadActivity): Record<string, unknown> | null =>
+  activity.payload && typeof activity.payload === "object"
+    ? (activity.payload as Record<string, unknown>)
+    : null;
+
+const optionalString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim().length > 0 ? value : null;
+
+const optionalNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/**
+ * `{ total_tokens, tool_uses, duration_ms }` as the provider reports it, read
+ * defensively because the contract types it `unknown` — it is passed through
+ * verbatim rather than reshaped, so its keys are the provider's snake_case.
+ */
+function readTaskUsage(value: unknown): {
+  totalTokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
+} {
+  const usage = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  return {
+    totalTokens: optionalNumber(usage?.total_tokens),
+    toolUses: optionalNumber(usage?.tool_uses),
+    durationMs: optionalNumber(usage?.duration_ms),
+  };
+}
+
+/**
+ * Folds the `task.*` activity stream into one row per subagent.
+ *
+ * These four kinds have been flowing since the adapter first mapped them; the
+ * work log flattens them into a chronological list and drops `task.started`
+ * outright, which is fine for a log and useless for answering "what is running
+ * right now, and what is it costing me". This answers that, and does it purely
+ * from activities the client already holds — no new subscription, no new state.
+ *
+ * Two rules the shape of the data forces, both of which are easy to get wrong:
+ *
+ * 1. **Usage replaces, never accumulates.** `total_tokens` is a running total
+ *    for the task, not a delta. Summing 117 progress events for one subagent
+ *    would report millions of tokens for a task that used eighty thousand.
+ * 2. **A terminal event without usage keeps the last figure.** Only a minority
+ *    of completions carry one, so treating the omission as "now zero" would
+ *    blank the number at the exact moment it becomes final.
+ */
+export function deriveSubagentTasks(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): SubagentTaskState[] {
+  const byTaskId = new Map<string, SubagentTaskState>();
+
+  const upsert = (
+    activity: OrchestrationThreadActivity,
+    taskId: string,
+    apply: (current: SubagentTaskState) => SubagentTaskState,
+  ) => {
+    const existing = byTaskId.get(taskId);
+    // A task first seen mid-flight — after a reconnect, say — still gets a row.
+    // Dropping it would make the panel quietly less complete the longer a
+    // session runs, which is the opposite of what it is for.
+    const base: SubagentTaskState = existing ?? {
+      taskId,
+      description: "",
+      subagentType: null,
+      model: null,
+      status: "running",
+      totalTokens: null,
+      toolUses: null,
+      durationMs: null,
+      lastToolName: null,
+      summary: null,
+      error: null,
+      isBackgrounded: false,
+      toolUseId: null,
+      startedAt: activity.createdAt,
+      updatedAt: activity.createdAt,
+    };
+    byTaskId.set(taskId, { ...apply(base), updatedAt: activity.createdAt });
+  };
+
+  for (const activity of [...activities].toSorted(compareActivitiesByOrder)) {
+    if (!activity.kind.startsWith("task.")) continue;
+    const payload = asPayloadRecord(activity);
+    const taskId = optionalString(payload?.taskId);
+    if (!payload || !taskId) continue;
+
+    // Note there is deliberately no `skip_transcript` filter. That flag means
+    // "hide from the inline transcript"; the SDK's own docs go on to say such a
+    // task "may still appear in a tasks panel" — which is this. Filtering here
+    // would hide exactly the housekeeping work this panel exists to make
+    // visible.
+
+    switch (activity.kind) {
+      case "task.started":
+        upsert(activity, taskId, (current) => ({
+          ...current,
+          description: optionalString(payload.detail) ?? current.description,
+          subagentType: optionalString(payload.subagentType) ?? current.subagentType,
+          model: optionalString(payload.model) ?? current.model,
+          toolUseId: optionalString(payload.toolUseId) ?? current.toolUseId,
+          startedAt: activity.createdAt,
+        }));
+        break;
+
+      case "task.progress": {
+        const usage = readTaskUsage(payload.usage);
+        upsert(activity, taskId, (current) => ({
+          ...current,
+          description: optionalString(payload.title) ?? current.description,
+          subagentType: optionalString(payload.subagentType) ?? current.subagentType,
+          toolUseId: optionalString(payload.toolUseId) ?? current.toolUseId,
+          lastToolName: optionalString(payload.lastToolName) ?? current.lastToolName,
+          summary: optionalString(payload.summary) ?? current.summary,
+          // Replace, do not add. See the note above.
+          totalTokens: usage.totalTokens ?? current.totalTokens,
+          toolUses: usage.toolUses ?? current.toolUses,
+          durationMs: usage.durationMs ?? current.durationMs,
+          // Progress is proof of life: it reopens a row an out-of-order
+          // terminal event closed early.
+          status: "running",
+        }));
+        break;
+      }
+
+      case "task.updated":
+        upsert(activity, taskId, (current) => ({
+          ...current,
+          description: optionalString(payload.title) ?? current.description,
+          error: optionalString(payload.detail) ?? current.error,
+          isBackgrounded:
+            typeof payload.isBackgrounded === "boolean"
+              ? payload.isBackgrounded
+              : current.isBackgrounded,
+          status:
+            payload.status === "killed"
+              ? "stopped"
+              : payload.status === "failed"
+                ? "failed"
+                : payload.status === "completed"
+                  ? "completed"
+                  : payload.status === "paused"
+                    ? "paused"
+                    : current.status,
+        }));
+        break;
+
+      case "task.completed": {
+        const usage = readTaskUsage(payload.usage);
+        upsert(activity, taskId, (current) => ({
+          ...current,
+          description: optionalString(payload.title) ?? current.description,
+          summary: optionalString(payload.summary) ?? current.summary,
+          toolUseId: optionalString(payload.toolUseId) ?? current.toolUseId,
+          // Terminal events usually carry no usage; keep what progress reported.
+          totalTokens: usage.totalTokens ?? current.totalTokens,
+          toolUses: usage.toolUses ?? current.toolUses,
+          durationMs: usage.durationMs ?? current.durationMs,
+          // Nothing is running any more, so the live subtitle would be a lie.
+          lastToolName: null,
+          status:
+            payload.status === "failed"
+              ? "failed"
+              : payload.status === "stopped"
+                ? "stopped"
+                : "completed",
+        }));
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  // Running first — the panel's whole question is "what is happening now" —
+  // then by when each started, so rows do not reshuffle as tokens tick up.
+  return [...byTaskId.values()].toSorted((left, right) => {
+    const leftLive = left.status === "running" || left.status === "paused";
+    const rightLive = right.status === "running" || right.status === "paused";
+    if (leftLive !== rightLive) return leftLive ? -1 : 1;
+    return left.startedAt.localeCompare(right.startedAt);
+  });
 }
 
 export function deriveActivePlanState(

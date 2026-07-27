@@ -202,6 +202,20 @@ interface ClaudeSessionContext {
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
+  /**
+   * Fork: `tool_use` id → the model the caller named for that subagent.
+   *
+   * The SDK's task messages carry a subagent's type, description and token
+   * usage but never its model, and the only place the model appears is the Task
+   * tool's own input — which arrives on a different message, before any task
+   * event. `task_started.tool_use_id` is what joins the two, so the value is
+   * parked here when the tool call is seen and read back when the task starts.
+   *
+   * Only ever holds explicitly-named models. A subagent that inherits the
+   * thread's model leaves no entry, and the client fills that in from what it
+   * already knows rather than the server duplicating it.
+   */
+  readonly subagentModels: Map<string, string>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   /** Fork: the context this thread was set to; caps what the meter reports. */
@@ -860,6 +874,23 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+/**
+ * Fork: the model a task's Task call named, if it named one.
+ *
+ * Returns a spreadable fragment rather than a value so the caller stays a flat
+ * object literal — and so "no model was named" spreads to nothing rather than
+ * putting an explicit `undefined` on the wire, which would decode as a field
+ * that is present and empty rather than absent.
+ */
+function subagentModelForTask(
+  context: ClaudeSessionContext,
+  toolUseId: string | undefined,
+): { model?: string } {
+  if (!toolUseId) return {};
+  const model = context.subagentModels.get(toolUseId);
+  return model === undefined ? {} : { model };
 }
 
 function titleForTool(itemType: CanonicalItemType): string {
@@ -2298,6 +2329,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       context.inFlightTools.set(index, tool);
 
+      // Fork: the Task tool's input is the only place a subagent's model is
+      // named, and the task events that will want it arrive later keyed by this
+      // id. Parked rather than emitted, so nothing about this tool call changes.
+      if (itemType === "collab_agent_tool_call" && typeof toolInput.model === "string") {
+        const named = toolInput.model.trim();
+        if (named.length > 0) {
+          context.subagentModels.set(itemId, named);
+        }
+      }
+
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "item.started",
@@ -2442,6 +2483,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: itemStatus,
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          // The SDK reports failure via `is_error` rather than an exit status,
+          // so `exitCode` stays absent here and the UI falls back to `status`.
+          ...(toolResult.text.length > 0 ? { output: toolResult.text } : {}),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -2698,6 +2742,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
             ...(message.task_type ? { taskType: message.task_type } : {}),
+            // Fork: forwarded so a tasks panel can name the agent, point back
+            // at the transcript row, and report the model. All three were
+            // already on the wire and simply dropped here.
+            ...(message.subagent_type ? { subagentType: message.subagent_type } : {}),
+            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            ...subagentModelForTask(context, message.tool_use_id),
           },
         });
         return;
@@ -2719,13 +2769,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
             ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
+            // Fork: repeated on progress so a panel can render a task it only
+            // started hearing about mid-flight — after a reconnect, the first
+            // event a client sees may well be this one rather than task_started.
+            ...(message.subagent_type ? { subagentType: message.subagent_type } : {}),
+            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
           },
         });
         return;
-      // Task state patch (status/backgrounded/end_time). No runtime mapping
-      // yet — the terminal task_notification reports the outcome — but it
-      // must not surface as an unknown-subtype warning row.
+      // Fork: a state patch, and the only way paused / killed / backgrounded
+      // are reachable at all. Previously dropped on the grounds that the
+      // terminal notification reports the outcome — true, but a subagent that
+      // was killed never reaches one, so it read as running forever.
       case "task_updated":
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId: RuntimeTaskId.make(message.task_id),
+            ...(message.patch?.status ? { status: message.patch.status } : {}),
+            ...(message.patch?.description ? { description: message.patch.description } : {}),
+            ...(message.patch?.error ? { error: message.patch.error } : {}),
+            ...(typeof message.patch?.is_backgrounded === "boolean"
+              ? { isBackgrounded: message.patch.is_backgrounded }
+              : {}),
+          },
+        });
         return;
       case "task_notification":
         yield* emitThreadTokenUsage(
@@ -2744,8 +2813,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
+            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
           },
         });
+        // The task is over, so the model parked for it is dead weight. Dropped
+        // here rather than at turn end because subagents outlive turns.
+        if (message.tool_use_id) {
+          context.subagentModels.delete(message.tool_use_id);
+        }
         return;
       case "files_persisted":
         yield* offerRuntimeEvent({
@@ -3208,6 +3283,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
+      const subagentModels = new Map<string, string>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
 
@@ -3670,6 +3746,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         claudeTasks,
+        subagentModels,
         turnState: undefined,
         lastKnownContextWindow: effectiveContextTokens,
         contextWindowCeiling: effectiveContextTokens,

@@ -342,10 +342,56 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * Who last named a thread.
+ *
+ * Exists so an automatic rename can tell whether it would be overwriting
+ * another automatic rename or a decision a person made. Nothing in the command
+ * distinguished those before, which is why the first-turn titler could only
+ * ever replace the literal default: any other title might have been typed.
+ *
+ * - `default`  the placeholder a new thread is born with, and the title an
+ *              agent passes to `thread_create` — chosen without knowing what
+ *              the work turns out to be.
+ * - `generated` the first-turn titler's guess from the opening message.
+ * - `plan`     the heading of the plan the thread proposed, which is a better
+ *              description of the work than a guess made before it started.
+ * - `manual`   a person typed it. Never overwritten by anything automatic.
+ */
+export const ThreadTitleSource = Schema.Literals(["default", "generated", "plan", "manual"]);
+export type ThreadTitleSource = typeof ThreadTitleSource.Type;
+
+/**
+ * The provenance to assume when none was recorded.
+ *
+ * `generated` rather than `manual`, for the same reason migration 037 backfills
+ * that way: the first-turn titler runs on every thread, so an unrecorded title
+ * is overwhelmingly likely to be its work, and the cost of guessing wrong is a
+ * single recoverable rename rather than a feature that never fires.
+ */
+export function resolveThreadTitleSource(
+  titleSource: ThreadTitleSource | undefined,
+): ThreadTitleSource {
+  return titleSource ?? "generated";
+}
+
+/** Titles an automatic rename may replace. A person's title is not among them. */
+export const AUTOMATIC_THREAD_TITLE_SOURCES: ReadonlyArray<ThreadTitleSource> = [
+  "default",
+  "generated",
+  "plan",
+];
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  // Optional rather than defaulted-and-required: a required field would force
+  // every construction site in the codebase to name a provenance it does not
+  // know, and payloads from a server that predates it would stop decoding.
+  // Absent means "provenance unrecorded", which readers treat as `generated` —
+  // see resolveThreadTitleSource.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -415,6 +461,12 @@ export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  // Optional rather than defaulted-and-required: a required field would force
+  // every construction site in the codebase to name a provenance it does not
+  // know, and payloads from a server that predates it would stop decoding.
+  // Absent means "provenance unrecorded", which readers treat as `generated` —
+  // see resolveThreadTitleSource.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -633,6 +685,12 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Omitted means a person typed the title — the decider defaults it to
+   * `manual`. Server-side renamers pass their own source explicitly, so the
+   * safe reading is the one a client gets for free.
+   */
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1016,6 +1074,7 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

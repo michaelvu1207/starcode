@@ -1,23 +1,27 @@
 import {
   ApprovalRequestId,
-  type AssistantDeliveryMode,
+  AUTOMATIC_THREAD_TITLE_SOURCES,
+  CheckpointRef,
   CommandId,
+  isToolLifecycleItemType,
   MessageId,
+  resolveThreadTitleSource,
+  ThreadId,
+  ThreadTitleSource,
+  TurnId,
+  type AssistantDeliveryMode,
+  type OrchestrationCheckpointSummary,
   type OrchestrationEvent,
   type OrchestrationMessage,
-  type OrchestrationProposedPlanId,
-  CheckpointRef,
-  isToolLifecycleItemType,
-  ThreadId,
-  type ThreadTokenUsageSnapshot,
-  TurnId,
-  type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
+  type OrchestrationProposedPlanId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import { proposedPlanTitle } from "@t3tools/shared/proposedPlanTitle";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -56,7 +60,14 @@ function findTaskTitleInActivities(
   }
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (!activity || (activity.kind !== "task.started" && activity.kind !== "task.progress")) {
+    if (
+      !activity ||
+      (activity.kind !== "task.started" &&
+        activity.kind !== "task.progress" &&
+        // Fork: a patch can rename a task, so it is a title source like the
+        // other two. Left out, a renamed task would keep its original label.
+        activity.kind !== "task.updated")
+    ) {
       continue;
     }
     const payload =
@@ -506,6 +517,11 @@ export function runtimeEventToActivities(
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
+            // Fork: carried through so a tasks panel can fold these activities
+            // into per-subagent rows. Nothing existing reads them.
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.model ? { model: event.payload.model } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -533,6 +549,48 @@ export function runtimeEventToActivities(
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    /**
+     * Fork: the state patch between start and finish.
+     *
+     * Tone follows the status rather than being flat info — a killed or failed
+     * subagent is not a neutral progress note, and a work log that renders it
+     * as one buries the one line the reader needed.
+     */
+    case "task.updated": {
+      const status = event.payload.status;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: status === "failed" || status === "killed" ? "error" : "info",
+          kind: "task.updated",
+          summary:
+            status === "killed"
+              ? "Task killed"
+              : status === "failed"
+                ? "Task failed"
+                : status === "paused"
+                  ? "Task paused"
+                  : "Task updated",
+          payload: {
+            taskId: event.payload.taskId,
+            ...(status ? { status } : {}),
+            ...(event.payload.description
+              ? { title: truncateDetail(event.payload.description, 120) }
+              : {}),
+            ...(event.payload.error ? { detail: truncateDetail(event.payload.error) } : {}),
+            ...(event.payload.isBackgrounded !== undefined
+              ? { isBackgrounded: event.payload.isBackgrounded }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -566,6 +624,7 @@ export function runtimeEventToActivities(
                 }
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1127,6 +1186,57 @@ const make = Effect.gen(function* () {
       });
     });
 
+  /**
+   * Renames a thread to the plan it just proposed.
+   *
+   * A thread is named before anyone knows what it is for: either "New thread"
+   * or a guess the first-turn titler made from the opening message. A plan is
+   * the first time the work states its own name, so it is the best title the
+   * thread will ever have — and the sidebar is where that matters, because a
+   * list of threads called "Investigate the thing" is a list you cannot scan.
+   *
+   * Never touches a title a person typed. That is the whole reason provenance
+   * is tracked: silently renaming somebody's thread is worse than leaving a
+   * stale name on it.
+   */
+  const maybeRenameThreadToPlan = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    currentTitle: string;
+    currentTitleSource: ThreadTitleSource | undefined;
+    planMarkdown: string;
+  }) =>
+    Effect.gen(function* () {
+      if (
+        !AUTOMATIC_THREAD_TITLE_SOURCES.includes(resolveThreadTitleSource(input.currentTitleSource))
+      ) {
+        return;
+      }
+      const title = proposedPlanTitle(input.planMarkdown);
+      // No heading is a plan that never named itself; a title identical to the
+      // current one is a replan that landed on the same name. Both are a
+      // no-op, and dispatching either would put a pointless rename in history.
+      if (!title || title === input.currentTitle) {
+        return;
+      }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* providerCommandId(input.event, "thread-title-from-plan"),
+        threadId: input.threadId,
+        title,
+        titleSource: "plan",
+      });
+    }).pipe(
+      // A rename is a courtesy on top of persisting the plan. If it fails, the
+      // plan is still saved and the thread keeps its old name.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to rename thread to its proposed plan", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const finalizeBufferedProposedPlan = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
@@ -1140,6 +1250,9 @@ const make = Effect.gen(function* () {
     turnId?: TurnId;
     fallbackMarkdown?: string;
     updatedAt: string;
+    /** Current name and provenance, so the rename can refuse a human's title. */
+    currentTitle?: string;
+    currentTitleSource?: ThreadTitleSource | undefined;
   }) =>
     Effect.gen(function* () {
       const bufferedPlan = yield* takeBufferedProposedPlan(input.planId);
@@ -1164,6 +1277,16 @@ const make = Effect.gen(function* () {
         updatedAt: input.updatedAt,
       });
       yield* clearBufferedProposedPlan(input.planId);
+
+      if (input.currentTitle !== undefined) {
+        yield* maybeRenameThreadToPlan({
+          event: input.event,
+          threadId: input.threadId,
+          currentTitle: input.currentTitle,
+          currentTitleSource: input.currentTitleSource,
+          planMarkdown,
+        });
+      }
     });
 
   const clearTurnStateForSession = (threadId: ThreadId) =>
@@ -1639,6 +1762,8 @@ const make = Effect.gen(function* () {
           ...(proposedPlanCompletion.turnId ? { turnId: proposedPlanCompletion.turnId } : {}),
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
           updatedAt: now,
+          currentTitle: thread.title,
+          currentTitleSource: thread.titleSource,
         });
       }
 
@@ -1674,6 +1799,8 @@ const make = Effect.gen(function* () {
             planId: proposedPlanIdForTurn(thread.id, turnId),
             turnId,
             updatedAt: now,
+            currentTitle: thread.title,
+            currentTitleSource: thread.titleSource,
           });
         }
       }
@@ -1757,7 +1884,13 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "task.started" || event.type === "task.progress") {
+      if (
+        event.type === "task.started" ||
+        event.type === "task.progress" ||
+        // Fork: a patch carrying a description is a rename, and remembering it
+        // is what lets the terminal event still find a title for the row.
+        event.type === "task.updated"
+      ) {
         const description = event.payload.description?.trim();
         if (description) {
           yield* rememberTaskDescription(thread.id, event.payload.taskId, description);

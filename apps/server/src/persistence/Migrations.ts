@@ -51,6 +51,7 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 // ---- FORK MIGRATIONS ---- keep at the true numeric tail; see 035_ForkUsage.ts
 import Migration0035 from "./Migrations/035_ForkUsage.ts";
 import Migration0036 from "./Migrations/036_ThreadMailbox.ts";
+import Migration0037 from "./Migrations/037_ProjectionThreadsTitleSource.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -100,6 +101,7 @@ export const migrationEntries = [
   // ---- FORK MIGRATIONS ----
   [35, "ForkUsage", Migration0035],
   [36, "ThreadMailbox", Migration0036],
+  [37, "ProjectionThreadsTitleSource", Migration0037],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

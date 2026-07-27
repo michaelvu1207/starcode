@@ -176,6 +176,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "user-input.resolved",
   "task.started",
   "task.progress",
+  "task.updated",
   "task.completed",
   "hook.started",
   "hook.progress",
@@ -226,6 +227,7 @@ const UserInputRequestedType = Schema.Literal("user-input.requested");
 const UserInputResolvedType = Schema.Literal("user-input.resolved");
 const TaskStartedType = Schema.Literal("task.started");
 const TaskProgressType = Schema.Literal("task.progress");
+const TaskUpdatedType = Schema.Literal("task.updated");
 const TaskCompletedType = Schema.Literal("task.completed");
 const HookStartedType = Schema.Literal("hook.started");
 const HookProgressType = Schema.Literal("hook.progress");
@@ -405,7 +407,22 @@ export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Short, single-line preview used as a row label. Adapters put the command
+   * here for `command_execution`, the path for `file_change`, and so on.
+   * Truncated aggressively downstream — never the place to put output.
+   */
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Captured process output, stdout and stderr aggregated in emission order.
+   * Kept separate from `detail` because it is rendered as a block, survives a
+   * far larger truncation budget, and must not be collapsed into the label.
+   */
+  output: Schema.optional(Schema.String),
+  /** True when `output` was clipped, so the UI can say so instead of lying. */
+  outputTruncated: Schema.optional(Schema.Boolean),
+  /** Process exit status. Absent when the provider does not report one. */
+  exitCode: Schema.optional(Schema.Int),
   data: Schema.optional(Schema.Unknown),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
@@ -459,10 +476,33 @@ const UserInputResolvedPayload = Schema.Struct({
 });
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
+/**
+ * A task is a subagent, and these four events are its whole life.
+ *
+ * Every added field below is optional, and optional is the point rather than
+ * caution: a client that predates them keeps decoding, and a provider that has
+ * no answer for one omits it instead of inventing a placeholder the UI would
+ * then have to recognise as meaning "unknown".
+ */
 const TaskStartedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** The named agent — `Explore`, `code-reviewer`. What a panel row is titled by. */
+  subagentType: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The `tool_use` id of the Task call that spawned this. The only thing tying
+   * a task to the row it already occupies in the transcript, so a panel can
+   * point at the timeline instead of duplicating it.
+   */
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The model the caller named for this subagent, when it named one. Absent
+   * means the subagent inherited the thread's — which is a fact the client
+   * already holds, so filling it in here would be the server restating
+   * something it would then have to keep in sync.
+   */
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
@@ -470,16 +510,51 @@ const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: TrimmedNonEmptyStringSchema,
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * `{ total_tokens, tool_uses, duration_ms }` as the provider reports it.
+   *
+   * `total_tokens` is a **running total for the task**, not a delta — verified
+   * against real runs, where one task climbed 18,945 → 81,724 across 117 of
+   * these. A consumer must replace rather than accumulate, or it will report
+   * roughly the square of the truth.
+   */
   usage: Schema.optional(Schema.Unknown),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
+  subagentType: Schema.optional(TrimmedNonEmptyStringSchema),
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
+
+/**
+ * A state patch, not an outcome.
+ *
+ * The terminal result arrives as `task.completed`; this is how the states
+ * *before* it are reachable — paused, killed, backgrounded — which otherwise
+ * leave a stopped subagent reading as still running until it finishes, which it
+ * never will.
+ */
+const TaskUpdatedPayload = Schema.Struct({
+  taskId: RuntimeTaskId,
+  status: Schema.optional(
+    Schema.Literals(["pending", "running", "completed", "failed", "killed", "paused"]),
+  ),
+  description: Schema.optional(TrimmedNonEmptyStringSchema),
+  error: Schema.optional(TrimmedNonEmptyStringSchema),
+  isBackgrounded: Schema.optional(Schema.Boolean),
+});
+export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
 
 const TaskCompletedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   status: Schema.Literals(["completed", "failed", "stopped"]),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Frequently absent — only 3 of 17 terminal notifications carried it in the
+   * runs this was checked against. A consumer must keep the last progress
+   * figure rather than treat the omission as zero.
+   */
   usage: Schema.optional(Schema.Unknown),
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskCompletedPayload = typeof TaskCompletedPayload.Type;
 
@@ -835,6 +910,13 @@ const ProviderRuntimeTaskProgressEvent = Schema.Struct({
 });
 export type ProviderRuntimeTaskProgressEvent = typeof ProviderRuntimeTaskProgressEvent.Type;
 
+const ProviderRuntimeTaskUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: TaskUpdatedType,
+  payload: TaskUpdatedPayload,
+});
+export type ProviderRuntimeTaskUpdatedEvent = typeof ProviderRuntimeTaskUpdatedEvent.Type;
+
 const ProviderRuntimeTaskCompletedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TaskCompletedType,
@@ -995,6 +1077,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeUserInputResolvedEvent,
   ProviderRuntimeTaskStartedEvent,
   ProviderRuntimeTaskProgressEvent,
+  ProviderRuntimeTaskUpdatedEvent,
   ProviderRuntimeTaskCompletedEvent,
   ProviderRuntimeHookStartedEvent,
   ProviderRuntimeHookProgressEvent,
