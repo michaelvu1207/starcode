@@ -65,7 +65,6 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -554,7 +553,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       snoozeSupported={props.snoozeSupported}
       snoozeAllowed={snoozeAllowed}
       driverKind={driverKind}
-      providerDisplayName={thread.session?.providerName ?? modelInstanceId}
       jumpLabel={props.jumpLabel}
       renamingTitle={renamingTitle}
       tooltip={detailsTooltip}
@@ -1721,31 +1719,9 @@ export default function SidebarV2() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  // New thread defaults to the project you're in (active thread's project,
-  // falling back to the top project) — same resolution the command palette
-  // uses. The command palette already offers a "New thread in..." submenu
-  // for multi-project setups.
-  const handleNewThreadClick = useCallback(() => {
-    // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
-      if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-      return;
-    }
-    if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
-
   return (
     <>
       <SidebarHeaderCompact
-        onNewThread={handleNewThreadClick}
-        newThreadDisabled={projects.length === 0}
         onNewProject={openAddProjectCommandPalette}
         showProjectActions={projectGroups.length > 0}
       />

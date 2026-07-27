@@ -79,7 +79,6 @@ function render(
     snoozeSupported: true,
     snoozeAllowed: true,
     driverKind: null,
-    providerDisplayName: "Codex",
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
@@ -119,7 +118,7 @@ describe("SidebarThreadRow", () => {
 
   it("is one shape for every section — settled and snoozed rows are the same row", () => {
     // The variant split is the thing this component replaced: a thread that
-    // settles must not change size or lose its machine and its agent.
+    // settles must not change size or lose its machine.
     const live = render({ rowAction: "settle" });
     const settled = render({ rowAction: "unsettle" });
     const snoozed = render({ rowAction: "unsnooze", snoozeWakeLabelText: "2h" });
@@ -145,17 +144,35 @@ describe("SidebarThreadRow", () => {
     expect(classes).toContain("h-8");
   });
 
-  it("shows which agent is driving the thread, when one is known", () => {
-    // The glyph is decorative markup with no text of its own, so the row's own
-    // wrapper is what a caller can assert on — and what the driver kind lands
-    // in when Claude and Codex threads sit in the same list.
-    expect(render({ driverKind: ProviderDriverKind.make("codex") })).toContain(
-      'data-driver-kind="codex"',
-    );
-    expect(render({ driverKind: ProviderDriverKind.make("claude") })).toContain(
-      'data-driver-kind="claude"',
-    );
-    expect(render({ driverKind: null })).not.toContain('data-testid="sidebar-v2-row-provider"');
+  it("draws no agent glyph — which of Claude or Codex is driving is tooltip detail", () => {
+    // Asserted for a known driver rather than only for `null`: the row still
+    // takes `driverKind`, because the menu forks a session with it, so "the
+    // prop is absent" and "the glyph is absent" are different claims and it is
+    // the second one that survives a later change.
+    for (const driverKind of [
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claude"),
+      null,
+    ]) {
+      const markup = render({ driverKind });
+      expect(markup).not.toContain('data-testid="sidebar-v2-row-provider"');
+      expect(markup).not.toContain("data-driver-kind");
+    }
+  });
+
+  it("leads with the machine: the mark comes before the title, not after it", () => {
+    const markup = render();
+    const mark = markup.indexOf('data-testid="connection-mark"');
+    const title = markup.indexOf("Teach the sidebar one row");
+
+    expect(mark).toBeGreaterThan(-1);
+    expect(title).toBeGreaterThan(-1);
+    // A column of marks down the left edge is the point — one buried in the
+    // trailing block reads as furniture and cannot be scanned.
+    expect(mark).toBeLessThan(title);
+    // Exactly one: the left edge replaced the trailing slot rather than
+    // doubling it.
+    expect(markup.match(/data-testid="connection-mark"/g)).toHaveLength(1);
   });
 
   it("names the live status for anyone who cannot see the colour", () => {

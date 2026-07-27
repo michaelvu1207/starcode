@@ -7,20 +7,22 @@
  * it settled, and a list containing both read as two lists stapled together.
  * The card also spent 78px and three lines saying what fits on one.
  *
- * What is on the row, and nothing else: the thread's name, the machine it runs
- * on, the agent driving it, and when it last spoke. Status is a coloured glyph
- * in front of the time, and how far through its task list the thread is is a
- * hairline along the bottom edge. Everything the card used to spell out —
- * project name, machine name, model, branch, task counts, the failure — is in
- * the tooltip, which is where second-order detail belongs on a surface you
- * scan forty times a day.
+ * What is on the row, and nothing else: the machine it runs on, the thread's
+ * name, and when it last spoke — the machine's mark leading the row, the title
+ * taking the space that is left. Status is a coloured glyph in front of the
+ * time, and how far through its task list the thread is is a hairline along the
+ * bottom edge. Everything the card used to spell out — project name, machine
+ * name, model, branch, task counts, the failure — is in the tooltip, which is
+ * where second-order detail belongs on a surface you scan forty times a day.
  *
- * Three things are deliberately absent. There is no rounded card: the hover and
+ * Four things are deliberately absent. There is no rounded card: the hover and
  * selection surfaces are full-bleed bands, so a list of threads reads as a list
  * and not as a stack of tiles. There is no ticking work duration; the working
  * glyph pulses, which answers "is it running" without a second of layout
- * churn per second. And there is no machine *name* — the mark carries the
- * machine's identity in colour, and the name is one hover away.
+ * churn per second. There is no machine *name* — the mark carries the machine's
+ * identity in colour, and the name is one hover away. And there is no agent
+ * glyph: which of Claude or Codex is driving is not how you pick a thread out
+ * of a list, and it is named beside its model in the tooltip.
  *
  * Fork-owned and purely presentational. Every piece of state and every handler
  * arrives as a prop from `SidebarV2Row`, which keeps the hooks, the git and PR
@@ -53,7 +55,6 @@ import {
 
 import { cn } from "~/lib/utils";
 import type { OpenInSplitState } from "../split/openInSplit";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { resolveSnoozePresets } from "../Sidebar.snooze";
 import { Menu, MenuGroup, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
@@ -346,7 +347,6 @@ export function SidebarThreadRow({
   snoozeAllowed,
   splitState,
   driverKind,
-  providerDisplayName,
   jumpLabel,
   renamingTitle,
   tooltip,
@@ -375,8 +375,11 @@ export function SidebarThreadRow({
    * every other decision this row makes.
    */
   readonly splitState: OpenInSplitState;
+  /**
+   * Which agent drives the thread. No longer drawn on the row — it reaches only
+   * the menu, where it decides whether the session can be forked.
+   */
   readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
-  readonly providerDisplayName: string;
   readonly jumpLabel: string | null;
   readonly renamingTitle: string;
   readonly tooltip: ReactNode;
@@ -430,6 +433,15 @@ export function SidebarThreadRow({
             />
           }
         >
+          {/* The machine leads the row. It is the one thing here that says where
+              the work is happening, and a column of marks down the left edge is
+              scannable in a way the same glyph buried in the trailing block was
+              not — you find a machine's threads by running down one edge rather
+              than reading four rows' worth of right-hand furniture.
+              Outside the rename branch so it holds its place while the title is
+              an input: the row must not reflow to be edited. */}
+          <ConnectionMark environmentId={thread.environmentId} className="size-3.5" />
+
           {flags.isRenaming ? (
             <input
               autoFocus
@@ -459,12 +471,17 @@ export function SidebarThreadRow({
             </span>
           )}
 
-          {/* The trailing block holds still. Status, machine and agent are
-              fixed-width and never move, so nothing about the row changes shape
-              when the pointer crosses it — the thing that made a list of these
-              unreadable to skim. Only the time slot swaps, and only for the
-              menu: it is the least load-bearing thing on the row, and the
-              alternative is a `···` sitting permanently on every row. */}
+          {/* The trailing block holds still. Status is fixed-width and never
+              moves, so nothing about the row changes shape when the pointer
+              crosses it — the thing that made a list of these unreadable to
+              skim. Only the time slot swaps, and only for the menu: it is the
+              least load-bearing thing on the row, and the alternative is a `···`
+              sitting permanently on every row.
+              The agent's glyph used to sit here, beside the machine's. Two
+              decorative marks in the corner of a row you skim is one more than
+              carries its weight, and of the two the agent is the one you rarely
+              choose a thread by — it is named, with its model, in the tooltip.
+              The machine kept its place in the list and moved to the left edge. */}
           <span className="flex h-6 shrink-0 items-center justify-end gap-2">
             {chip === null ? null : (
               <span
@@ -476,20 +493,6 @@ export function SidebarThreadRow({
                 className={cn("inline-flex shrink-0 items-center", STATUS_TONE_CLASS[chip.tone])}
               >
                 <StatusGlyph tone={chip.tone} />
-              </span>
-            )}
-            <ConnectionMark environmentId={thread.environmentId} className="size-3.5" />
-            {driverKind === null ? null : (
-              <span
-                data-testid="sidebar-v2-row-provider"
-                data-driver-kind={driverKind}
-                className="inline-flex shrink-0 items-center opacity-70"
-              >
-                <ProviderInstanceIcon
-                  driverKind={driverKind}
-                  displayName={providerDisplayName}
-                  iconClassName="size-3.5"
-                />
               </span>
             )}
             <span className="relative flex h-6 min-w-7 shrink-0 items-center justify-end">

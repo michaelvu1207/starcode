@@ -1,21 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import { SettingsIcon } from "lucide-react";
-import { memo, useCallback, type ReactNode } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { memo, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 
 import { APP_STAGE_LABEL } from "../../branding";
 import { cn } from "../../lib/utils";
 import { primaryServerConfigAtom } from "../../state/server";
 import { resolveSidebarStageBadgeLabel } from "../Sidebar.logic";
 import { SidebarStageBackdrop, resolveSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
-import {
-  SidebarFooter,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "../ui/sidebar";
+import { SidebarFooter, SidebarHeader } from "../ui/sidebar";
 import { StarcodeWordmark } from "../brand/StarcodeWordmark";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -87,32 +79,22 @@ function useSidebarStageLabel() {
   });
 }
 
+/**
+ * What is left at the foot of the sidebar: the two update pills, and nothing
+ * else. Settings used to sit here as a full-width labelled row — it moved up
+ * into the header's icon strip, where the other app-level controls already are.
+ *
+ * `empty:hidden` is load-bearing now rather than defensive. Both pills render
+ * `null` when there is no update to announce, which is almost always; without
+ * it this element would still spend its `p-2` on nothing and leave a band of
+ * dead space under the thread list. Settings was previously what guaranteed
+ * this footer always had a child.
+ */
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const handleSettingsClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/settings" });
-  }, [isMobile, navigate, setOpenMobile]);
-
   return (
-    <SidebarFooter className="p-2">
+    <SidebarFooter className="p-2 empty:hidden">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-4.5 shrink-0" />
-            <span>Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
     </SidebarFooter>
   );
 });

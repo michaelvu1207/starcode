@@ -688,14 +688,23 @@ html.dark body {
   background-size: 256px 256px;
 }
 
-/* Every route wraps its content in another full-size `bg-background` div. That
-   div is opaque `--background`, so without this the pane would be glass over an
-   opaque plate — the sky would be occluded one element below where it is let in.
+/* Some routes wrap their content in another full-size `bg-background` div — the
+   index route's empty states are the ones left. That div is opaque
+   `--background`, so without this the pane would be glass over an opaque plate
+   — the sky would be occluded one element below where it is let in.
    This rule predates the sky layer as a workaround for the pane's own gradient;
    it survives as part of the L1 doctrine, because a panel being translucent is
    worth nothing if its immediate child is not.
    Scoped to direct children so nothing deeper — cards, popovers, the composer,
-   any L3 surface that must occlude what scrolls under it — loses its fill. */
+   any L3 surface that must occlude what scrolls under it — loses its fill.
+
+   `ChatView` no longer participates: it carries no fill at all, because `>` only
+   ever reached it on the draft route. The thread route wraps it in
+   `.sc-split-container`, which put its root one level too deep and turned the
+   pane black the moment a draft was sent. The lesson is in the selector — any
+   wrapper inserted between the inset and a route body silently reintroduces the
+   plate, so route bodies should not paint rather than rely on being reached
+   here. */
 [data-slot="sidebar-inset"] > .bg-background {
   background-color: transparent;
 }

@@ -9,10 +9,24 @@
  *
  * This collapses all three into two: the wordmark on its own row, and one
  * compact icon strip beneath it. The actions are the same actions — the search
- * overlay is still the command dialog ⌘K opens, new thread is still
- * `handleNewThreadClick`, new project is still the add-project command
- * palette — so nothing here owns behaviour, only placement. Fork-owned so the
- * diff inside `SidebarV2.tsx` stays a call site.
+ * overlay is still the command dialog ⌘K opens, new project is still the
+ * add-project command palette — so nothing here owns behaviour, only
+ * placement. Fork-owned so the diff inside `SidebarV2.tsx` stays a call site.
+ *
+ * Two icons that were here are not any more. **New thread** left because the
+ * strip was never its only door: the `chat.newLocal` binding is handled at the
+ * route (`_chat.tsx`), the command palette offers it with a project submenu,
+ * and every project group carries its own `+` — which is the one that already
+ * says *which* project the thread lands in, the question this button had to
+ * guess at. **Workbench** left because the thing it pointed at should not
+ * exist: a workbench belongs to a project, and each project has its own on its
+ * home view. The fleet-wide `/workbench` route is still routable by URL and no
+ * longer linked from anywhere.
+ *
+ * One icon arrived: **Settings**, which was a full-width labelled row at the
+ * foot of the sidebar. It is an app-level control like the rest of this strip,
+ * and it was the last thing keeping `SidebarChromeFooter` from collapsing on
+ * the common case where neither update pill has anything to say.
  *
  * The collapse control leads the strip. It is the same `SidebarTrigger` the
  * fixed workspace control renders, and that control still appears — but only
@@ -23,15 +37,15 @@
  * `sidebarProjectScope.ts`.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { Link } from "@tanstack/react-router";
-import { MapIcon, SearchIcon, SquarePenIcon } from "lucide-react";
-import { memo } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { SearchIcon, SettingsIcon } from "lucide-react";
+import { memo, useCallback } from "react";
 
 import { isElectron } from "../../env";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { CommandDialogTrigger } from "../ui/command";
-import { SidebarMenuButton, SidebarTrigger } from "../ui/sidebar";
+import { SidebarMenuButton, SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarChromeHeader } from "./SidebarChrome";
 import { SidebarConnectionsMenu } from "./SidebarConnectionsMenu";
@@ -64,34 +78,36 @@ function TouchTarget() {
 }
 
 export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
-  onNewThread,
-  newThreadDisabled,
   onNewProject,
   showProjectActions,
 }: {
-  onNewThread: () => void;
-  newThreadDisabled: boolean;
   onNewProject: () => void;
   /** False until at least one project exists — matches the old row-3 gate. */
   showProjectActions: boolean;
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const searchShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
-  // Same resolution as the row it replaces: prefer the local-thread binding,
-  // fall back to chat.new, no platform gating.
-  const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.newLocal") ??
-    shortcutLabelForCommand(keybindings, "chat.new");
   // Same binding the fixed workspace control advertises, so both entry points
   // teach the same shortcut.
   const sidebarShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  // Carried over verbatim from the footer row this replaces: on mobile the
+  // sidebar is an overlay, so navigating without closing it leaves settings
+  // opened underneath the sheet that opened it.
+  const handleSettingsClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/settings" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarChromeHeader
       isElectron={isElectron}
       actions={
         // Centred, with symmetric padding, so the strip stays balanced at any
-        // icon count — it has already gone from four to six.
+        // icon count — it has been as high as seven and is now six.
         //
         // It used to be left-aligned to the wordmark's edge, which meant
         // carrying the workspace titlebar-control inset (~46px). That inset
@@ -102,12 +118,10 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
         // Michael saw.
         //
         // `flex-wrap` is the overflow behaviour rather than a scroller or a
-        // squeeze: the sidebar is resizable down to 208px, where seven 28px
-        // buttons plus their gaps come to 220px — past the 192px of usable
-        // width — so the last icon wraps to a second centred line rather than
-        // overflowing the panel. That wrap only happens at the narrowest few
-        // pixels of the resize range; at the default width all seven sit on
-        // one line.
+        // squeeze. Six 28px buttons plus their gaps come to ~188px, which still
+        // fits the 192px of usable width at the sidebar's 208px minimum — so
+        // nothing wraps today, and a seventh icon would drop to a second
+        // centred line rather than overflowing the panel.
         <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1 px-2 pb-1">
           <Tooltip>
             <TooltipTrigger
@@ -142,68 +156,43 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
               {searchShortcutLabel ? `Search (${searchShortcutLabel})` : "Search"}
             </TooltipPopup>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <SidebarMenuButton
-                  size="sm"
-                  type="button"
-                  className={HEADER_ACTION_BUTTON_CLASS}
-                  onClick={onNewThread}
-                  disabled={newThreadDisabled}
-                  aria-label="New thread"
-                  data-testid="sidebar-new-thread"
-                />
-              }
-            >
-              <SquarePenIcon className={HEADER_ACTION_ICON_CLASS} />
-              <TouchTarget />
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
-            </TooltipPopup>
-          </Tooltip>
-          {/* Outside the `showProjectActions` gate: the Workbench is how an
-              operator sees every machine at once, and it must not disappear
-              with the project buttons on a client that has no projects yet.
-              A map, not a grid: what is behind this button is the star map, and
-              a grid glyph promised a dashboard of tiles that has not been there
-              since F14. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <SidebarMenuButton
-                  size="sm"
-                  type="button"
-                  className={HEADER_ACTION_BUTTON_CLASS}
-                  aria-label="Workbench"
-                  data-testid="sidebar-workbench"
-                  render={<Link to="/workbench" />}
-                />
-              }
-            >
-              <MapIcon className={HEADER_ACTION_ICON_CLASS} />
-              <TouchTarget />
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">Workbench</TooltipPopup>
-          </Tooltip>
-          {/* Also outside the `showProjectActions` gate, and for a stronger
-              reason than the Workbench: when a machine drops out, this is the
-              icon that says so, and a client with no projects is exactly the
-              client whose connections are worth checking. */}
+          {/* Outside the `showProjectActions` gate: when a machine drops out,
+              this is the icon that says so, and a client with no projects is
+              exactly the client whose connections are worth checking. */}
           <SidebarConnectionsMenu />
           {showProjectActions ? (
             <>
               {/* The projects popover replaces the old "New project" button
-                  rather than joining it: the strip is at seven icons and an
-                  eighth wraps at the sidebar's minimum width. Creating a folder
-                  on this machine is still here — it moved into the popover's
-                  foot, where it sits next to the projects it would be filed
-                  under. */}
+                  rather than joining it. Creating a folder on this machine is
+                  still here — it moved into the popover's foot, where it sits
+                  next to the projects it would be filed under. */}
               <SidebarProjectsMenu onNewProject={onNewProject} />
               <SidebarV2ViewMenu />
             </>
           ) : null}
+          {/* Last, and outside the gate. Settings is the one control here that
+              is about the app rather than about what is in the sidebar, so it
+              takes the end of the strip and keeps it whether or not a project
+              exists — a client with none is one that may well need to reach
+              its connections and providers. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarMenuButton
+                  size="sm"
+                  type="button"
+                  className={HEADER_ACTION_BUTTON_CLASS}
+                  onClick={handleSettingsClick}
+                  aria-label="Settings"
+                  data-testid="sidebar-settings"
+                />
+              }
+            >
+              <SettingsIcon className={HEADER_ACTION_ICON_CLASS} />
+              <TouchTarget />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Settings</TooltipPopup>
+          </Tooltip>
         </div>
       }
     />

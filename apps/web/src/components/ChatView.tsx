@@ -5729,7 +5729,12 @@ function ChatViewContent(props: ChatViewProps) {
   ) : null;
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    // No fill. The pane's tint is L1 and belongs to `[data-slot="sidebar-inset"]`;
+    // this is the pane interior, so it draws nothing and the sky runs behind the
+    // transcript. That holds in every embedding — the thread route's split
+    // container, both split panes, the workbench master pane, the project home —
+    // rather than only where this happens to land as a direct child of the inset.
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
