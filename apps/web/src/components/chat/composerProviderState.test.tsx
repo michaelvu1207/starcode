@@ -309,6 +309,21 @@ describe("the composer's context row", () => {
     expect(renderProviderContextPicker(args)).not.toBeNull();
   });
 
+  it("stays out of the reasoning summary on a model with no reasoning option", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        booleanDescriptor("thinking"),
+        selectDescriptor("context", contextOptions),
+      ]),
+      modelOptions: undefined,
+    });
+
+    // Otherwise the composer trigger would read "Haiku 4.5 · 200k · Full".
+    expect(state.promptEffort).toBeNull();
+  });
+
   it("degrades a stale choice onto a model that no longer offers it", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

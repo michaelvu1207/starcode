@@ -80,7 +80,11 @@ export function clampToClaudeContextChoice(
   return fitted;
 }
 
-/** Default cap applied to every Claude instance that has not overridden it. */
+/**
+ * Fallback for a context we cannot derive from a model — a custom slug, whose
+ * window we have no way to know. Built-in models never reach this: each one
+ * declares its own starting size.
+ */
 export const DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS = 600_000;
 
 /**

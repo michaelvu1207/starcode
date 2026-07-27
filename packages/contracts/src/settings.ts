@@ -317,7 +317,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Default context for new threads",
         description:
-          "Context each new thread starts on, before you change it in the composer. Blank uses the 600k default; accepts 600000 or 600k. Rounded down to the nearest size the chosen model offers (200k, 600k, 1M).",
+          "Context each new thread starts on, before you change it in the composer. Leave blank to start each model on its usual size. Accepts 600000 or 600k, rounded down to the nearest size the chosen model offers (200k, 600k, 1M).",
         providerSettingsForm: {
           placeholder: "600k",
           clearWhenEmpty: "omit",

@@ -34,6 +34,10 @@ import {
  */
 const CONTEXT_DESCRIPTOR_IDS = [CLAUDE_CONTEXT_OPTION_ID, "contextWindow"] as const;
 
+function isContextDescriptorId(id: string): boolean {
+  return (CONTEXT_DESCRIPTOR_IDS as ReadonlyArray<string>).includes(id);
+}
+
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
   model: string;
@@ -73,9 +77,12 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const { provider, model, models, modelOptions, promptInjectionState = "none" } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
   const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
+  // The composer's trigger summarizes reasoning, so the context row's own
+  // descriptor is skipped: on a model with no reasoning option (Haiku) it would
+  // otherwise be the first select and the trigger would read "Haiku 4.5 · 200k".
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && !isContextDescriptorId(descriptor.id),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
@@ -109,9 +116,7 @@ export function getComposerContextState(input: ComposerProviderStateInput): {
   const descriptors = getProviderOptionDescriptors({ caps, selections: input.modelOptions });
   return {
     hasSelector: descriptors.some(
-      (candidate) =>
-        candidate.type === "select" &&
-        (CONTEXT_DESCRIPTOR_IDS as ReadonlyArray<string>).includes(candidate.id),
+      (candidate) => candidate.type === "select" && isContextDescriptorId(candidate.id),
     ),
   };
 }

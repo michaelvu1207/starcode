@@ -41,9 +41,9 @@ export interface ComposerOptionsPopoverProps {
   readonly runtimeMode: RuntimeMode;
   readonly onRuntimeModeChange: (mode: RuntimeMode) => void;
   /**
-   * The one context row. `picker` is the model's context-window selector when
-   * it has one; `chipLabel` stands in for models that expose no choice; `hint`
-   * says where the conversation compacts. Null when the provider has neither.
+   * The one context row, directly under the model it belongs to. `picker` is
+   * the model's context selector where it has one; `chipLabel` and `hint` stand
+   * in for models that offer no choice. Null for providers with nothing to say.
    */
   readonly context: {
     readonly picker: ReactNode;
@@ -127,6 +127,19 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
         <div className="grid gap-2.5">
           <ComposerOptionRow label="Model">{modelPicker}</ComposerOptionRow>
 
+          {context ? (
+            <ComposerOptionRow label="Context" {...(context.hint ? { hint: context.hint } : {})}>
+              {context.picker ?? (
+                <span
+                  data-chat-composer-context-limit="true"
+                  className="rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground text-xs tabular-nums"
+                >
+                  {context.chipLabel}
+                </span>
+              )}
+            </ComposerOptionRow>
+          ) : null}
+
           {traitsPicker ? (
             <ComposerOptionRow label="Reasoning">{traitsPicker}</ComposerOptionRow>
           ) : null}
@@ -167,19 +180,6 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
               </SelectPopup>
             </Select>
           </ComposerOptionRow>
-
-          {context ? (
-            <ComposerOptionRow label="Context" {...(context.hint ? { hint: context.hint } : {})}>
-              {context.picker ?? (
-                <span
-                  data-chat-composer-context-limit="true"
-                  className="rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground text-xs tabular-nums"
-                >
-                  {context.chipLabel}
-                </span>
-              )}
-            </ComposerOptionRow>
-          ) : null}
         </div>
       </PopoverPopup>
     </Popover>
