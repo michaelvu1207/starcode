@@ -24,6 +24,8 @@
 import {
   type ClientOrchestrationCommand,
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   MessageId,
   PeerFederationError,
   type PeerFederationOperation,
@@ -466,13 +468,19 @@ export const make = Effect.gen(function* () {
     // Plain `thread.turn.start` against an existing thread — exactly what the
     // operator's own composer sends. The interrupt semantics are the peer's,
     // not something this fork reimplements.
+    //
+    // The modes here are schema ballast, not a decision: the peer's decider
+    // reads the *thread's* stored modes for the turn it starts and ignores
+    // these two fields (`decider.ts`, `thread.turn.start`). They still have to
+    // decode, so they carry the app-wide defaults rather than a stricter pair
+    // that would read as an intent this call does not have.
     const command = {
       type: "thread.turn.start",
       commandId,
       threadId: options.threadId,
       message: { messageId, role: "user", text: options.message, attachments: [] },
-      runtimeMode: "approval-required",
-      interactionMode: "default",
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       createdAt,
     } as unknown as ClientOrchestrationCommand;
 

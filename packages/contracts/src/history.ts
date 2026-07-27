@@ -34,6 +34,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { RuntimeMode } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Days of history a listing covers when the caller names no window. */
@@ -337,6 +338,13 @@ export const HistoryImportRequest = Schema.Struct({
   projectId: Schema.optionalKey(ProjectId),
   model: Schema.optionalKey(TrimmedNonEmptyString),
   title: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * How much the imported thread may do without asking. Absent, it starts in
+   * the app-wide default mode, the same as any other new thread — nothing on
+   * disk records what permissions the terminal session actually ran with, so
+   * there is nothing here to inherit.
+   */
+  runtimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Answer to a previous `needs_project` outcome. Absent, an import with no
    * matching project reports what it would create and writes nothing; set,

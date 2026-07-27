@@ -33,10 +33,12 @@ import {
   type HistorySessionId,
   type ClientOrchestrationCommand,
   CommandId,
+  DEFAULT_RUNTIME_MODE,
   type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
+  type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -68,12 +70,15 @@ import { HistoryImportRegistry } from "./importRegistry.ts";
 import { readSessionHead, readSessionStats, type SessionStats } from "./tailReader.ts";
 
 /**
- * An imported thread starts in the safe mode, not the mode the terminal
- * session ran in. Nothing on disk records what permissions the CLI was given,
- * and inheriting "whatever that session had" from a guess is not a default
- * worth having — the operator can raise it in one click.
+ * An imported thread starts in the app-wide default mode, not the mode the
+ * terminal session ran in. Nothing on disk records what permissions the CLI
+ * was given, so there is nothing here to inherit — and an import is the
+ * operator adopting a session they already ran, not an unattended write, so it
+ * has no claim to a stricter floor than the composer's own new-thread default.
+ * A caller that wants something else says so: `HistoryImportInput.runtimeMode`
+ * wins outright.
  */
-const IMPORTED_THREAD_RUNTIME_MODE = "approval-required" as const;
+const IMPORTED_THREAD_RUNTIME_MODE = DEFAULT_RUNTIME_MODE;
 
 /** The session id resolved to nothing this server has indexed. */
 export class HistorySessionNotFound extends Schema.TaggedErrorClass<HistorySessionNotFound>()(
@@ -107,6 +112,7 @@ export interface HistoryImportInput {
   readonly projectId?: ProjectId | undefined;
   readonly model?: string | undefined;
   readonly title?: string | undefined;
+  readonly runtimeMode?: RuntimeMode | undefined;
   readonly createProject?: boolean | undefined;
 }
 
@@ -299,6 +305,10 @@ export const makeHistoryImporter = Effect.gen(function* () {
       sessionTitle: summary?.title,
       requested: input.title,
     });
+    // One value, written to both the thread and its session binding, so a
+    // caller that asked for a mode cannot end up with the thread reading one
+    // way and the resumed session running the other.
+    const runtimeMode = input.runtimeMode ?? IMPORTED_THREAD_RUNTIME_MODE;
 
     let project: OrchestrationProjectShell | null = null;
     if (input.projectId !== undefined) {
@@ -381,7 +391,7 @@ export const makeHistoryImporter = Effect.gen(function* () {
       projectId,
       title,
       modelSelection,
-      runtimeMode: IMPORTED_THREAD_RUNTIME_MODE,
+      runtimeMode,
       interactionMode: "default",
       branch: null,
       worktreePath: null,
@@ -405,7 +415,7 @@ export const makeHistoryImporter = Effect.gen(function* () {
         provider: instance.driverKind,
         providerInstanceId: instanceId,
         adapterKey: instance.driverKind,
-        runtimeMode: IMPORTED_THREAD_RUNTIME_MODE,
+        runtimeMode,
         status: "stopped",
         resumeCursor: importResumeCursor({
           provider: entry.provider,

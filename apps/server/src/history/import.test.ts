@@ -348,6 +348,49 @@ describe("history import", () => {
     ),
   );
 
+  // The two runtime-mode tests spell the modes as literals rather than as
+  // `DEFAULT_RUNTIME_MODE`. What is under test is the policy — an imported
+  // thread is as capable as one started in the composer, and a caller who
+  // names a mode gets it — and an assertion written against the constant
+  // would follow the constant and prove neither.
+  it.effect("starts an imported thread in the app-wide default runtime mode", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const importer = yield* makeHistoryImporter;
+        const result = yield* importer.importSession({
+          sessionId: sessionId(harness.claudeSessionPath),
+        });
+
+        assert.equal(result.status, "imported");
+        const created = threadCreates(harness)[0];
+        assert.equal(created?.type === "thread.create" ? created.runtimeMode : null, "full-access");
+        // The binding has to agree with the thread, or the thread reads one
+        // way in the composer and the resumed session runs the other.
+        assert.equal(harness.bindings[0]?.runtimeMode, "full-access");
+      }),
+    ),
+  );
+
+  it.effect("records the runtime mode the caller asked for", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const importer = yield* makeHistoryImporter;
+        const result = yield* importer.importSession({
+          sessionId: sessionId(harness.claudeSessionPath),
+          runtimeMode: "approval-required",
+        });
+
+        assert.equal(result.status, "imported");
+        const created = threadCreates(harness)[0];
+        assert.equal(
+          created?.type === "thread.create" ? created.runtimeMode : null,
+          "approval-required",
+        );
+        assert.equal(harness.bindings[0]?.runtimeMode, "approval-required");
+      }),
+    ),
+  );
+
   it.effect("binds an imported Codex thread with the rollout id as its cursor", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

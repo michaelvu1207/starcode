@@ -33,7 +33,10 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { toProjectCategorySlug } from "@t3tools/contracts";
+import {
+  DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS,
+  toProjectCategorySlug,
+} from "@t3tools/contracts";
 
 import type { WorkbenchMasterCandidate } from "../workbench/Workbench.master";
 
@@ -92,7 +95,7 @@ const EMPTY_LOCAL: ProjectCategoryLocal = {
   threadIds: [],
   excludedThreadIds: [],
   masterThreadId: "",
-  masterDefaults: { runtimeMode: "approval-required", interactionMode: "plan" },
+  masterDefaults: DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS,
   defaults: {},
   updatedAt: "",
 };

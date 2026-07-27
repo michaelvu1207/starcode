@@ -11,7 +11,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
-import { resolveLocalProjectMembership, type ProjectCategoryRecord } from "./projectCatalog.ts";
+import {
+  DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS,
+  resolveLocalProjectMembership,
+  type ProjectCategoryRecord,
+} from "./projectCatalog.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 
 const project = (value: string) => ProjectId.make(value);
@@ -134,5 +138,17 @@ describe("resolveLocalProjectMembership", () => {
       threads,
     });
     expect(slugsOf(result)).toEqual([["alpamayo", ["t-scratch"]]]);
+  });
+});
+
+describe("project category master defaults", () => {
+  // The literal, not `DEFAULT_RUNTIME_MODE`: what is pinned is that a
+  // per-project orchestrator is gated by plan mode alone, and gets the same
+  // permissions as any other new thread.
+  it("matches the workbench master pair", () => {
+    expect(DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS).toEqual({
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    });
   });
 });

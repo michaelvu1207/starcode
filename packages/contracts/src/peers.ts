@@ -379,7 +379,7 @@ export const PeerThreadCreateInput = Schema.Struct({
   runtimeMode: Schema.optional(
     RuntimeMode.annotate({
       description:
-        "How much the new thread may do without asking. Defaults to the project's setting on that peer, or approval-required.",
+        "How much the new thread may do without asking. Defaults to the project's setting on that peer, or full-access.",
     }),
   ),
   interactionMode: Schema.optional(

@@ -39,7 +39,12 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentPlatform } from "./environment.ts";
-import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./orchestration.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 import { PROJECT_CATEGORY_ICON_MAX_LENGTH, ProjectCategoryIconDataUri } from "./projectIcon.ts";
 import { WorkbenchMasterDefaults } from "./settings.ts";
@@ -132,7 +137,7 @@ export type ProjectCategoryDisplay = typeof ProjectCategoryDisplay.Type;
  * record (as opposed to a decoded one) has to supply both fields.
  */
 export const DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS: WorkbenchMasterDefaults = {
-  runtimeMode: "approval-required",
+  runtimeMode: DEFAULT_RUNTIME_MODE,
   interactionMode: "plan",
 };
 

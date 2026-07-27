@@ -20,6 +20,7 @@
  *
  * @module PeerProjectPlacement
  */
+import { DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import type {
   ModelSelection,
   ProjectCategoryRecord,
@@ -107,10 +108,11 @@ export function resolvePeerThreadModelSelection(input: {
 /**
  * How much a delegated thread may do before asking.
  *
- * Same three layers as the model, and the hardcoded floor is the cautious pair:
- * a thread created by an agent, on a machine the operator is not looking at,
- * defaults to asking. A category that says otherwise is the operator having
- * decided otherwise for that project.
+ * Same three layers as the model, and the hardcoded floor is the app-wide
+ * new-thread default: a delegated thread is a thread, and an operator who set
+ * one default for the machine did not mean "except when an agent asks". A
+ * category that says otherwise is the operator having decided otherwise for
+ * that project; an explicit override on the call beats both.
  */
 export function resolvePeerThreadModes(input: {
   readonly category?: ProjectCategoryRecord | undefined;
@@ -118,7 +120,7 @@ export function resolvePeerThreadModes(input: {
 }): { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode } {
   const defaults = input.category?.local.defaults;
   return {
-    runtimeMode: input.overrides.runtimeMode ?? defaults?.runtimeMode ?? "approval-required",
+    runtimeMode: input.overrides.runtimeMode ?? defaults?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode: input.overrides.interactionMode ?? defaults?.interactionMode ?? "default",
   };
 }

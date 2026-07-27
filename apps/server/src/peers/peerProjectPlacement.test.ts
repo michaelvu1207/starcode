@@ -173,9 +173,13 @@ describe("resolvePeerThreadModelSelection", () => {
 });
 
 describe("resolvePeerThreadModes", () => {
-  it("defaults a delegated thread to asking, on a machine nobody is watching", () => {
+  // The literal, not `DEFAULT_RUNTIME_MODE`: this asserts the policy — a
+  // delegated thread gets the same permissions as one the operator starts by
+  // hand — and an assertion written against the constant would follow the
+  // constant anywhere it moved and prove nothing.
+  it("defaults a delegated thread to the app-wide new-thread mode", () => {
     expect(resolvePeerThreadModes({ overrides: {} })).toEqual({
-      runtimeMode: "approval-required",
+      runtimeMode: "full-access",
       interactionMode: "default",
     });
   });

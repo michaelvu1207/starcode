@@ -5,7 +5,12 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { FeatureFlowTrunkConfig } from "./featureFlow.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
-import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -449,16 +454,17 @@ export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 /**
- * How a newly created master thread is configured. The default is the whole
- * point: an orchestrator that plans and delegates should not be able to write
- * code, and expressing that as configuration rather than as prompt text means
- * it holds regardless of what the operator writes into the thread. It is a
- * default, not a lock — an operator can raise it per thread in the UI.
+ * How a newly created master thread is configured. `plan` is the whole point:
+ * an orchestrator that plans and delegates should not be able to write code,
+ * and expressing that as configuration rather than as prompt text means it
+ * holds regardless of what the operator writes into the thread. Interaction
+ * mode is the lever that carries that intent, so the permission mode follows
+ * the app-wide default rather than adding a second prompt-shaped gate — a
+ * master dropped out of plan mode behaves like every other thread. It is a
+ * default, not a lock — an operator can change either per thread in the UI.
  */
 export const WorkbenchMasterDefaults = Schema.Struct({
-  runtimeMode: RuntimeMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
-  ),
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("plan" as const)),
   ),

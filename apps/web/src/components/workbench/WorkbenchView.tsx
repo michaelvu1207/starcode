@@ -9,6 +9,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  DEFAULT_RUNTIME_MODE,
   EnvironmentId,
   ThreadId,
   type ScopedProjectRef,
@@ -142,12 +143,14 @@ export function WorkbenchView() {
       const store = useComposerDraftStore.getState();
       const draft = store.getDraftThread(target.draftId);
       if (draft === null) return;
-      // The plan/approval default is configuration, not prompt text: an
-      // orchestrator that delegates should not be able to write code, and
-      // saying so in settings holds regardless of what is typed into it.
+      // Plan mode is configuration, not prompt text: an orchestrator that
+      // delegates should not be able to write code, and saying so in settings
+      // holds regardless of what is typed into it. Permission mode follows the
+      // app-wide default — the same fallbacks `WorkbenchMasterDefaults`
+      // decodes to, spelled out because settings may not have loaded yet.
       store.setRuntimeMode(
         target.draftId,
-        environmentSettings?.workbenchMasterDefaults.runtimeMode ?? "approval-required",
+        environmentSettings?.workbenchMasterDefaults.runtimeMode ?? DEFAULT_RUNTIME_MODE,
       );
       store.setInteractionMode(
         target.draftId,

@@ -260,3 +260,26 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
+
+describe("workbench master defaults", () => {
+  // Literals rather than `DEFAULT_RUNTIME_MODE`, because what is asserted is
+  // the pairing: a master is gated by plan mode, not by a second permission
+  // prompt, so its permission mode is the same one every other new thread
+  // starts in. An assertion written against the constant would follow the
+  // constant and prove neither half.
+  it("starts a master in plan mode with the app-wide permissions", () => {
+    const defaults = decodeServerSettings({}).workbenchMasterDefaults;
+
+    expect(defaults.runtimeMode).toBe("full-access");
+    expect(defaults.interactionMode).toBe("plan");
+  });
+
+  it("keeps a stored override, so an operator's choice outlives the default", () => {
+    const defaults = decodeServerSettings({
+      workbenchMasterDefaults: { runtimeMode: "approval-required" },
+    }).workbenchMasterDefaults;
+
+    expect(defaults.runtimeMode).toBe("approval-required");
+    expect(defaults.interactionMode).toBe("plan");
+  });
+});
