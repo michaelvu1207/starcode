@@ -234,7 +234,7 @@ export const ProjectsToolkitRegistrationLive = McpServer.toolkit(ProjectsToolkit
 );
 
 const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
+  name: "starcode",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));

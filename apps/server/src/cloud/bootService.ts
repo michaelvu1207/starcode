@@ -90,7 +90,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // relay connection, and Restart=always covers early-boot failures.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    "Description=starcode server",
     // Give up after 5 crashes in 5 minutes so a persistently broken install
     // (deleted runtime, broken workspace) stops instead of restarting every
     // 5s forever and growing the unrotated append log without bound.
