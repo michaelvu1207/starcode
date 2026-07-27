@@ -15,7 +15,18 @@ import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+  type TraitsDescriptorFilter,
+} from "./TraitsPicker";
+
+/**
+ * Fork: the context window gets its own popover row, so the traits control
+ * renders everything except it and a second, filtered instance renders it.
+ */
+const CONTEXT_WINDOW_DESCRIPTOR_ID = "contextWindow";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -80,9 +91,31 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   };
 }
 
+/**
+ * Fork: the selected model's context window, resolved the same way the traits
+ * control resolves it (declared default included), for the popover's context
+ * row copy.
+ */
+export function getComposerContextWindowState(input: ComposerProviderStateInput): {
+  readonly hasSelector: boolean;
+  readonly value: string | null;
+} {
+  const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
+  const descriptors = getProviderOptionDescriptors({ caps, selections: input.modelOptions });
+  const descriptor = descriptors.find(
+    (candidate) => candidate.id === CONTEXT_WINDOW_DESCRIPTOR_ID && candidate.type === "select",
+  );
+  if (!descriptor) {
+    return { hasSelector: false, value: null };
+  }
+  const value = getProviderOptionCurrentValue(descriptor);
+  return { hasSelector: true, value: typeof value === "string" ? value : null };
+}
+
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  filter: TraitsDescriptorFilter = {},
 ): ReactNode {
   const {
     provider,
@@ -98,7 +131,7 @@ function renderTraitsControl(
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
     !hasTarget ||
-    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt })
+    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt, ...filter })
   ) {
     return null;
   }
@@ -113,6 +146,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...filter}
     />
   );
 }
@@ -122,5 +156,14 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 }
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsPicker, input);
+  return renderTraitsControl(TraitsPicker, input, {
+    excludeDescriptorIds: [CONTEXT_WINDOW_DESCRIPTOR_ID],
+  });
+}
+
+/** The context-window selector alone, for the popover's own context row. */
+export function renderProviderContextWindowPicker(input: TraitsRenderInput): ReactNode {
+  return renderTraitsControl(TraitsPicker, input, {
+    includeDescriptorIds: [CONTEXT_WINDOW_DESCRIPTOR_ID],
+  });
 }

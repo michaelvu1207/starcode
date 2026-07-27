@@ -81,8 +81,10 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
+  getComposerContextWindowState,
   getComposerPromptInjectionState,
   getComposerProviderState,
+  renderProviderContextWindowPicker,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ComposerModeControls } from "./ComposerModeControls";
@@ -91,7 +93,7 @@ import { buildComposerOptionsSummary } from "./composerOptionsSummary";
 import { runtimeModeConfig } from "./composerRuntimeModes";
 import { getTriggerDisplayModelLabel } from "./providerIconUtils";
 import { readClaudeContextLimitTokens } from "../../claudeContextLimitSettings";
-import { formatClaudeContextLimitLabel } from "@t3tools/shared/claudeContextLimit";
+import { buildComposerContextRow } from "./composerContext";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -1018,7 +1020,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
-  const providerTraitsPicker = renderProviderTraitsPicker({
+  const traitsRenderInput = {
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
@@ -1028,7 +1030,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-  });
+  };
+  const providerTraitsPicker = renderProviderTraitsPicker(traitsRenderInput);
+  const providerContextWindowPicker = renderProviderContextWindowPicker(traitsRenderInput);
 
   // Fork: model / effort / access live behind the composer options chevron, so
   // the trigger has to carry enough of their state to stay glanceable.
@@ -1051,10 +1055,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const claudeContextLimitTokens = useEnvironmentSettings(environmentId, (settings) =>
     readClaudeContextLimitTokens(settings, selectedInstanceId),
   );
-  const composerContextLimitLabel =
-    selectedProvider === "claudeAgent"
-      ? formatClaudeContextLimitLabel(claudeContextLimitTokens)
-      : null;
+  const composerContextWindow = getComposerContextWindowState({
+    provider: selectedProvider,
+    model: selectedModel,
+    models: selectedProviderModels,
+    modelOptions: composerModelOptions?.[selectedInstanceId],
+  });
+  const composerContextRow = useMemo(() => {
+    const row = buildComposerContextRow({
+      hasWindowSelector: composerContextWindow.hasSelector,
+      windowValue: composerContextWindow.value,
+      capTokens: selectedProvider === "claudeAgent" ? claudeContextLimitTokens : null,
+    });
+    return row ? { ...row, picker: providerContextWindowPicker } : null;
+  }, [
+    claudeContextLimitTokens,
+    composerContextWindow.hasSelector,
+    composerContextWindow.value,
+    providerContextWindowPicker,
+    selectedProvider,
+  ]);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -2538,7 +2558,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   summary={composerOptionsSummary}
                   compact={isComposerFooterCompact}
                   disabled={noProviderAvailable}
-                  contextLimitLabel={composerContextLimitLabel}
+                  context={composerContextRow}
                   runtimeMode={runtimeMode}
                   onRuntimeModeChange={handleRuntimeModeChange}
                   traitsPicker={providerTraitsPicker}

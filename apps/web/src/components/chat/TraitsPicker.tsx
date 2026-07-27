@@ -34,6 +34,26 @@ import { Badge } from "../ui/badge";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
+/**
+ * Fork: which descriptors a given instance of these controls renders.
+ *
+ * The composer splits the provider options across two popover rows so the
+ * context window reads as one value rather than competing with the reasoning
+ * effort on the same trigger. The filter is render-only — persistence still
+ * writes back the full descriptor set, so a hidden descriptor keeps its value.
+ */
+export interface TraitsDescriptorFilter {
+  readonly includeDescriptorIds?: ReadonlyArray<string>;
+  readonly excludeDescriptorIds?: ReadonlyArray<string>;
+}
+
+function matchesDescriptorFilter(id: string, filter: TraitsDescriptorFilter): boolean {
+  if (filter.includeDescriptorIds && !filter.includeDescriptorIds.includes(id)) {
+    return false;
+  }
+  return !filter.excludeDescriptorIds?.includes(id);
+}
+
 type TraitsPersistence =
   | {
       threadRef?: ScopedThreadRef;
@@ -95,6 +115,7 @@ function getSelectedTraits(
   prompt: string,
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
+  filter: TraitsDescriptorFilter,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider);
   const descriptors = getProviderOptionDescriptors({
@@ -141,11 +162,24 @@ function getSelectedTraits(
     ? getProviderOptionCurrentLabel(agentDescriptor)
     : null;
 
+  // Rendered subsets. `descriptors` stays whole: `updateDescriptors` rebuilds
+  // every selection from it, so filtering there would drop the hidden values.
+  const visibleDescriptors = descriptors.filter((descriptor) =>
+    matchesDescriptorFilter(descriptor.id, filter),
+  );
+  const visibleSelectDescriptors = selectDescriptors.filter((descriptor) =>
+    matchesDescriptorFilter(descriptor.id, filter),
+  );
+  const visibleBooleanDescriptors = booleanDescriptors.filter((descriptor) =>
+    matchesDescriptorFilter(descriptor.id, filter),
+  );
+
   return {
     caps,
     descriptors,
-    selectDescriptors,
-    booleanDescriptors,
+    selectDescriptors: visibleSelectDescriptors,
+    booleanDescriptors: visibleBooleanDescriptors,
+    visibleDescriptors,
     primarySelectDescriptor,
     contextWindowDescriptor,
     agentDescriptor,
@@ -162,14 +196,16 @@ function getSelectedTraits(
   };
 }
 
-function getTraitsSectionVisibility(input: {
-  provider: ProviderDriverKind;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-  prompt: string;
-  modelOptions: ProviderOptions | null | undefined;
-  allowPromptInjectedEffort?: boolean;
-}) {
+function getTraitsSectionVisibility(
+  input: {
+    provider: ProviderDriverKind;
+    models: ReadonlyArray<ServerProviderModel>;
+    model: string | null | undefined;
+    prompt: string;
+    modelOptions: ProviderOptions | null | undefined;
+    allowPromptInjectedEffort?: boolean;
+  } & TraitsDescriptorFilter,
+) {
   const selected = getSelectedTraits(
     input.provider,
     input.models,
@@ -177,37 +213,29 @@ function getTraitsSectionVisibility(input: {
     input.prompt,
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
+    input,
   );
-
-  const showEffort = selected.primarySelectDescriptor !== null;
-  const showThinking = selected.thinkingDescriptor !== null;
-  const showFastMode = selected.fastModeDescriptor !== null;
-  const showContextWindow = selected.contextWindowDescriptor !== null;
-  const showAgent = selected.agentDescriptor !== null;
 
   return {
     ...selected,
-    showEffort,
-    showThinking,
-    showFastMode,
-    showContextWindow,
-    showAgent,
-    hasAnyControls: showEffort || showThinking || showFastMode || showContextWindow || showAgent,
+    hasAnyControls: selected.visibleDescriptors.length > 0,
   };
 }
 
-export function shouldRenderTraitsControls(input: {
-  provider: ProviderDriverKind;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-  prompt: string;
-  modelOptions: ProviderOptions | null | undefined;
-  allowPromptInjectedEffort?: boolean;
-}): boolean {
+export function shouldRenderTraitsControls(
+  input: {
+    provider: ProviderDriverKind;
+    models: ReadonlyArray<ServerProviderModel>;
+    model: string | null | undefined;
+    prompt: string;
+    modelOptions: ProviderOptions | null | undefined;
+    allowPromptInjectedEffort?: boolean;
+  } & TraitsDescriptorFilter,
+): boolean {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
 
-export interface TraitsMenuContentProps {
+export interface TraitsMenuContentProps extends TraitsDescriptorFilter {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;
@@ -229,6 +257,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  includeDescriptorIds,
+  excludeDescriptorIds,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
@@ -265,6 +295,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     prompt,
     modelOptions,
     allowPromptInjectedEffort,
+    ...(includeDescriptorIds ? { includeDescriptorIds } : {}),
+    ...(excludeDescriptorIds ? { excludeDescriptorIds } : {}),
   });
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
     updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
@@ -390,33 +422,35 @@ export const TraitsPicker = memo(function TraitsPicker({
   allowPromptInjectedEffort = true,
   triggerVariant,
   triggerClassName,
+  includeDescriptorIds,
+  excludeDescriptorIds,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
-    getTraitsSectionVisibility({
-      provider,
-      models,
-      model,
-      prompt,
-      modelOptions,
-      allowPromptInjectedEffort,
-    });
-  if (
-    !shouldRenderTraitsControls({
-      provider,
-      models,
-      model,
-      prompt,
-      modelOptions,
-      allowPromptInjectedEffort,
-    })
-  ) {
+  const filter = {
+    ...(includeDescriptorIds ? { includeDescriptorIds } : {}),
+    ...(excludeDescriptorIds ? { excludeDescriptorIds } : {}),
+  };
+  const {
+    visibleDescriptors,
+    primarySelectDescriptor,
+    ultrathinkPromptControlled,
+    hasAnyControls,
+  } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+    ...filter,
+  });
+  if (!hasAnyControls) {
     return null;
   }
 
   const triggerLabels: Array<string> = [];
-  for (const descriptor of descriptors) {
+  for (const descriptor of visibleDescriptors) {
     const label =
       ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
         ? "Ultrathink"
@@ -478,6 +512,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          {...filter}
           {...persistence}
         />
       </MenuPopup>

@@ -40,8 +40,16 @@ export interface ComposerOptionsPopoverProps {
   readonly traitsPicker: ReactNode;
   readonly runtimeMode: RuntimeMode;
   readonly onRuntimeModeChange: (mode: RuntimeMode) => void;
-  /** Effective context cap for the selected instance, e.g. "600k". Omitted for non-Claude providers. */
-  readonly contextLimitLabel: string | null;
+  /**
+   * The one context row. `picker` is the model's context-window selector when
+   * it has one; `chipLabel` stands in for models that expose no choice; `hint`
+   * says where the conversation compacts. Null when the provider has neither.
+   */
+  readonly context: {
+    readonly picker: ReactNode;
+    readonly chipLabel: string | null;
+    readonly hint: string;
+  } | null;
 }
 
 /** Shared with `ComposerPaneMenu` so the two footer popovers stay one shape. */
@@ -69,7 +77,7 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
   traitsPicker,
   runtimeMode,
   onRuntimeModeChange,
-  contextLimitLabel,
+  context,
 }: ComposerOptionsPopoverProps) {
   const runtimeModeOption = runtimeModeConfig[runtimeMode];
 
@@ -160,17 +168,16 @@ export const ComposerOptionsPopover = memo(function ComposerOptionsPopover({
             </Select>
           </ComposerOptionRow>
 
-          {contextLimitLabel ? (
-            <ComposerOptionRow
-              label="Context limit"
-              hint="Compacts on approach. Change in Settings."
-            >
-              <span
-                data-chat-composer-context-limit="true"
-                className="rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground text-xs tabular-nums"
-              >
-                {contextLimitLabel}
-              </span>
+          {context ? (
+            <ComposerOptionRow label="Context" {...(context.hint ? { hint: context.hint } : {})}>
+              {context.picker ?? (
+                <span
+                  data-chat-composer-context-limit="true"
+                  className="rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground text-xs tabular-nums"
+                >
+                  {context.chipLabel}
+                </span>
+              )}
             </ComposerOptionRow>
           ) : null}
         </div>
