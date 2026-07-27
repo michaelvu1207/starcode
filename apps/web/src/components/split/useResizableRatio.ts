@@ -24,6 +24,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -100,6 +101,26 @@ export function useResizableRatio(input: {
     document.body.style.removeProperty("user-select");
     dragStateRef.current = null;
   }, []);
+
+  /**
+   * A drag ends on the pointer, so a container that goes away mid-drag ends
+   * nothing at all: `col-resize` and `user-select: none` are set on
+   * `document.body`, which outlives this hook, and no later event will arrive
+   * to take them off. The result is a whole app that cannot select text and
+   * shows a resize cursor everywhere, with nothing on screen to explain it.
+   *
+   * Unmounting is a real event in this folder now — `SplitContainer` releases
+   * its published state the same way — so the locks come off here rather than
+   * waiting for a `pointerup` that is never coming. Nothing is committed and
+   * nothing closes: an interrupted drag is not a decision.
+   */
+  useEffect(
+    () => () => {
+      const state = dragStateRef.current;
+      if (state !== null) releasePointer(state.pointerId);
+    },
+    [releasePointer],
+  );
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
