@@ -39,7 +39,11 @@ export const PROJECT_ICON_MAX_SOURCE_BYTES = 12 * 1024 * 1024;
  * silently hands back png from `toDataURL`, which is why the result is measured
  * rather than assumed — the ladder responds to the string it actually got.
  */
-const ATTEMPTS: ReadonlyArray<{ readonly size: number; readonly type: string; readonly quality: number }> = [
+const ATTEMPTS: ReadonlyArray<{
+  readonly size: number;
+  readonly type: string;
+  readonly quality: number;
+}> = [
   { size: PROJECT_CATEGORY_ICON_TARGET_SIZE, type: "image/webp", quality: 0.9 },
   { size: PROJECT_CATEGORY_ICON_TARGET_SIZE, type: "image/webp", quality: 0.75 },
   { size: PROJECT_CATEGORY_ICON_TARGET_SIZE, type: "image/webp", quality: 0.6 },

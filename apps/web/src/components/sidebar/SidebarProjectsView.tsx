@@ -54,6 +54,8 @@ import {
 import type { ProjectSeedProposal } from "../projects/ProjectCatalog.model";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { SidebarProjectEdit } from "./SidebarProjectEdit";
+import { SIDEBAR_PROJECT_ACTION_PERSISTENT_CLASS } from "./SidebarProjectHeaderActions";
 import { SidebarProjectNewThread } from "./SidebarProjectNewThread";
 import {
   SIDEBAR_PROJECT_ROWS_INITIAL_COUNT,
@@ -211,6 +213,11 @@ export function SidebarProjectsView(props: {
 
   const renderGroup = (group: SidebarProjectGroup): ReactNode => {
     const { expanded, rows, hiddenCount } = visibleRowsFor(group);
+    // The record behind the heading, which the edit dialog needs and the group
+    // itself does not carry — a group is a title, a mark and its rows. A slug
+    // the fold has not answered for yet has no record to edit, so the pencil
+    // simply does not render rather than opening a dialog over nothing.
+    const editableProject = group.slug === null ? null : (projectBySlug.get(group.slug) ?? null);
     return (
       <Fragment key={group.key}>
         <li
@@ -278,13 +285,23 @@ export function SidebarProjectsView(props: {
                   connections={startConnectionsFor(group.slug)}
                   onStart={(slug, location) => void startThread(slug, location)}
                 />
+                {editableProject === null ? null : (
+                  <SidebarProjectEdit
+                    project={editableProject}
+                    onSave={(patch) => writer.rename(editableProject.slug, patch)}
+                  />
+                )}
+                {/* Permanent, unlike its two neighbours. This is the way to the
+                    project's own home, and an operator who has to hover to
+                    discover the way in mostly does not. See
+                    `SidebarProjectHeaderActions`. */}
                 <Link
                   to="/projects/$slug"
                   params={{ slug: group.slug }}
                   aria-label={`Open ${group.title}`}
                   title={`Open ${group.title}`}
                   data-testid="sidebar-v2-project-group-open"
-                  className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100"
+                  className={SIDEBAR_PROJECT_ACTION_PERSISTENT_CLASS}
                 >
                   <MapIcon aria-hidden className="size-3" />
                 </Link>

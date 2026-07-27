@@ -26,6 +26,7 @@ import {
   type ProjectStartLocation,
 } from "../projects/ProjectThreadStart.model";
 import { ConnectionMark } from "./ConnectionMark";
+import { SIDEBAR_PROJECT_ACTION_CLASS } from "./SidebarProjectHeaderActions";
 
 export function SidebarProjectNewThread({
   slug,
@@ -45,8 +46,7 @@ export function SidebarProjectNewThread({
   // The button would open an empty menu, so it does not render.
   if (connections.length === 0) return null;
 
-  const BUTTON_CLASS =
-    "shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-hover/project:opacity-100";
+  const BUTTON_CLASS = SIDEBAR_PROJECT_ACTION_CLASS;
 
   // One bound folder is not a choice: click and go, no menu in the way.
   if (unambiguous !== null) {

@@ -64,10 +64,7 @@ describe("project icon validation", () => {
     const head = "data:image/png;base64,";
     const groups = Math.floor((PROJECT_CATEGORY_ICON_MAX_LENGTH - head.length) / 4);
     const body = btoa(
-      String.fromCharCode(
-        ...PNG,
-        ...Array.from({ length: groups * 3 - PNG.length }, () => 0),
-      ),
+      String.fromCharCode(...PNG, ...Array.from({ length: groups * 3 - PNG.length }, () => 0)),
     );
     const largest = `${head}${body}`;
     expect(largest.length).toBeLessThanOrEqual(PROJECT_CATEGORY_ICON_MAX_LENGTH);
@@ -101,9 +98,9 @@ describe("project icon validation", () => {
     expect(validateProjectCategoryIcon("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=")).toBe(
       "unsupported_type",
     );
-    expect(
-      validateProjectCategoryIcon("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"),
-    ).toBe("not_a_data_uri");
+    expect(validateProjectCategoryIcon("data:image/svg+xml,%3Csvg%3E%3C/svg%3E")).toBe(
+      "not_a_data_uri",
+    );
   });
 
   it("refuses anything that is not a base64 data URI at all", () => {

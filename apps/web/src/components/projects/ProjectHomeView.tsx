@@ -432,7 +432,20 @@ export function ProjectHomeView({ slug }: { readonly slug: string }): ReactNode 
           </div>
         ) : null}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* The sky leads below `xl`, where this container is a column and the
+            orchestrator would otherwise sit on top of it — two `flex-1`
+            siblings splitting the height, the map in the lower half, arrived at
+            by scrolling nothing but read second. Michael: *"I would make sure
+            the map for each project is visible by default."* At `xl` and above
+            the layout is a row with the orchestrator pinned to a 30rem column,
+            so the sky already has the page and source order is left-to-right;
+            `xl:order-none` puts it back. Ordering rather than closing the
+            orchestrator pane, because a project that names one should still
+            open with it — the map just stops being the thing underneath it. */}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-xl:order-first xl:order-none"
+          data-testid="project-home-sky"
+        >
           <WorkbenchStarMap
             masterThreadKey={masterThreadKey}
             master={skyMaster}
