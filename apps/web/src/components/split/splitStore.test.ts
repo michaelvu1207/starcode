@@ -61,6 +61,36 @@ describe("splitStore", () => {
     expect(useSplitStore.getState().ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
+  // The container publishes these three, so nothing may still be asserting
+  // them once it unmounts: a left-over `"split"` describes a second pane that
+  // is no longer on screen.
+  it("forgets the on-screen split when the container goes away", () => {
+    useSplitStore.setState({
+      enabled: true,
+      secondary: threadA,
+      renderState: "split",
+      focusedPane: "secondary",
+      containerWidth: 1400,
+    });
+
+    useSplitStore.getState().releaseContainer();
+
+    const state = useSplitStore.getState();
+    expect(state.renderState).toBe("off");
+    expect(state.containerWidth).toBeNull();
+    expect(state.focusedPane).toBe("primary");
+    // What the user asked for outlives the container that drew it, so the
+    // split comes back on the next route that can hold one.
+    expect(state.enabled).toBe(true);
+    expect(state.secondary).toEqual(threadA);
+  });
+
+  it("does not churn subscribers when there was no container state to release", () => {
+    const before = useSplitStore.getState();
+    useSplitStore.getState().releaseContainer();
+    expect(useSplitStore.getState()).toBe(before);
+  });
+
   it("does not churn subscribers when the render state is unchanged", () => {
     const before = useSplitStore.getState();
     useSplitStore.getState().setRenderState("off", null);

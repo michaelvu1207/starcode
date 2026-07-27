@@ -61,6 +61,14 @@ export function SplitContainer({ children }: { readonly children: ReactNode }) {
     setRenderState(renderState, containerWidth);
   }, [containerWidth, renderState, setRenderState]);
 
+  // The published state describes a split that is *on screen*, so it has to
+  // go when this does. The thread route mounts the container and the other
+  // routes do not, so leaving a live split for the project home or the
+  // workbench used to strand `renderState: "split"` with the second pane
+  // still focused — and the sidebar, which asks that state where a click
+  // should land, kept answering "the second pane" on a route that had none.
+  useEffect(() => () => useSplitStore.getState().releaseContainer(), []);
+
   // Leaving the split entirely resets ownership, so a stale `focusedPane`
   // cannot strand the keyboard in a pane that is no longer on screen.
   useEffect(() => {

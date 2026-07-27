@@ -164,24 +164,57 @@ describe("keyboard ownership", () => {
 
 describe("resolveSidebarOpenTarget", () => {
   it("navigates as it always did when the split is off", () => {
-    expect(resolveSidebarOpenTarget({ renderState: "off", focusedPane: "secondary" })).toBe(
-      "navigate",
-    );
+    expect(
+      resolveSidebarOpenTarget({
+        hasRouteThread: true,
+        renderState: "off",
+        focusedPane: "secondary",
+      }),
+    ).toBe("navigate");
   });
 
   it("fills the second pane while it is the focused one", () => {
-    expect(resolveSidebarOpenTarget({ renderState: "picking", focusedPane: "secondary" })).toBe(
-      "secondary",
-    );
-    expect(resolveSidebarOpenTarget({ renderState: "split", focusedPane: "secondary" })).toBe(
-      "secondary",
-    );
+    expect(
+      resolveSidebarOpenTarget({
+        hasRouteThread: true,
+        renderState: "picking",
+        focusedPane: "secondary",
+      }),
+    ).toBe("secondary");
+    expect(
+      resolveSidebarOpenTarget({
+        hasRouteThread: true,
+        renderState: "split",
+        focusedPane: "secondary",
+      }),
+    ).toBe("secondary");
   });
 
   it("navigates when the primary pane is focused", () => {
-    expect(resolveSidebarOpenTarget({ renderState: "split", focusedPane: "primary" })).toBe(
-      "navigate",
-    );
+    expect(
+      resolveSidebarOpenTarget({
+        hasRouteThread: true,
+        renderState: "split",
+        focusedPane: "primary",
+      }),
+    ).toBe("navigate");
+  });
+
+  /**
+   * The bug. Only the thread route mounts `SplitContainer`, so on the project
+   * home, the workbench, the projects index and a draft, `renderState` and
+   * `focusedPane` still describe the split the operator left behind. Every
+   * one of those states must navigate, or the sidebar goes dead on the route
+   * the operator is standing on.
+   */
+  it("navigates on a route with no split, whatever the last one published", () => {
+    for (const renderState of RENDER_STATES) {
+      for (const focusedPane of ["primary", "secondary"] as const) {
+        expect(resolveSidebarOpenTarget({ hasRouteThread: false, renderState, focusedPane })).toBe(
+          "navigate",
+        );
+      }
+    }
   });
 });
 

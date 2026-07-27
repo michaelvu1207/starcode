@@ -1107,9 +1107,14 @@ export default function SidebarV2() {
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
-      // Fork: with a split open and its second pane focused, this fills that
-      // pane instead of navigating. Returns false whenever the split is off.
-      if (openThreadInFocusedPane(threadRef)) return;
+      // Fork: with a split open on this route and its second pane focused,
+      // this fills that pane instead of navigating. Returns false whenever the
+      // split is off — and always on a route that mounts no split, which is
+      // read from the ref so this callback does not churn on every navigation.
+      if (
+        openThreadInFocusedPane(threadRef, { hasRouteThread: routeThreadKeyRef.current !== null })
+      )
+        return;
       setSelectionAnchor(scopedThreadKey(threadRef));
       if (isMobile) {
         setOpenMobile(false);

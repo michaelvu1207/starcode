@@ -125,11 +125,27 @@ export function paneOwnsKeyboard(input: {
  * same model as every editor split, and no new concept to learn. A freshly
  * opened split focuses its empty pane, so the first click after opening lands
  * there without a separate affordance.
+ *
+ * `hasRouteThread` is the load-bearing one, and it is not an optimisation.
+ * `renderState` and `focusedPane` are *published by a mounted*
+ * `SplitContainer`, which only the thread route mounts — so on the project
+ * home, the workbench, the projects index or a draft, the newest values
+ * describe a split the user walked away from. Answering `"secondary"` there
+ * puts the thread in a pane nothing is drawing, and the click reads as a
+ * sidebar that has stopped working. The route's own answer to "is there a
+ * left pane" cannot go stale, so it is asked first.
  */
 export function resolveSidebarOpenTarget(input: {
+  /**
+   * Whether the route is showing a thread — the same condition under which
+   * `SplitContainer` is mounted. See `resolveOpenInSplitState`, which keys the
+   * row menu's entry on exactly this fact.
+   */
+  readonly hasRouteThread: boolean;
   readonly renderState: SplitRenderState;
   readonly focusedPane: SplitPaneId;
 }): "navigate" | "secondary" {
+  if (!input.hasRouteThread) return "navigate";
   if (input.renderState === "off") return "navigate";
   return input.focusedPane === "secondary" ? "secondary" : "navigate";
 }

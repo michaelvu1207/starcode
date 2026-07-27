@@ -17,10 +17,25 @@ import { useSplitStore } from "./splitStore";
 /**
  * Returns `true` when the thread was placed in the second pane and the caller
  * should not navigate.
+ *
+ * `hasRouteThread` says whether the caller is standing on a route that mounts
+ * a split at all. It is required rather than inferred because the store's
+ * `renderState` is only as fresh as the last container to publish it, and the
+ * routes that mount none — the project home, the workbench, the projects
+ * index — are exactly the ones where a stale `"split"` would eat every click.
  */
-export function openThreadInFocusedPane(threadRef: ScopedThreadRef): boolean {
+export function openThreadInFocusedPane(
+  threadRef: ScopedThreadRef,
+  options: { readonly hasRouteThread: boolean },
+): boolean {
   const { renderState, focusedPane, setSecondary } = useSplitStore.getState();
-  if (resolveSidebarOpenTarget({ renderState, focusedPane }) === "navigate") {
+  if (
+    resolveSidebarOpenTarget({
+      hasRouteThread: options.hasRouteThread,
+      renderState,
+      focusedPane,
+    }) === "navigate"
+  ) {
     return false;
   }
   setSecondary(threadRef);

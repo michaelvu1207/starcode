@@ -39,6 +39,10 @@ export interface SplitStoreState {
    * What the split actually resolved to once the viewport had its say.
    * Published by `SplitContainer` so key handlers can read the owner
    * synchronously, without a hook and without re-subscribing.
+   *
+   * Only a *mounted* container can answer this, which is why
+   * `releaseContainer` exists: read on a route that mounts no container, a
+   * left-over `"split"` is a claim about a pane that is not on screen.
    */
   renderState: SplitRenderState;
   /**
@@ -49,6 +53,18 @@ export interface SplitStoreState {
   containerWidth: number | null;
 
   setRenderState: (renderState: SplitRenderState, containerWidth: number | null) => void;
+  /**
+   * The container is gone — nothing is publishing these any more.
+   *
+   * `renderState`, `containerWidth` and `focusedPane` all describe a split
+   * that is on screen, and only `SplitContainer` can say so. Without this,
+   * leaving a live split for a route that mounts no container (the project
+   * home, the workbench, the projects index) left `"split"` and a focused
+   * second pane standing, and `openThreadInFocusedPane` went on answering
+   * "put it in the second pane" for a second pane that no longer existed —
+   * so every sidebar thread click on those routes was silently swallowed.
+   */
+  releaseContainer: () => void;
   openSplit: () => void;
   closeSplit: () => void;
   setSecondary: (ref: ScopedThreadRef | null) => void;
@@ -72,6 +88,14 @@ export const useSplitStore = create<SplitStoreState>()(
           state.renderState === renderState && state.containerWidth === containerWidth
             ? state
             : { renderState, containerWidth },
+        ),
+      releaseContainer: () =>
+        set((state) =>
+          state.renderState === "off" &&
+          state.containerWidth === null &&
+          state.focusedPane === "primary"
+            ? state
+            : { renderState: "off", containerWidth: null, focusedPane: "primary" },
         ),
       // Opening focuses the empty pane, so the first sidebar click after
       // splitting fills it without a second affordance.
