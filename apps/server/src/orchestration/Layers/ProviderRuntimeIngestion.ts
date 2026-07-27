@@ -230,6 +230,11 @@ function truncateOutput(value: string): { output: string; truncated: boolean } {
   return { output: value.slice(value.length - OUTPUT_CHAR_LIMIT), truncated: true };
 }
 
+/** The runtime event's session sequence, when the provider stamped one. */
+function runtimeEventSequence(event: ProviderRuntimeEvent): number | undefined {
+  return (event as ProviderRuntimeEvent & { sessionSequence?: number }).sessionSequence;
+}
+
 /**
  * The provider's own item id, echoed into the activity payload as `itemId`.
  *
@@ -812,10 +817,20 @@ const make = Effect.gen(function* () {
   // Activities upsert by id all the way down (reducer, projector, and the
   // projection repository), so re-emitting the same id grows one row in place
   // rather than appending a row per token.
-  const reasoningTextByPartKey = yield* Cache.make<string, string>({
+  // `createdAt` and `sequence` are pinned to the part's first delta and reused
+  // on every republish. Re-stamping them would move the paragraph later in the
+  // transcript each time it grew, so reasoning would visibly drift downward
+  // past the tool calls it was explaining.
+  const reasoningTextByPartKey = yield* Cache.make<
+    string,
+    { text: string; createdAt: IsoDateTime; sequence: number | undefined }
+  >({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
-    lookup: () => Effect.succeed(""),
+    lookup: () =>
+      Effect.die(
+        new Error("reasoning buffers must be read through getOption before initialization"),
+      ),
   });
 
   const reasoningPartKey = (threadId: ThreadId, turnKey: string, partIndex: number) =>
@@ -850,11 +865,14 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly turnKey: string;
     readonly partIndex: number;
-    readonly text: string;
-    readonly createdAt: IsoDateTime;
+    readonly buffered: {
+      readonly text: string;
+      readonly createdAt: IsoDateTime;
+      readonly sequence: number | undefined;
+    };
   }) =>
     Effect.gen(function* () {
-      const text = input.text.trim();
+      const text = input.buffered.text.trim();
       if (text.length === 0) {
         return;
       }
@@ -869,7 +887,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         activity: {
           id: activityId,
-          createdAt: input.createdAt,
+          createdAt: input.buffered.createdAt,
           tone: "info",
           kind: "reasoning",
           // The summary is the row label for surfaces that only show labels;
@@ -878,8 +896,13 @@ const make = Effect.gen(function* () {
           summary: truncateDetail(output, 120),
           payload: { text: output, partIndex: input.partIndex },
           turnId: toTurnId(input.event.turnId) ?? null,
+          // Carried so reasoning interleaves with tool activity: the ordering
+          // comparator sorts every activity that lacks a sequence ahead of
+          // every activity that has one, which would strand reasoning at the
+          // top of the thread.
+          ...(input.buffered.sequence !== undefined ? { sequence: input.buffered.sequence } : {}),
         },
-        createdAt: input.createdAt,
+        createdAt: input.buffered.createdAt,
       });
     });
 
@@ -896,9 +919,9 @@ const make = Effect.gen(function* () {
       for (let partIndex = 0; partIndex < REASONING_MAX_PARTS_PER_TURN; partIndex += 1) {
         const partKey = reasoningPartKey(input.threadId, input.turnKey, partIndex);
         const buffered = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
-          Effect.map(Option.getOrElse(() => "")),
+          Effect.map(Option.getOrUndefined),
         );
-        if (buffered.length === 0) {
+        if (!buffered || buffered.text.length === 0) {
           continue;
         }
         yield* emitReasoningActivity({
@@ -906,8 +929,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           turnKey: input.turnKey,
           partIndex,
-          text: buffered,
-          createdAt: input.createdAt,
+          buffered,
         });
         yield* Cache.invalidate(reasoningTextByPartKey, partKey);
       }
@@ -1653,24 +1675,30 @@ const make = Effect.gen(function* () {
         const partIndex = reasoningDelta.summaryIndex ?? reasoningDelta.contentIndex ?? 0;
         const turnKey = turnId ?? "no-turn";
         const partKey = reasoningPartKey(thread.id, turnKey, partIndex);
-        const previous = yield* Cache.get(reasoningTextByPartKey, partKey);
-        const nextText = previous + reasoningDelta.delta;
-        yield* Cache.set(reasoningTextByPartKey, partKey, nextText);
+        const existing = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        const previousText = existing?.text ?? "";
+        const buffered = {
+          text: previousText + reasoningDelta.delta,
+          createdAt: existing?.createdAt ?? now,
+          sequence: existing?.sequence ?? runtimeEventSequence(event),
+        };
+        yield* Cache.set(reasoningTextByPartKey, partKey, buffered);
 
         // Republish on a character cadence rather than per token. Crossing a
         // bucket boundary is the signal, so a burst of tiny deltas still costs
         // one write.
         const crossedBucket =
-          Math.floor(nextText.length / REASONING_REPUBLISH_CHARS) >
-          Math.floor(previous.length / REASONING_REPUBLISH_CHARS);
+          Math.floor(buffered.text.length / REASONING_REPUBLISH_CHARS) >
+          Math.floor(previousText.length / REASONING_REPUBLISH_CHARS);
         if (crossedBucket) {
           yield* emitReasoningActivity({
             event,
             threadId: thread.id,
             turnKey,
             partIndex,
-            text: nextText,
-            createdAt: now,
+            buffered,
           });
         }
       }
