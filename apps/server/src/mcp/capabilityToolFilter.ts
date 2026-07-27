@@ -45,6 +45,18 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  * expressed as "hide it". Listing it here would take self-filing away from
  * every worker to gate a use most of them will never reach for.
  *
+ * `thread_create` is absent, and it is the deliberate one — it creates a thread
+ * and spends a turn, which is the whole argument `peer_thread_create` rests on.
+ * It loses to what gating it would cost: a worker that cannot start a helper on
+ * its own machine is amputated exactly the way one that could not leave a
+ * mailbox message would be, and that is the same trade `peer_thread_send` was
+ * already decided on. The runaway risk master-only was implicitly covering is
+ * answered where it belongs — a per-turn creation cap in `LocalThreadWriter` —
+ * rather than by taking the tool away from everyone who is not the master.
+ * Note this is also why it is a separate tool from `peer_thread_create` rather
+ * than a `peer?` on it: this list keys on tool *name*, so one name cannot be
+ * hidden from workers and shown to them at once.
+ *
  * `project_set_icon` is absent on the same grounds, and it is the one that had
  * a real case against it: an icon is *display*, so it travels to every machine
  * rather than staying where it was written, and that is an argument for

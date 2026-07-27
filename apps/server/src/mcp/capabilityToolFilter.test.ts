@@ -237,6 +237,23 @@ it.effect("shows every session the project tools, self-filing included", () =>
   }),
 );
 
+it.effect("shows every session thread_create, which is the point of not gating it", () =>
+  Effect.gen(function* () {
+    // The local counterpart to peer_thread_create, and deliberately ungated: a
+    // worker that cannot start a helper on its own machine is amputated the
+    // same way one that could not leave a mailbox message would be. Asserted
+    // over the real transport and against a *worker* bearer, because "an
+    // ordinary session can actually see it" is the whole claim — the master
+    // seeing it would prove nothing.
+    const tools = yield* listToolsFor(workerThreadId);
+    expect(tools).toContain("thread_create");
+    // Its cross-machine sibling stays master-only in the same list, which is
+    // why these had to be two tool names rather than one with an optional peer.
+    expect(tools).not.toContain("peer_thread_create");
+    expect(CAPABILITY_GATED_TOOLS.has("thread_create")).toBe(false);
+  }),
+);
+
 it.effect("the designated master session is shown all of them", () =>
   Effect.gen(function* () {
     const tools = yield* listToolsFor(masterThreadId);

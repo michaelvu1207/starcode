@@ -19,6 +19,7 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./peers.ts";
+export * from "./threads.ts";
 export * from "./mailbox.ts";
 export * from "./featureFlow.ts";
 export * from "./featureMap.ts";

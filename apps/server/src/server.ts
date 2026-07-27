@@ -95,6 +95,7 @@ import { FeatureFlowServicesLive, featureFlowHttpApiLayer } from "./featureFlow/
 import { mailboxHttpApiLayer } from "./mailbox/layer.ts";
 import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
 import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
+import { ThreadServicesLive } from "./threads/layer.ts";
 import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
 import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
 import { ProjectCatalogServicesLive, projectCatalogHttpApiLayer } from "./projectCatalog/layer.ts";
@@ -398,6 +399,7 @@ export const makeRoutesLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(PeerServicesLive),
+  Layer.provide(ThreadServicesLive),
   Layer.provide(FeatureFlowServicesLive),
   Layer.provide(UsageServicesLive),
   Layer.provide(HistoryServicesLive),

@@ -29,6 +29,8 @@ import { PeerThreadsToolkitHandlersLive } from "./toolkits/peerThreads/handlers.
 import { PeerThreadsToolkit } from "./toolkits/peerThreads/tools.ts";
 import { ProjectsToolkitHandlersLive } from "./toolkits/projects/handlers.ts";
 import { ProjectsToolkit } from "./toolkits/projects/tools.ts";
+import { ThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
+import { ThreadsToolkit } from "./toolkits/threads/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -233,6 +235,10 @@ export const ProjectsToolkitRegistrationLive = McpServer.toolkit(ProjectsToolkit
   Layer.provide(ProjectsToolkitHandlersLive),
 );
 
+export const ThreadsToolkitRegistrationLive = McpServer.toolkit(ThreadsToolkit).pipe(
+  Layer.provide(ThreadsToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "starcode",
   version: packageJson.version,
@@ -244,4 +250,5 @@ export const layer = Layer.mergeAll(
   PeerThreadsToolkitRegistrationLive,
   FeatureMapToolkitRegistrationLive,
   ProjectsToolkitRegistrationLive,
+  ThreadsToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
