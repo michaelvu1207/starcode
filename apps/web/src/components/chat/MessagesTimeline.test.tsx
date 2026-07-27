@@ -523,8 +523,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
+    // The row stands on its own — a "Work Log" heading above a single entry
+    // repeats what the entry already says.
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
+    expect(markup).not.toContain("Work Log");
   });
 
   it("formats changed file paths from the workspace root", () => {

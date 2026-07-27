@@ -1219,28 +1219,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
     () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
     [groupedEntries],
   );
-  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
-  const groupLabel = onlyToolEntries
-    ? nonEmptyEntries.length === 1
-      ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
-    : "Work Log";
 
   if (nonEmptyEntries.length === 0) return null;
 
+  // No group heading. A run of two or more activities is now represented by its
+  // own summary row, so anything reaching here is a single line — and a
+  // heading that reads "1 tool call" above one tool call says nothing the row
+  // below it doesn't already say.
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
-      {!onlyToolEntries && (
-        <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/65">
-          {groupLabel}
-        </p>
-      )}
-      <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
-          <ActivityLineRow key={workEntry.id} workEntry={workEntry} workspaceRoot={workspaceRoot} />
-        ))}
-      </div>
-    </section>
+    <div className="-mx-1 space-y-px px-1 py-0.5">
+      {nonEmptyEntries.map((workEntry) => (
+        <ActivityLineRow key={workEntry.id} workEntry={workEntry} workspaceRoot={workspaceRoot} />
+      ))}
+    </div>
   );
 });
 
