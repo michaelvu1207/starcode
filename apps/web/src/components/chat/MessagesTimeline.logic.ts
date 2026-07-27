@@ -1,14 +1,23 @@
 import * as Equal from "effect/Equal";
+import { activityKindFromItemType, summarizeActivityGroup } from "@t3tools/shared/activityPhrasing";
 import {
   formatDuration,
   workEntryIndicatesToolNeutralStatus,
-  workLogEntryIsToolLike,
+  workLogEntryPhase,
   type TimelineEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
+/**
+ * How many consecutive activities render as their own lines before the run
+ * collapses into a single summary.
+ *
+ * One is deliberate: a lone activity reads better as itself ("Ran npm test")
+ * than as a summary of itself ("Ran a command"), while two or more read better
+ * summarized than enumerated.
+ */
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
@@ -141,21 +150,44 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
     }
   | {
-      kind: "work-toggle";
+      /**
+       * One line standing in for a run of consecutive activities —
+       * "Read files, ran commands". Expanding replaces it with the individual
+       * lines rather than revealing them beneath it, so the run occupies one
+       * row's worth of attention either way.
+       */
+      kind: "work-group-summary";
       id: string;
       createdAt: string;
       groupId: string;
-      hiddenCount: number;
+      label: string;
+      entryCount: number;
       expanded: boolean;
-      onlyToolEntries: boolean;
+      running: boolean;
     }
   | {
+      kind: "reasoning";
+      id: string;
+      createdAt: string;
+      text: string;
+    }
+  | {
+      /**
+       * The turn's one header. Carries both states: `Working for 12s` while the
+       * turn runs and `Worked for 20s` once it settles, in the same slot, so the
+       * transition is a label change rather than one row being swapped for
+       * another somewhere else in the list.
+       */
       kind: "turn-fold";
       id: string;
       createdAt: string;
-      turnId: TurnId;
+      turnId: TurnId | null;
       label: string;
       expanded: boolean;
+      /** True while the turn is still running — suppresses the chevron. */
+      running: boolean;
+      /** Start timestamp, for the live-ticking timer while running. */
+      startedAt: string | null;
     }
   | {
       kind: "message";
@@ -175,6 +207,11 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
+  /**
+   * Fallback "Working…" row for work that belongs to no turn yet — the window
+   * between sending a message and the server opening a turn. Once a turn
+   * exists, its own header carries the running state instead.
+   */
   | { kind: "working"; id: string; createdAt: string | null };
 
 export interface StableMessagesTimelineRowsState {
@@ -253,6 +290,8 @@ interface TurnFold {
   createdAt: string;
   hiddenEntryIds: ReadonlySet<string>;
   label: string;
+  running: boolean;
+  startedAt: string | null;
 }
 
 /**
@@ -313,7 +352,9 @@ function deriveTurnFolds(input: {
         ? (entry.message.turnId ?? null)
         : entry.kind === "work"
           ? (entry.entry.turnId ?? null)
-          : null;
+          : entry.kind === "reasoning"
+            ? entry.turnId
+            : null;
     if (!turnId) {
       continue;
     }
@@ -344,10 +385,23 @@ function deriveTurnFolds(input: {
 
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [turnId, group] of groupsByTurnId) {
-    if (turnId === input.unsettledTurnId) {
-      continue;
-    }
-    if (group.hasStreamingMessage) {
+    // A running turn still gets a header — Codex shows "Working for 12s" in the
+    // same slot that later reads "Worked for 20s". It hides nothing yet, so the
+    // trail below it stays visible while the work happens.
+    if (turnId === input.unsettledTurnId || group.hasStreamingMessage) {
+      const firstRunningEntry = group.entries[0];
+      if (!firstRunningEntry) {
+        continue;
+      }
+      foldsByAnchorEntryId.set(firstRunningEntry.id, {
+        turnId,
+        anchorEntryId: firstRunningEntry.id,
+        createdAt: firstRunningEntry.createdAt,
+        hiddenEntryIds: new Set<string>(),
+        label: "Working for",
+        running: true,
+        startedAt: group.startBoundary ?? firstRunningEntry.createdAt,
+      });
       continue;
     }
     const hiddenEntryIds = new Set<string>();
@@ -397,6 +451,8 @@ function deriveTurnFolds(input: {
       createdAt: firstEntry.createdAt,
       hiddenEntryIds,
       label,
+      running: false,
+      startedAt: group.startBoundary ?? firstEntry.createdAt,
     });
   }
   return foldsByAnchorEntryId;
@@ -451,7 +507,12 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         turnId: turnFold.turnId,
         label: turnFold.label,
-        expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
+        // A running turn is always "expanded": there is nothing folded away
+        // yet, and offering a collapse control for an empty fold would be a
+        // control that does nothing.
+        expanded: turnFold.running || (input.expandedTurnIds?.has(turnFold.turnId) ?? false),
+        running: turnFold.running,
+        startedAt: turnFold.startedAt,
       });
     }
 
@@ -479,6 +540,7 @@ export function deriveMessagesTimelineRows(input: {
         (entry) => !workEntryIndicatesToolNeutralStatus(entry),
       );
       if (visibleGroupedEntries.length > 0) {
+        const turnSettled = unsettledTurnId === null;
         if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
           nextRows.push({
             kind: "work",
@@ -489,31 +551,44 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const visibleEntries = visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const renderedEntries = expanded ? [...hiddenEntries, ...visibleEntries] : visibleEntries;
-
-          for (const workEntry of renderedEntries) {
-            nextRows.push({
-              kind: "work",
-              id: workEntry.id,
-              createdAt: workEntry.createdAt,
-              groupedEntries: [workEntry],
-            });
-          }
-
+          // Header first, then the lines it summarizes — the summary stays put
+          // and the detail appears beneath it, rather than the header jumping
+          // to the bottom of its own group on expand.
           nextRows.push({
-            kind: "work-toggle",
-            id: `work-toggle:${timelineEntry.id}`,
+            kind: "work-group-summary",
+            id: `work-group-summary:${timelineEntry.id}`,
             createdAt: timelineEntry.createdAt,
             groupId,
-            hiddenCount: hiddenEntries.length,
+            label: summarizeWorkLogGroup(visibleGroupedEntries, turnSettled),
+            entryCount: visibleGroupedEntries.length,
             expanded,
-            onlyToolEntries: visibleGroupedEntries.every((entry) => workLogEntryIsToolLike(entry)),
+            running: visibleGroupedEntries.some(
+              (entry) => workLogEntryPhase(entry, turnSettled) === "running",
+            ),
           });
+          if (expanded) {
+            for (const workEntry of visibleGroupedEntries) {
+              nextRows.push({
+                kind: "work",
+                id: workEntry.id,
+                createdAt: workEntry.createdAt,
+                groupedEntries: [workEntry],
+              });
+            }
+          }
         }
       }
       index = cursor - 1;
+      continue;
+    }
+
+    if (timelineEntry.kind === "reasoning") {
+      nextRows.push({
+        kind: "reasoning",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        text: timelineEntry.text,
+      });
       continue;
     }
 
@@ -563,7 +638,11 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  if (input.isWorking) {
+  // Only when the running turn has no header of its own — otherwise the turn
+  // header already reads "Working for 12s" and this would say the same thing a
+  // second time, at the other end of the transcript.
+  const hasRunningTurnHeader = nextRows.some((row) => row.kind === "turn-fold" && row.running);
+  if (input.isWorking && !hasRunningTurnHeader) {
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
@@ -572,6 +651,29 @@ export function deriveMessagesTimelineRows(input: {
   }
 
   return nextRows;
+}
+
+/**
+ * Label for a run of work entries — "Read files, ran commands".
+ *
+ * Classification lives in the shared phrasing module so mobile buckets the same
+ * run the same way; this only adapts the client's entry shape to it.
+ */
+export function summarizeWorkLogGroup(
+  entries: ReadonlyArray<WorkLogEntry>,
+  turnSettled: boolean,
+): string {
+  return summarizeActivityGroup({
+    members: entries.map((entry) => ({
+      kind: activityKindFromItemType({
+        itemType: entry.itemType,
+        requestKind: entry.requestKind,
+        hasCommand: (entry.command?.trim().length ?? 0) > 0,
+        hasChangedFiles: (entry.changedFiles?.length ?? 0) > 0,
+      }),
+      phase: workLogEntryPhase(entry, turnSettled),
+    })),
+  });
 }
 
 export function computeStableMessagesTimelineRows(
@@ -604,8 +706,17 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "turn-fold": {
       const bf = b as typeof a;
-      return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+      return (
+        a.createdAt === bf.createdAt &&
+        a.label === bf.label &&
+        a.expanded === bf.expanded &&
+        a.running === bf.running &&
+        a.startedAt === bf.startedAt
+      );
     }
+
+    case "reasoning":
+      return a.text === (b as typeof a).text && a.createdAt === (b as typeof a).createdAt;
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
@@ -613,14 +724,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
 
-    case "work-toggle": {
+    case "work-group-summary": {
       const bw = b as typeof a;
       return (
         a.createdAt === bw.createdAt &&
         a.groupId === bw.groupId &&
-        a.hiddenCount === bw.hiddenCount &&
+        a.label === bw.label &&
+        a.entryCount === bw.entryCount &&
         a.expanded === bw.expanded &&
-        a.onlyToolEntries === bw.onlyToolEntries
+        a.running === bw.running
       );
     }
 

@@ -230,11 +230,20 @@ export function ThreadWorkLog(props: {
   );
 }
 
+/**
+ * Header for a run of activities.
+ *
+ * The visible text is a sentence about what happened ("Read files, ran
+ * commands"), not a count of what is hidden — the count answers a question
+ * nobody asked. The counts survive only in the accessibility label, where
+ * "expand this" genuinely needs saying.
+ */
 export function ThreadWorkGroupToggle(props: {
   readonly expanded: boolean;
   readonly hiddenCount: number;
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onlyToolActivities: boolean;
+  readonly label: string;
   readonly onToggle: () => void;
 }) {
   const colorScheme = useColorScheme();
@@ -246,10 +255,8 @@ export function ThreadWorkGroupToggle(props: {
     : props.hiddenCount === 1
       ? "log entry"
       : "log entries";
-  const collapsedLabel = `Show ${props.hiddenCount} previous ${noun}`;
-  const expandedLabel = props.onlyToolActivities
-    ? "Show fewer tool calls"
-    : "Show fewer log entries";
+  const collapsedLabel = `${props.label}. Show ${props.hiddenCount} ${noun}`;
+  const expandedLabel = `${props.label}. Show fewer ${noun}`;
 
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
@@ -279,8 +286,8 @@ export function ThreadWorkGroupToggle(props: {
             type="monochrome"
           />
         </View>
-        <Text className="font-t3-medium text-xs text-foreground opacity-80">
-          {props.expanded ? expandedLabel : `+${props.hiddenCount} previous ${noun}`}
+        <Text className="font-t3-medium text-xs text-foreground opacity-80" numberOfLines={1}>
+          {props.label}
         </Text>
       </Pressable>
     </View>

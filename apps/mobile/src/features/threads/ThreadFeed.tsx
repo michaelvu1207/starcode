@@ -850,6 +850,7 @@ function renderFeedEntry(
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
+        label={entry.label}
         onlyToolActivities={entry.onlyToolActivities}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
       />
@@ -984,6 +985,33 @@ function renderFeedEntry(
           </View>
         ) : null}
       </Animated.View>
+    );
+  }
+
+  if (entry.type === "reasoning") {
+    // Prose at body weight, matching the assistant's own text — reasoning is
+    // narration, not a log line.
+    const styles = markdownStyles.assistant;
+    return (
+      <View className="mb-4 min-w-0">
+        {hasNativeSelectableMarkdownText() ? (
+          <SelectableMarkdownText
+            markdown={entry.text}
+            skills={props.skills}
+            textStyle={styles.nativeTextStyle}
+            onLinkPress={props.onMarkdownLinkPress}
+          />
+        ) : (
+          <Markdown
+            options={{ gfm: true }}
+            renderers={styles.renderers}
+            styles={styles.styles}
+            theme={styles.theme}
+          >
+            {entry.text}
+          </Markdown>
+        )}
+      </View>
     );
   }
 

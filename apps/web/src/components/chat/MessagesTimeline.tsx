@@ -25,11 +25,17 @@ import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
+  activityKindFromItemType,
+  activityPhrase,
+  formatActivityPhrase,
+  type ActivityPhrase,
+} from "@t3tools/shared/activityPhrasing";
+import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
+  workLogEntryPhase,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import {
@@ -50,7 +56,6 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
-  MinusIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -843,7 +848,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
           row.kind === "work" ||
-          row.kind === "work-toggle"
+          row.kind === "work-group-summary"
           ? "pb-2"
           : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
@@ -854,8 +859,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
-      {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-      {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "work-group-summary" ? <WorkGroupSummaryTimelineRow row={row} /> : null}
+      {row.kind === "reasoning" ? <ReasoningTimelineRow row={row} /> : null}
+      {row.kind === "turn-fold" ? <TurnHeaderTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -995,22 +1001,77 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   );
 }
 
-function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
+/**
+ * The turn's single header row.
+ *
+ * One component covers both states on purpose. While the turn runs it reads
+ * "Working for 12s" with a live timer and no chevron; once the turn settles the
+ * same row becomes "Worked for 20s" with a disclosure. Rendering these as two
+ * components in two places is what used to put the running indicator at the
+ * bottom of the transcript and the settled one at the top, so the transition
+ * read as one thing disappearing and a different thing appearing elsewhere.
+ */
+function TurnHeaderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
   const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
 
+  const label = (
+    <span>
+      {row.running && row.startedAt ? (
+        <>
+          Working for <WorkingTimer createdAt={row.startedAt} />
+        </>
+      ) : (
+        row.label
+      )}
+    </span>
+  );
+
+  const foldableTurnId = row.running ? null : row.turnId;
+
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
-      <button
-        type="button"
-        aria-expanded={row.expanded}
-        data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      >
-        <span>{row.label}</span>
-        <Icon className="size-3.5" />
-      </button>
+      {foldableTurnId === null ? (
+        // Nothing is folded away yet, so there is no control to offer — a
+        // button here would be a disclosure that discloses nothing.
+        <div className="flex select-none items-center gap-1 px-1 text-xs text-muted-foreground tabular-nums">
+          {label}
+        </div>
+      ) : (
+        <button
+          type="button"
+          aria-expanded={row.expanded}
+          data-scroll-anchor-ignore
+          onClick={() => ctx.onToggleTurnFold(foldableTurnId)}
+          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        >
+          {label}
+          <Icon className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A reasoning paragraph.
+ *
+ * Rendered as ordinary prose at body brightness, not as a log row: this is the
+ * agent narrating what it is doing, and demoting it to a dim one-liner next to
+ * the tool calls loses the only part of the transcript that explains *why* the
+ * tool calls happened.
+ */
+function ReasoningTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "reasoning" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="relative min-w-0 px-1 py-0.5">
+      <ChatMarkdown
+        text={row.text}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        isStreaming={false}
+        skills={ctx.skills}
+      />
     </div>
   );
 }
@@ -1158,53 +1219,123 @@ const WorkGroupSection = memo(function WorkGroupSection({
     () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
     [groupedEntries],
   );
-  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
-  const groupLabel = onlyToolEntries
-    ? nonEmptyEntries.length === 1
-      ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
-    : "Work Log";
 
   if (nonEmptyEntries.length === 0) return null;
 
+  // No group heading. A run of two or more activities is now represented by its
+  // own summary row, so anything reaching here is a single line — and a
+  // heading that reads "1 tool call" above one tool call says nothing the row
+  // below it doesn't already say.
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
-      {!onlyToolEntries && (
-        <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/65">
-          {groupLabel}
-        </p>
-      )}
-      <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
-          <SimpleWorkEntryRow
-            key={workEntry.id}
-            workEntry={workEntry}
-            workspaceRoot={workspaceRoot}
-          />
-        ))}
-      </div>
-    </section>
+    <div className="-mx-1 space-y-px px-1 py-0.5">
+      {nonEmptyEntries.map((workEntry) => (
+        <ActivityLineRow key={workEntry.id} workEntry={workEntry} workspaceRoot={workspaceRoot} />
+      ))}
+    </div>
   );
 });
 
-function WorkGroupToggleTimelineRow({
+/**
+ * Disclosure chevron for an activity row.
+ *
+ * Invisible until the row is hovered or focused, then rotated when open. The
+ * rows are dense and mostly not worth opening; a chevron on every one of them
+ * reads as a column of controls rather than as a transcript.
+ */
+function ActivityChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65">
+      <ChevronRightIcon
+        className={cn(
+          "size-3 shrink-0 opacity-0 transition-[transform,opacity] duration-200",
+          "group-hover/activity-header:opacity-70 group-focus-visible/activity-header:opacity-100",
+          expanded && "rotate-90 opacity-70",
+        )}
+        aria-hidden
+      />
+    </span>
+  );
+}
+
+/**
+ * Text that sweeps a brighter window across itself while active.
+ *
+ * Codex's cadence, matched deliberately: one 1s sweep every 4s, first at 600ms,
+ * stepped rather than smooth. A continuous spinner next to every running row
+ * turns the transcript into a wall of motion; an occasional sweep reads as
+ * "still going" without competing with the text for attention.
+ */
+function ShimmerText({
+  active,
+  className,
+  children,
+}: {
+  active: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [sweeping, setSweeping] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setSweeping(false);
+      return;
+    }
+    let sweepTimeout: ReturnType<typeof setTimeout> | undefined;
+    const startSweep = () => {
+      setSweeping(true);
+      sweepTimeout = setTimeout(() => setSweeping(false), SHIMMER_SWEEP_MS);
+    };
+    const initial = setTimeout(startSweep, SHIMMER_INITIAL_DELAY_MS);
+    const interval = setInterval(startSweep, SHIMMER_INTERVAL_MS);
+    return () => {
+      clearTimeout(initial);
+      clearTimeout(sweepTimeout);
+      clearInterval(interval);
+    };
+  }, [active]);
+
+  return (
+    <span
+      className={cn(
+        "relative inline-block",
+        active ? "text-muted-foreground/70" : "text-foreground/82",
+        sweeping && "activity-shimmer-active",
+        className,
+      )}
+    >
+      {children}
+      {active ? (
+        <span className="activity-shimmer-sweep" aria-hidden>
+          <span className="activity-shimmer-highlight">{children}</span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+const SHIMMER_SWEEP_MS = 1000;
+const SHIMMER_INTERVAL_MS = 4000;
+const SHIMMER_INITIAL_DELAY_MS = 600;
+
+/**
+ * One line standing in for a run of consecutive activities.
+ *
+ * The label is a sentence about the run ("Read files, ran commands"), not a
+ * count of what is hidden ("+7 previous tool calls"). The count answers a
+ * question nobody asked; the sentence answers "what did it just do".
+ */
+function WorkGroupSummaryTimelineRow({
   row,
 }: {
-  row: Extract<TimelineRow, { kind: "work-toggle" }>;
+  row: Extract<TimelineRow, { kind: "work-group-summary" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const labelNoun = row.onlyToolEntries
-    ? row.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : row.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
 
   return (
     <button
       type="button"
-      className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/activity-header flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded}
       onClick={(event) => {
         const anchorElement =
@@ -1212,23 +1343,10 @@ function WorkGroupToggleTimelineRow({
         ctx.onToggleWorkGroup(row.groupId, anchorElement);
       }}
     >
-      <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65">
-        <ChevronDownIcon
-          className={cn(
-            "size-3.5 shrink-0 opacity-70 transition-transform duration-200",
-            row.expanded && "rotate-180",
-          )}
-        />
-      </span>
-      {row.expanded ? (
-        <span className="font-medium text-foreground/82">
-          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
-        </span>
-      ) : (
-        <span className="font-medium text-foreground/82">
-          +{row.hiddenCount} previous {labelNoun}
-        </span>
-      )}
+      <ActivityChevron expanded={row.expanded} />
+      <ShimmerText active={row.running} className="min-w-0 flex-1 truncate font-medium">
+        {row.label}
+      </ShimmerText>
     </button>
   );
 }
@@ -1820,21 +1938,6 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   };
 }
 
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
 function workEntryRawCommand(
   workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
 ): string | null {
@@ -1843,34 +1946,6 @@ function workEntryRawCommand(
     return null;
   }
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
-function buildToolCallExpandedBody(
-  workEntry: TimelineWorkEntry,
-  workspaceRoot: string | undefined,
-): string | null {
-  const blocks: string[] = [];
-  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
-    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
-  }
-  const raw = workEntryRawCommand(workEntry);
-  if (raw?.trim()) {
-    blocks.push(raw.trim());
-  } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
-  }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
-  }
-  const changedFiles = workEntry.changedFiles ?? [];
-  if (changedFiles.length > 0) {
-    blocks.push(
-      changedFiles
-        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
-        .join("\n"),
-    );
-  }
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
@@ -1919,63 +1994,129 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
+/**
+ * Turn a work entry into a verb phrase.
+ *
+ * Entries that are not tool calls — warnings, approvals, subagent progress —
+ * have no verb in the vocabulary and fall back to their own label, which is
+ * already a sentence. Forcing them through the verb table would produce
+ * "Working: <the label>" and read worse than the label alone.
+ */
+function activityPhraseForWorkEntry(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+  phase: "running" | "settled",
+): ActivityPhrase {
+  const kind = activityKindFromItemType({
+    itemType: workEntry.itemType,
+    requestKind: workEntry.requestKind,
+    hasCommand: (workEntry.command?.trim().length ?? 0) > 0,
+    hasChangedFiles: (workEntry.changedFiles?.length ?? 0) > 0,
+  });
+
+  if (kind === "other") {
+    return { verb: toolWorkEntryHeading(workEntry) };
+  }
+
+  const target = activityTargetForWorkEntry(workEntry, kind, workspaceRoot);
+  return activityPhrase({
+    kind,
+    phase,
+    ...(target ? { target } : {}),
+    ...(workEntry.toolLifecycleStatus === "stopped" ? { stopped: true } : {}),
+  });
+}
+
+/** What the verb acted on: a command, a file, a query. */
+function activityTargetForWorkEntry(
+  workEntry: TimelineWorkEntry,
+  kind: ReturnType<typeof activityKindFromItemType>,
+  workspaceRoot: string | undefined,
+): string | undefined {
+  if (kind === "command" || kind === "mcpTool") {
+    return workEntry.command?.trim() || workEntry.toolTitle || undefined;
+  }
+  const [firstFile] = workEntry.changedFiles ?? [];
+  if (firstFile) {
+    const displayPath = formatWorkspaceRelativePath(firstFile, workspaceRoot);
+    const extra = (workEntry.changedFiles?.length ?? 0) - 1;
+    return extra > 0 ? `${displayPath} +${extra} more` : displayPath;
+  }
+  return workEntry.detail?.trim() || undefined;
+}
+
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+/**
+ * A single activity line — "Ran npm test", "Read README.md".
+ *
+ * Two things here are load-bearing and easy to lose:
+ *
+ * 1. Running rows are expanded by default and settled rows are collapsed, with
+ *    the two states tracked in *separate* slots. A row therefore opens itself
+ *    while its work happens and folds away once it is done, and a manual toggle
+ *    while running does not carry over into the settled view. Collapsing this
+ *    into one `expanded` flag makes the row either always-open or always-shut
+ *    and loses the sense of the agent showing its work.
+ * 2. There is no per-row status glyph. Whether a command succeeded is answered
+ *    by the card's footer when you open it; a column of ticks down the side of
+ *    every row says nothing you wanted to know and competes with the text.
+ */
+const ActivityLineRow = memo(function ActivityLineRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
-  const [expanded, setExpanded] = useState(false);
-  const iconConfig = workToneIcon(workEntry.tone);
+  const turnSettled = !activity.activeTurnInProgress;
+  const phase = workLogEntryPhase(workEntry, turnSettled);
+  const running = phase === "running";
+
+  const [expandedWhileRunning, setExpandedWhileRunning] = useState(true);
+  const [expandedWhenSettled, setExpandedWhenSettled] = useState(false);
+  const expanded = running ? expandedWhileRunning : expandedWhenSettled;
+  const toggleExpanded = () => {
+    if (running) {
+      setExpandedWhileRunning((value) => !value);
+    } else {
+      setExpandedWhenSettled((value) => !value);
+    }
+  };
+
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const phrase = activityPhraseForWorkEntry(workEntry, workspaceRoot, phase);
+  const displayText = formatActivityPhrase(phrase);
+  const body = activityExpandedBody(workEntry, workspaceRoot);
+  const canExpand = body !== null;
+
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
     (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
   const iconWrapperClass = cn(
     "flex size-5 shrink-0 items-center justify-center",
-    showWarningIndicator
+    showWarningIndicator || showDestructiveRowStyle
       ? "text-destructive"
-      : showDestructiveRowStyle
-        ? "text-destructive"
-        : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-muted-foreground/65"
-          : iconConfig.className,
+      : "text-muted-foreground/65",
   );
-  const headingClass = showWarningIndicator
+  const verbClass = showWarningIndicator
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : "font-medium text-foreground/82";
-  const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
-  const showSuccessIndicator =
-    workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+      : "font-medium";
+
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
         "aria-label": displayText,
-        onClick: () => setExpanded((v) => !v),
+        "aria-expanded": expanded,
+        onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setExpanded((v) => !v);
+            toggleExpanded();
           }
         },
       }
@@ -1984,98 +2125,195 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        "group/activity-header flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
     >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+      <div className="flex select-none items-center gap-1.5">
         <span className={iconWrapperClass}>
           <WorkEntryIconSvg
             name={entryIconName}
             className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
           />
         </span>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
-              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
-              )}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
-            <span
-              className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
-            >
-              {canExpand ? (
-                <ChevronDownIcon
-                  className={cn(
-                    "size-3 shrink-0 opacity-70 transition-transform duration-200",
-                    expanded && "rotate-180",
-                  )}
-                  aria-hidden
-                />
-              ) : null}
+        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-[12px] leading-5">
+          <ShimmerText active={running} className={cn("shrink-0", verbClass)}>
+            {phrase.verb}
+          </ShimmerText>
+          {phrase.target ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/55">
+              {phrase.target}
             </span>
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              {showFailedIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className="flex size-4 items-center justify-center"
-                        aria-label="Tool call failed"
-                      />
-                    }
-                  >
-                    <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
-                </Tooltip>
-              ) : showSuccessIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <span className="inline-flex size-4 items-center justify-center">
-                      <CheckIcon
-                        className="block size-3 shrink-0 stroke-current"
-                        stroke="currentColor"
-                        aria-hidden
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
-                </Tooltip>
-              ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
-          </div>
-        </div>
+          ) : null}
+          {workEntry.diffStat ? <DiffStatInline stat={workEntry.diffStat} /> : null}
+        </p>
+        {canExpand ? <ActivityChevron expanded={expanded} /> : null}
       </div>
-      {expanded && canExpand && expandedBody ? (
-        <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
-          onClick={stopRowToggle}
-          onPointerDown={stopRowToggle}
-        >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
+      {expanded && body ? (
+        <div className="mt-1 ms-7" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <CommandOutputCard body={body} workEntry={workEntry} />
         </div>
       ) : null}
     </div>
   );
 });
+
+/** Inline `+22 -3` beside an edit line. */
+function DiffStatInline({ stat }: { stat: { added: number; removed: number } }) {
+  return (
+    <span className="shrink-0 tabular-nums text-[11px]">
+      {stat.added > 0 ? <span className="text-success">+{stat.added}</span> : null}
+      {stat.added > 0 && stat.removed > 0 ? " " : null}
+      {stat.removed > 0 ? <span className="text-destructive">-{stat.removed}</span> : null}
+    </span>
+  );
+}
+
+interface ActivityBody {
+  readonly blockName: string;
+  readonly command: string | null;
+  readonly output: string | null;
+  readonly outputTruncated: boolean;
+}
+
+/**
+ * Expanded contents of an activity row.
+ *
+ * Returns null when there is genuinely nothing to show, which is what makes the
+ * chevron absent rather than present-and-useless on rows like "Read README.md".
+ */
+function activityExpandedBody(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+): ActivityBody | null {
+  const command = workEntryRawCommand(workEntry) ?? workEntry.command?.trim() ?? null;
+  const output = workEntry.output?.trim() ?? null;
+
+  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
+    return {
+      blockName: workEntry.toolTitle ?? "Tool call",
+      command: JSON.stringify(workEntry.toolData, null, 2),
+      output,
+      outputTruncated: workEntry.outputTruncated === true,
+    };
+  }
+
+  const changedFiles = workEntry.changedFiles ?? [];
+  const fileList =
+    changedFiles.length > 0
+      ? changedFiles
+          .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
+          .join("\n")
+      : null;
+
+  if (!command && !output && !fileList) {
+    return null;
+  }
+
+  return {
+    blockName: command ? "Shell" : (workEntry.toolTitle ?? "Details"),
+    command,
+    output: output ?? fileList,
+    outputTruncated: workEntry.outputTruncated === true,
+  };
+}
+
+/**
+ * The expanded card: block name, `$ command`, captured output, status footer.
+ *
+ * The output pane does not wrap. Command output is column-aligned — diffs,
+ * tables, stack traces — and wrapping it destroys the alignment that makes it
+ * readable, so it scrolls sideways instead. It is also bottom-anchored via
+ * `flex-col-reverse`, which keeps the newest lines in view while a command is
+ * still streaming without any scroll bookkeeping.
+ */
+function CommandOutputCard({
+  body,
+  workEntry,
+}: {
+  body: ActivityBody;
+  workEntry: TimelineWorkEntry;
+}) {
+  return (
+    <div className="flex flex-col overflow-hidden rounded-lg border border-border/60 bg-muted/30">
+      <div className="px-2.5 pt-1.5 text-[11px] text-muted-foreground/70">{body.blockName}</div>
+      {body.command ? (
+        <div className="flex px-2.5 pt-1 font-mono text-[11px] leading-relaxed">
+          <span className="me-[1ch] shrink-0 text-muted-foreground/55">$</span>
+          <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/82 select-text">
+            {body.command}
+          </span>
+        </div>
+      ) : null}
+      {body.output ? (
+        <div className="flex max-h-36 flex-col-reverse overflow-auto px-2.5 pt-1">
+          <pre className="cursor-text whitespace-pre font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+            {body.output}
+          </pre>
+        </div>
+      ) : (
+        <div className="px-2.5 pt-1 font-mono text-[11px] text-muted-foreground/55">No output</div>
+      )}
+      {body.outputTruncated ? (
+        <div className="px-2.5 pt-1 text-[11px] text-muted-foreground/55">
+          Output truncated — showing the last 16,000 characters.
+        </div>
+      ) : null}
+      <ActivityFooter workEntry={workEntry} />
+    </div>
+  );
+}
+
+/**
+ * Status line for an expanded activity.
+ *
+ * The running case renders an empty row rather than nothing at all: it reserves
+ * the height the footer will occupy, so the card does not jolt upward the
+ * instant a command finishes.
+ */
+function ActivityFooter({ workEntry }: { workEntry: TimelineWorkEntry }) {
+  const activity = use(TimelineRowActivityCtx);
+  const turnSettled = !activity.activeTurnInProgress;
+  const running = workLogEntryPhase(workEntry, turnSettled) === "running";
+
+  const footerClass =
+    "flex items-center gap-2 px-2.5 pt-0.5 pb-1 text-[11px] text-muted-foreground/55";
+
+  if (running) {
+    return <div className={footerClass} aria-hidden />;
+  }
+
+  if (workEntry.toolLifecycleStatus === "stopped") {
+    return (
+      <div className={footerClass}>
+        <span className="ms-auto">Stopped</span>
+      </div>
+    );
+  }
+
+  const failed =
+    workEntryIndicatesToolFailure(workEntry) ||
+    workEntry.toolLifecycleStatus === "failed" ||
+    (workEntry.exitCode !== undefined && workEntry.exitCode !== 0);
+
+  if (!failed) {
+    return (
+      <div className={footerClass}>
+        <span className="ms-auto flex items-center gap-1">
+          <CheckIcon className="size-3 shrink-0" aria-hidden />
+          Success
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={footerClass}>
+      <span className="ms-auto">
+        {workEntry.exitCode !== undefined ? `Exit code ${workEntry.exitCode}` : "Failed"}
+      </span>
+    </div>
+  );
+}

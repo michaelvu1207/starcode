@@ -423,6 +423,15 @@ export const ItemLifecyclePayload = Schema.Struct({
   outputTruncated: Schema.optional(Schema.Boolean),
   /** Process exit status. Absent when the provider does not report one. */
   exitCode: Schema.optional(Schema.Int),
+  /**
+   * Lines added / removed by a `file_change` item, summed across its files.
+   *
+   * Computed by the adapter from the patch it already has, rather than left to
+   * each client to re-parse — the count is the same everywhere, and doing it
+   * once server-side keeps web and mobile from disagreeing about it.
+   */
+  linesAdded: Schema.optional(Schema.Int),
+  linesRemoved: Schema.optional(Schema.Int),
   data: Schema.optional(Schema.Unknown),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;

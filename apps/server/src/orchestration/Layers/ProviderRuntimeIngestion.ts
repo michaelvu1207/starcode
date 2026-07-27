@@ -13,6 +13,8 @@ import {
   type OrchestrationCheckpointSummary,
   type OrchestrationEvent,
   type OrchestrationMessage,
+  EventId,
+  type IsoDateTime,
   type OrchestrationProposedPlan,
   type OrchestrationProposedPlanId,
   type OrchestrationThread,
@@ -239,20 +241,45 @@ function truncateOutput(value: string): { output: string; truncated: boolean } {
   return { output: value.slice(value.length - OUTPUT_CHAR_LIMIT), truncated: true };
 }
 
+/** The runtime event's session sequence, when the provider stamped one. */
+function runtimeEventSequence(event: ProviderRuntimeEvent): number | undefined {
+  return (event as ProviderRuntimeEvent & { sessionSequence?: number }).sessionSequence;
+}
+
+/**
+ * The provider's own item id, echoed into the activity payload as `itemId`.
+ *
+ * This is the join key that lets the client fold `tool.started` →
+ * `tool.updated` → `tool.completed` into one row. Every adapter already stamps
+ * `itemId` on all three, whereas `data.toolCallId` is only populated by ACP —
+ * so without this the client is left matching on labels, which collapses two
+ * genuinely different calls to the same command into one row.
+ */
+function itemJoinKeyFields(event: ProviderRuntimeEvent): Record<string, unknown> {
+  const itemId = typeof event.itemId === "string" ? event.itemId.trim() : "";
+  return itemId.length > 0 ? { itemId } : {};
+}
+
 /** Payload fragment carrying captured output, for spreading into an activity. */
 function outputPayloadFields(payload: {
   readonly output?: string | undefined;
   readonly exitCode?: number | undefined;
+  readonly linesAdded?: number | undefined;
+  readonly linesRemoved?: number | undefined;
 }): Record<string, unknown> {
-  const exitCodeFields = payload.exitCode !== undefined ? { exitCode: payload.exitCode } : {};
+  const statFields = {
+    ...(payload.exitCode !== undefined ? { exitCode: payload.exitCode } : {}),
+    ...(payload.linesAdded !== undefined ? { linesAdded: payload.linesAdded } : {}),
+    ...(payload.linesRemoved !== undefined ? { linesRemoved: payload.linesRemoved } : {}),
+  };
   if (payload.output === undefined || payload.output.length === 0) {
-    return exitCodeFields;
+    return statFields;
   }
   const { output, truncated } = truncateOutput(payload.output);
   return {
     output,
     ...(truncated ? { outputTruncated: true } : {}),
-    ...exitCodeFields,
+    ...statFields,
   };
 }
 
@@ -726,6 +753,7 @@ export function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool updated",
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...outputPayloadFields(event.payload),
@@ -750,6 +778,8 @@ export function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...outputPayloadFields(event.payload),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
@@ -770,9 +800,14 @@ export function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
+          // No "started" suffix: the client renders the verb from lifecycle
+          // status ("Running …" vs "Ran …"), so baking tense into the summary
+          // here would fight the phrasing layer and double up.
+          summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
+            status: event.payload.status ?? "inProgress",
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -835,6 +870,129 @@ const make = Effect.gen(function* () {
     timeToLive: TASK_DESCRIPTION_BY_TASK_TTL,
     lookup: () => Effect.succeed(""),
   });
+
+  // Reasoning arrives as a token stream but reads as paragraphs, so it is
+  // accumulated per summary part and republished under a stable activity id.
+  // Activities upsert by id all the way down (reducer, projector, and the
+  // projection repository), so re-emitting the same id grows one row in place
+  // rather than appending a row per token.
+  // `createdAt` and `sequence` are pinned to the part's first delta and reused
+  // on every republish. Re-stamping them would move the paragraph later in the
+  // transcript each time it grew, so reasoning would visibly drift downward
+  // past the tool calls it was explaining.
+  const reasoningTextByPartKey = yield* Cache.make<
+    string,
+    { text: string; createdAt: IsoDateTime; sequence: number | undefined }
+  >({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () =>
+      Effect.die(
+        new Error("reasoning buffers must be read through getOption before initialization"),
+      ),
+  });
+
+  const reasoningPartKey = (threadId: ThreadId, turnKey: string, partIndex: number) =>
+    `${threadId}${turnKey}${partIndex}`;
+
+  /**
+   * Republish cadence for in-flight reasoning.
+   *
+   * Every token would mean an event-store write per token; waiting for the
+   * part to finish would mean reasoning appears only after it stops being
+   * interesting. A few hundred characters is roughly a sentence, which is the
+   * granularity the text reads at anyway.
+   */
+  const REASONING_REPUBLISH_CHARS = 320;
+
+  /**
+   * Upper bound when sweeping a turn's reasoning parts at flush time. Real
+   * turns produce a handful; this only has to be larger than that, and bounds
+   * the sweep for a provider that decides otherwise.
+   */
+  const REASONING_MAX_PARTS_PER_TURN = 256;
+
+  /**
+   * Publish (or republish) one reasoning paragraph as an activity.
+   *
+   * The id is synthetic and derived from the part's coordinates rather than
+   * from `event.eventId`, which is what makes republishing land on the same row
+   * instead of stacking a new one per flush.
+   */
+  const emitReasoningActivity = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnKey: string;
+    readonly partIndex: number;
+    readonly buffered: {
+      readonly text: string;
+      readonly createdAt: IsoDateTime;
+      readonly sequence: number | undefined;
+    };
+  }) =>
+    Effect.gen(function* () {
+      const text = input.buffered.text.trim();
+      if (text.length === 0) {
+        return;
+      }
+      const { output } = truncateOutput(text);
+      const activityId = EventId.make(
+        `reasoning:${input.threadId}:${input.turnKey}:${input.partIndex}`,
+      );
+      const commandId = yield* providerCommandId(input.event, "reasoning-activity");
+      yield* orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId,
+        threadId: input.threadId,
+        activity: {
+          id: activityId,
+          createdAt: input.buffered.createdAt,
+          tone: "info",
+          kind: "reasoning",
+          // The summary is the row label for surfaces that only show labels;
+          // the full paragraph lives in the payload and is what gets rendered
+          // as prose.
+          summary: truncateDetail(output, 120),
+          payload: { text: output, partIndex: input.partIndex },
+          turnId: toTurnId(input.event.turnId) ?? null,
+          // Carried so reasoning interleaves with tool activity: the ordering
+          // comparator sorts every activity that lacks a sequence ahead of
+          // every activity that has one, which would strand reasoning at the
+          // top of the thread.
+          ...(input.buffered.sequence !== undefined ? { sequence: input.buffered.sequence } : {}),
+        },
+        createdAt: input.buffered.createdAt,
+      });
+    });
+
+  /** Republish every buffered reasoning part for a turn and drop the buffers. */
+  const flushReasoningForTurn = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnKey: string;
+    readonly createdAt: IsoDateTime;
+  }) =>
+    Effect.gen(function* () {
+      // Parts are sparse and small in number, so probing indices is cheaper
+      // than keeping a second index of which parts a turn opened.
+      for (let partIndex = 0; partIndex < REASONING_MAX_PARTS_PER_TURN; partIndex += 1) {
+        const partKey = reasoningPartKey(input.threadId, input.turnKey, partIndex);
+        const buffered = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        if (!buffered || buffered.text.length === 0) {
+          continue;
+        }
+        yield* emitReasoningActivity({
+          event: input.event,
+          threadId: input.threadId,
+          turnKey: input.turnKey,
+          partIndex,
+          buffered,
+        });
+        yield* Cache.invalidate(reasoningTextByPartKey, partKey);
+      }
+    });
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
@@ -1625,6 +1783,49 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // Both stream kinds are reasoning: Codex emits `reasoning_summary_text`,
+      // Claude and opencode emit `reasoning_text`. Treating only one of them as
+      // reasoning is why this looked provider-specific before.
+      const reasoningDelta =
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "reasoning_summary_text" ||
+          event.payload.streamKind === "reasoning_text")
+          ? event.payload
+          : undefined;
+
+      if (reasoningDelta && reasoningDelta.delta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const partIndex = reasoningDelta.summaryIndex ?? reasoningDelta.contentIndex ?? 0;
+        const turnKey = turnId ?? "no-turn";
+        const partKey = reasoningPartKey(thread.id, turnKey, partIndex);
+        const existing = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        const previousText = existing?.text ?? "";
+        const buffered = {
+          text: previousText + reasoningDelta.delta,
+          createdAt: existing?.createdAt ?? now,
+          sequence: existing?.sequence ?? runtimeEventSequence(event),
+        };
+        yield* Cache.set(reasoningTextByPartKey, partKey, buffered);
+
+        // Republish on a character cadence rather than per token. Crossing a
+        // bucket boundary is the signal, so a burst of tiny deltas still costs
+        // one write.
+        const crossedBucket =
+          Math.floor(buffered.text.length / REASONING_REPUBLISH_CHARS) >
+          Math.floor(previousText.length / REASONING_REPUBLISH_CHARS);
+        if (crossedBucket) {
+          yield* emitReasoningActivity({
+            event,
+            threadId: thread.id,
+            turnKey,
+            partIndex,
+            buffered,
+          });
+        }
+      }
+
       const assistantDelta =
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
@@ -1813,6 +2014,15 @@ const make = Effect.gen(function* () {
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
+        // Flush before the early return below: the tail of the last reasoning
+        // paragraph is whatever sits under the republish threshold, and without
+        // this it would never be published at all.
+        yield* flushReasoningForTurn({
+          event,
+          threadId: thread.id,
+          turnKey: turnId ?? "no-turn",
+          createdAt: now,
+        });
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(

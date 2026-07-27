@@ -269,6 +269,31 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
 }
 
 /**
+ * Added/removed line counts across a file-change item's patches.
+ *
+ * `+++`/`---` are the unified-diff file headers, not content, and counting them
+ * inflates every single-file edit by one add and one remove.
+ */
+function diffStatsFromChanges(changes: ReadonlyArray<{ readonly diff: string }>): {
+  linesAdded?: number;
+  linesRemoved?: number;
+} {
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const change of changes) {
+    for (const line of change.diff.split(/\r?\n/)) {
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+")) linesAdded += 1;
+      else if (line.startsWith("-")) linesRemoved += 1;
+    }
+  }
+  return {
+    ...(linesAdded > 0 ? { linesAdded } : {}),
+    ...(linesRemoved > 0 ? { linesRemoved } : {}),
+  };
+}
+
+/**
  * Captured process output and exit status, for the item types that have them.
  *
  * Deliberately separate from {@link itemDetail}: `detail` is a one-line row
@@ -278,7 +303,12 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
 function itemOutcome(item: CodexLifecycleItem): {
   output?: string;
   exitCode?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
 } {
+  if (item.type === "fileChange") {
+    return diffStatsFromChanges(item.changes);
+  }
   if (item.type !== "commandExecution") {
     return {};
   }

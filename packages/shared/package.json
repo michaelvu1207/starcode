@@ -7,6 +7,10 @@
       "types": "./src/proposedPlanTitle.ts",
       "import": "./src/proposedPlanTitle.ts"
     },
+    "./activityPhrasing": {
+      "types": "./src/activityPhrasing.ts",
+      "import": "./src/activityPhrasing.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

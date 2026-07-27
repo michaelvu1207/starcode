@@ -161,18 +161,22 @@ describe("buildThreadFeed", () => {
       return;
     }
 
+    // Identity and position come from the tool's *start*, and the heading is the
+    // shared verb rather than the provider's own title, so phone and desktop
+    // describe the same call with the same words.
     expect(group.activities).toEqual([
       {
-        id: "tool-completed",
-        createdAt: "2026-04-01T00:00:02.000Z",
+        id: "tool-updated",
+        createdAt: "2026-04-01T00:00:01.000Z",
         turnId: "turn-1",
-        summary: "Run tests",
+        summary: "Ran",
         detail: "bun run test",
         fullDetail: "/bin/zsh -lc 'bun run test'",
-        copyText: "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
+        copyText: "Ran\nbun run test\n/bin/zsh -lc 'bun run test'",
         icon: "command",
         toolLike: true,
         status: "success",
+        activityKind: "command",
       },
     ]);
   });
@@ -444,6 +448,7 @@ describe("buildThreadFeed", () => {
       icon: "command",
       toolLike: true,
       status,
+      activityKind: "command",
     });
     const feed: ThreadFeedEntry[] = [
       {
@@ -460,23 +465,26 @@ describe("buildThreadFeed", () => {
       },
     ];
 
+    // Collapsed, the run is a single summary line describing all of it.
     const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
-    expect(collapsed.map((entry) => entry.id)).toEqual(["activity-3", "work-toggle:work-group-1"]);
-    expect(collapsed[1]).toMatchObject({
+    expect(collapsed.map((entry) => entry.id)).toEqual(["work-toggle:work-group-1"]);
+    expect(collapsed[0]).toMatchObject({
       type: "work-toggle",
       groupId: "work-group-1",
-      hiddenCount: 2,
+      hiddenCount: 3,
       expanded: false,
+      label: "Ran 3 commands",
     });
 
+    // Expanded, the summary stays as the header and the lines appear beneath it.
     const expanded = deriveThreadFeedPresentation(feed, null, new Set(), new Set(["work-group-1"]));
     expect(expanded.map((entry) => entry.id)).toEqual([
+      "work-toggle:work-group-1",
       "activity-1",
       "activity-2",
       "activity-3",
-      "work-toggle:work-group-1",
     ]);
-    expect(expanded.at(-1)).toMatchObject({
+    expect(expanded[0]).toMatchObject({
       type: "work-toggle",
       expanded: true,
     });
