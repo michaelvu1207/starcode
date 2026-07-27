@@ -1,10 +1,18 @@
 /**
  * Editing what a project *is* — the half that travels to every machine.
  *
- * Only display fields are here, and that is a boundary rather than a v1 cut:
- * bindings, filed threads and the master name ids that mean something on one
- * machine and nothing anywhere else, so they are edited where they live, not in
- * a dialog that fans its result out to four servers.
+ * Display fields are the bulk of it, and that is a boundary rather than a v1
+ * cut: filed threads and the master name ids that mean something on one machine
+ * and nothing anywhere else, so they are set where they live, not in a dialog
+ * that fans its result out to four servers.
+ *
+ * The one machine-local thing that *is* here is binding a suggested folder, and
+ * it is here because F16.6 deleted the strip on the index that used to carry
+ * it. A suggestion is a standing condition — a machine reconnects, a folder
+ * appears — so it needs a surface that outlives first-run setup, and this is the
+ * only one that already has a project in front of it. It writes to exactly one
+ * machine, which is why it sits below a rule rather than among the fields Save
+ * fans out.
  *
  * The slug is shown and not editable. It is the join key across machines, and
  * a key that can change is a key that can disagree — renaming here changes the
@@ -30,7 +38,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 import { useEnvironments } from "../../state/environments";
-import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
+import {
+  useProjectCatalogView,
+  useProjectMembership,
+  useProjectSeedPlan,
+} from "../../state/projectCatalog";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -384,6 +396,11 @@ export function ProjectEditDialog({
                 </Button>
               </div>
 
+              {/* Only while the dialog is open: the suggestions come from a
+                second poll, and every project row in the sidebar keeps one of
+                these dialogs mounted. */}
+              {open ? <ProjectBindSuggestions project={project} /> : null}
+
               {/* The two things that are not edits. Behind a rule and last,
                 because a dialog you open to rename something should not put
                 "Delete project" where the eye lands first. */}
@@ -464,6 +481,80 @@ export function ProjectEditDialog({
         <ProjectDeleteConfirm project={project} onClose={() => setConfirmingDelete(false)} />
       ) : null}
     </>
+  );
+}
+
+/**
+ * Folders on some machine that look like this project and are not bound to it.
+ *
+ * The fold already computes these for the whole fleet; this only shows the ones
+ * wearing this project's slug. Evidence is stated rather than smoothed over: a
+ * shared git remote is a fact, a shared folder name is a guess, and the guess
+ * says so on its own row — binding the wrong folder is the mistake that takes a
+ * hand-edit on four machines to undo.
+ */
+function ProjectBindSuggestions({ project }: { readonly project: ProjectCategoryView }): ReactNode {
+  const view = useProjectCatalogView();
+  const seedPlan = useProjectSeedPlan(view);
+  const writer = useProjectWriter();
+  // The catalog re-polls before a bound row disappears on its own, so the row
+  // is dropped here the moment it is taken. Keyed by location, not by slug:
+  // one project can have a suggestion per machine.
+  const [bound, setBound] = useState<ReadonlySet<string>>(new Set());
+
+  const suggestions = seedPlan.bindSuggestions.filter(
+    (suggestion) =>
+      suggestion.slug === project.slug &&
+      !bound.has(`${suggestion.location.environmentId}:${suggestion.location.projectId}`),
+  );
+  if (suggestions.length === 0) return null;
+
+  return (
+    <div
+      className="space-y-1.5 border-t border-border/50 pt-4"
+      data-testid="project-bind-suggestions"
+    >
+      <Label>Suggested folders</Label>
+      <ul className="space-y-1.5">
+        {suggestions.map((suggestion) => (
+          <li
+            key={`${suggestion.location.environmentId}:${suggestion.location.projectId}`}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border/50 bg-card/50 px-2.5 py-1.5 text-[11px]"
+          >
+            <span className="min-w-0 text-muted-foreground/80">
+              <span className="font-mono text-muted-foreground">
+                {suggestion.location.workspaceRoot}
+              </span>{" "}
+              on {suggestion.location.label}
+            </span>
+            {suggestion.evidence === "path" ? (
+              <span className="rounded bg-muted/60 px-1 py-px text-[10px] text-muted-foreground/70">
+                name only
+              </span>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-6 px-2 text-[11px]"
+              data-testid="project-bind-suggestion"
+              onClick={() => {
+                writer.bind(suggestion);
+                setBound((current) =>
+                  new Set(current).add(
+                    `${suggestion.location.environmentId}:${suggestion.location.projectId}`,
+                  ),
+                );
+              }}
+            >
+              Bind
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-muted-foreground/60">
+        Binding one files its threads under this project on that machine. Nothing moves on disk.
+      </p>
+    </div>
   );
 }
 

@@ -14,6 +14,13 @@
  * deleted. What is left is what a strip icon is actually for — the things you
  * cannot do from the list itself.
  *
+ * The third entry appears only when there is something to propose. Seeding used
+ * to be reachable from the index's header and from the sidebar's empty state,
+ * which between them meant: only before you had made your first project. But a
+ * proposal is a standing condition — a machine reconnects, a repository is
+ * cloned — so it now lives on the one control that is always there, and hides
+ * itself when it would be a button with nothing behind it.
+ *
  * Note which "project" each action means. "New project" is a *category* — the
  * cross-machine kind, from the catalog. "New folder…" is the server-project the
  * app has always had: a location on this machine. They are different objects
@@ -22,10 +29,12 @@
  */
 import { useNavigate } from "@tanstack/react-router";
 import { FolderPlusIcon } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
-import { useProjectCatalogView } from "../../state/projectCatalog";
+import { useProjectCatalogView, useProjectSeedPlan } from "../../state/projectCatalog";
+import type { ProjectSeedProposal } from "../projects/ProjectCatalog.model";
 import { ProjectCreateDialog } from "../projects/ProjectCreateDialog";
+import { ProjectSeedDialog } from "../projects/ProjectSeedDialog";
 import { useProjectWriter } from "../projects/useProjectWriter";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuButton } from "../ui/sidebar";
@@ -50,9 +59,25 @@ export function SidebarProjectsMenu({
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const view = useProjectCatalogView();
+  const seedPlan = useProjectSeedPlan(view);
   const writer = useProjectWriter();
   const navigate = useNavigate();
+
+  const runSeed = useCallback(
+    async (accepted: ReadonlyArray<ProjectSeedProposal>) => {
+      setSeeding(true);
+      try {
+        await writer.seed(accepted);
+        setSeedOpen(false);
+      } finally {
+        setSeeding(false);
+      }
+    },
+    [writer],
+  );
 
   const takenSlugs = useMemo(
     () => new Set(view.projects.map((project) => project.slug)),
@@ -108,6 +133,22 @@ export function SidebarProjectsMenu({
             New folder…
             <span className="ml-1 text-[10px] text-muted-foreground/55">on this machine</span>
           </button>
+          {seedPlan.proposals.length > 0 ? (
+            <button
+              type="button"
+              className={ACTION_CLASS}
+              data-testid="sidebar-projects-seed"
+              onClick={() => {
+                setOpen(false);
+                setSeedOpen(true);
+              }}
+            >
+              Set up {seedPlan.proposals.length} from your folders
+              <span className="ml-1 text-[10px] text-muted-foreground/55">
+                repositories we found
+              </span>
+            </button>
+          ) : null}
         </PopoverPopup>
       </Popover>
 
@@ -121,6 +162,14 @@ export function SidebarProjectsMenu({
           // step of doing something with it.
           if (slug !== null) void navigate({ to: "/projects/$slug", params: { slug } });
         }}
+      />
+
+      <ProjectSeedDialog
+        open={seedOpen}
+        onOpenChange={setSeedOpen}
+        proposals={seedPlan.proposals}
+        onSeed={(accepted) => void runSeed(accepted)}
+        seeding={seeding}
       />
     </>
   );
