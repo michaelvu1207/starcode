@@ -1,6 +1,13 @@
 # Agent Hub Plan — one UI for agents across all machines
 
-Date: 2026-07-24. Status: EXECUTING — fork built (michaelvu1207/t3code, branch `hub`, clone at ~/Documents/Programming/agent-hub/t3code, `vp i` + `vp run dev` verified, ports 13773/5733). Full architecture map in NOTES.md.
+Date: 2026-07-24. Status: EXECUTING — fork built (**michaelvu1207/starcode**, branch `hub` — also the GitHub default branch, clone at ~/Documents/Programming/agent-hub/t3code, `vp i` + `vp run dev` verified, ports 13773/5733). Full architecture map in NOTES.md.
+
+> **Repo renamed 07-26: `michaelvu1207/t3code` → `michaelvu1207/starcode`.** GitHub redirects the old
+> URL indefinitely, so nothing breaks on a stale remote, but all four machines were repointed at the
+> new URL anyway (Mac clone — worktrees share its config — plus laptop, simforge1, path-pc, each at
+> `~/agent-hub/t3code`). **The on-disk directory is still named `t3code` everywhere** and should stay
+> that way: it is baked into the launchd/systemd unit working directories and every rollout script.
+> The update-feed value is now `michaelvu1207/starcode`; the env var NAMES (`T3CODE_*`) are unchanged.
 
 > **Recon corrections (07-24, from codebase map — supersede statements below):**
 > 1. The claim "client connects to one environment at a time" is WRONG. The client runtime is already multi-connection: N environments connect concurrently, threads merge into one list, routes are /$environmentId/$threadId, and SidebarV2 already renders a cross-environment inbox (gated off by default). F1 = activity/needs-attention ranking + route + un-gate. Zero core changes.
@@ -209,6 +216,45 @@ Threads should know about each other's existence and be able to send messages to
 - Estimated effort: ~2 implementation agents (server federation-write + client workbench) plus merge/rollout, after F5/F6 land.
 
 ## Desktop client — SHIPPED 07-25 + follow-ups
+
+> ### 🏷️ App renamed 07-26: the bundle is now `starcode (Alpha).app`
+> Every dated rebuild log below predates the rename and correctly says `T3 Code (Alpha).app` — read
+> them as history, and read this block as the current recipe. `productName` in
+> `apps/desktop/package.json` is what electron-builder turns into the `.app` folder name,
+> `CFBundleName` and `CFBundleDisplayName`, so that one string is the whole Finder/dock rename.
+>
+> **`CFBundleIdentifier` is deliberately still `com.t3tools.t3code`.** Changing it re-registers the
+> app with LaunchServices as a brand-new application: fresh TCC grants (screen recording, automation,
+> accessibility all re-prompt), a fresh keychain ACL, and a window where two bundles claim different
+> ids — the exact surface the single-path doctrine exists to avoid. Same reasoning keeps the
+> `t3code`/`t3code-dev` URL schemes, the linux `executableName`, and `userDataDirName`. Note
+> `DesktopEnvironment.ts` `legacyUserDataDirName = "T3 Code (Alpha)"` names a directory that **exists
+> on disk** — never "fix" it to match the new product name.
+>
+> **🔴 The swap is a REPLACE, not an install — the old bundle must not survive.** Both names carry the
+> same bundle id, so leaving `T3 Code (Alpha).app` in place re-creates the `.prev` collision from
+> 07-25: `com.t3tools.t3code` resolves to two apps and `launch_app` can silently start the stale one.
+> Exact sequence:
+> 1. `osascript -e 'tell application "T3 Code (Alpha)" to quit'` (~20s; on later swaps the app is
+>    already named `starcode (Alpha)` — quit that instead). Confirm with
+>    `ps ax -o pid,args | grep -F "T3 Code (Alpha)"` — **never `pgrep -f`**, which reads `(Alpha)` as
+>    an ERE capture group and silently never matches.
+> 2. Back the old bundle up **outside** `/Applications`: `ditto` it to
+>    `~/Documents/Programming/agent-hub/backup/T3-Code-Alpha-pre-starcode.app`.
+> 3. `rm -rf "/Applications/T3 Code (Alpha).app"` — the old name must not linger.
+> 4. `ditto "<stage>/starcode (Alpha).app" "/Applications/starcode (Alpha).app"`.
+> 5. Passive single-path assertion (does **not** launch anything):
+>    `lsregister -dump | grep -E '^\s*path:' | grep -F "/Applications/starcode"` → expect exactly one
+>    top-level row, and zero rows still pointing at `/Applications/T3 Code`. Use this, **not**
+>    `osascript -e 'POSIX path of (path to application id …)'`, which launches and foregrounds the app.
+> 6. `cua-driver call launch_app '{"bundle_id":"com.t3tools.t3code"}'` (id unchanged), then poll
+>    frontmost for ~20s — the app drifts foreground ~10s after launch.
+>
+> The build artifact filenames also change (`starcode-${version}-${arch}.${ext}`), so any stage-dir
+> glob looking for `T3-Code-*` needs updating. The update-feed value is now `michaelvu1207/starcode`:
+> `T3CODE_DESKTOP_UPDATE_REPOSITORY=michaelvu1207/starcode T3CODE_DISABLE_AUTO_UPDATE=true node
+> scripts/build-desktop-artifact.ts --keep-stage --verbose` (leave `GITHUB_REPOSITORY` unset so the
+> feed cannot drift upstream). The env var NAMES stay `T3CODE_*`; only the value changed.
 `/Applications/T3 Code (Alpha).app` (fork v0.0.28, ad-hoc signed, update feed verified pointing at michaelvu1207/t3code + kill switch): pure-client is structurally impossible (renderer is served by the local backend), so the app runs a sacrificial embedded backend in isolated `~/.t3-desktop-client` with all 4 machines paired as remotes (encrypted connection catalog, survives restarts). Rebuild path = the kept worktree `~/Documents/Programming/agent-hub/t3code-desktop` (`build-desktop-artifact.ts --keep-stage` — no DMG mount needed; plist LSEnvironment edits BEFORE codesign).
 **Rebuild 07-25 (F11 starcode):** rebuilt from hub `7d3ace3d7` (branch `desktop-build` in the desktop worktree — `hub` is checked out in the main clone, so git refuses a second checkout of it) and swapped into `/Applications` (same app name/path; the starcode rename is still a follow-up). Recipe held exactly: `vp i` → `T3CODE_DESKTOP_UPDATE_REPOSITORY=michaelvu1207/t3code T3CODE_DISABLE_AUTO_UPDATE=true node scripts/build-desktop-artifact.ts --keep-stage --verbose` (~10 min; `GITHUB_REPOSITORY` unset so the feed can't drift upstream), PlistBuddy LSEnvironment inserts → `codesign --force --deep -s -` → `rm -rf` + `ditto` into /Applications → cua-driver `launch_app` (bundle id `com.t3tools.t3code`). Verified: `app-update.yml` still owner michaelvu1207/repo t3code, asar carries commit `7d3ace3d7f29`, `icon.icns` hash changed (new brand icon), window title + served `<title>` both `starcode (Alpha)`, renderer boot traffic at launch (asset GETs + `/oauth/token` 200) so the UI painted, embedded backend on 127.0.0.1:3773 with migration `36_ThreadMailbox` applied, connection catalog preserved. App never stole focus (frontmost stayed `cmux` across a 90s poll) so no cmd+H was needed. Pre-swap backup: `~/Documents/Programming/agent-hub/backup/T3-Code-Alpha-pre-f11.zip`. Note the stage `.app` lives in `$TMPDIR/t3code-desktop-mac-stage-*/app/dist/mac-arm64/` — pick the newest (`ls -dt`), each stage dir is ~1.7G so delete the stale ones.
 **Rebuild 07-25 (F7b workbench):** same recipe, rebuilt from hub `a318093af` (F7b merge `f9ec91506` + server typecheck-debt fix) and swapped in; app version still 0.0.28, so builds are only distinguishable by asar commit stamp (`a318093af218` verified in the installed bundle). No new backup — `T3-Code-Alpha-pre-f11.zip` still holds the pre-starcode state and every build after it is reproducible from its hub commit. This time the app WAS running: `osascript -e 'tell application "T3 Code (Alpha)" to quit'` exited it in ~20s without touching the foreground, then rm -rf + ditto + relaunch. **Verified with a real AX/screenshot capture** (the window happened to be on the current Space, unlike the F11 attempt): full UI paints, all 4 machines listed in the sidebar, and the workbench LayoutGrid icon is present in the sidebar icon strip; `sidebar-workbench` is in the served client bundle. Backend healthy on 127.0.0.1:3773. Frontmost stayed `cmux` across the 90s poll. Two traps worth knowing: the embedded backend took ~90s to listen this time (a curl right after launch gets connection-refused — poll `~/.t3-desktop-client/userdata/server-runtime.json` instead of assuming failure), and zsh does not word-split unquoted vars, so `for a in $LIST` needs `${(f)...}`.
@@ -241,7 +287,7 @@ Threads should know about each other's existence and be able to send messages to
 **Follow-ups:** (1) 🔴 hide/disable the "seablue Local" environment in the fork UI — threads created against it would be invisible orphans (guidance until then: always pick a named machine in the composer); (2) 🔴 stock "T3 Code (Nightly).app" shares bundle id AND would contend on ~/.t3 with the launchd hub if launched — don't launch it; real fix = §7.7 DESKTOP_APP_ID fork-identity rename (or delete Nightly); (3) one-off client-side 500 on restart — "Reload app" fixes, watch for recurrence; (4) cua lesson memorized: slow Electron launches outlive the focus guard — verify frontmost post-launch. **Relaunch is `cua-driver call launch_app '{"bundle_id":"com.t3tools.t3code"}'`, never `open -a` — every form of `open` routes through LaunchServices and foregrounds the target, stealing focus from whatever Michael is in.** This was violated on the F17 swap by an instance working from the memory file alone, which carried the `launch_app` path for pairing but not the prohibition; both the rule and the passive frontmost check (`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`) are now in that memory file too, so a fresh instance cannot miss it.
 
 ## Standing rollout pipeline (updated 07-25)
-⚠️ **Run `vp i` after every pull, before every build** — merges that add dependencies (F11's @fontsource-variable/baloo-2) break the build identically on every machine otherwise. Also: path-pc SSH = alias `path-pc` (user `path`), not a guessed user@ip. Every merged wave ships to: (1) Mac launchd hub server (vp i + vp run build + kickstart — serves web UI + all API surfaces), (2) the three remote servers (pull/build/restart), and — per Michael 07-25 — (3) **the installed desktop app**: rebuild the desktop artifact from hub and swap it into /Applications, then relaunch (mechanics per t3-desktop's report — asar/contents swap if viable, else full electron-builder rebuild; auto-update feed points at the fork so a future GitHub-releases path can replace manual swaps if we ever clear the release-pipeline blockers). Desktop is a pure client — server-side changes reach it via the hub; client-side changes require the desktop rebuild step.
+⚠️ **Run `vp i` after every pull, before every build** — merges that add dependencies (F11's @fontsource-variable/baloo-2) break the build identically on every machine otherwise. Also: path-pc SSH = alias `path-pc` (user `path`), not a guessed user@ip. Every merged wave ships to: (1) Mac launchd hub server (vp i + vp run build + kickstart — serves web UI + all API surfaces), (2) the three remote servers (pull/build/restart), and — per Michael 07-25 — (3) **the installed desktop app** (now `starcode (Alpha).app` — the swap is a replace, not an install; follow the rename block in the Desktop client section): rebuild the desktop artifact from hub and swap it into /Applications, then relaunch (mechanics per t3-desktop's report — asar/contents swap if viable, else full electron-builder rebuild; auto-update feed points at the fork so a future GitHub-releases path can replace manual swaps if we ever clear the release-pipeline blockers). Desktop is a pure client — server-side changes reach it via the hub; client-side changes require the desktop rebuild step.
 
 ## Effort
 
