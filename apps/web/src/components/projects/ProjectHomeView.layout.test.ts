@@ -1,17 +1,15 @@
 /**
- * Where the sky sits when you open a project.
+ * What the project home is allowed to be.
  *
- * `/projects/$slug` is two `flex-1` siblings in a column below `xl` and a row
- * above it. In the column the orchestrator pane was first, so a project that
- * names one opened with the map in the lower half — on screen, but read second
- * and the first thing to clip. Flex order is undecidable from markup, the same
- * way `position: sticky` is, so this reads the source; see
- * `../sidebar/ChatsDock.layout.test.ts` for the precedent and its limits.
+ * F16.6 cut this view down to a chat, a map, and a name. The cut is the feature,
+ * so the regression to guard is chrome growing back — a header strip, a rollup
+ * row, a thread rail — and that is invisible to a rendering test, which would
+ * happily pass with a second toolbar above the composer. So this reads the
+ * source, the same way `../sidebar/ChatsDock.layout.test.ts` does, and with the
+ * same limits: it asserts what the markup says, not what the browser draws.
  *
- * What is *not* asserted here, because it is already unconditional: that the
- * star map renders at all. It has no disclosure, no toggle and no hover gate —
- * it is in the tree on every render of this view, and the only thing this file
- * is about is which half of the column it lands in.
+ * Flex order and column widths are here for the older reason too — both are
+ * undecidable from a rendered tree without layout.
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -20,43 +18,61 @@ import homeSource from "./ProjectHomeView.tsx?raw";
 /** The block that draws the sky, from its wrapper to the component inside it. */
 const skyBlock =
   homeSource.split("<div").find((block) => block.includes('data-testid="project-home-sky"')) ?? "";
-/** The orchestrator pane's own class list, identified by the width only it has. */
-const masterClassLine = homeSource.split("\n").find((line) => line.includes("xl:w-[30rem]")) ?? "";
+/** The block that holds the orchestrator's chat. */
+const chatBlock =
+  homeSource.split("<div").find((block) => block.includes('data-testid="project-home-chat"')) ?? "";
 
-describe("the project home's sky", () => {
-  it("leads the column on the viewports where the column exists", () => {
-    // Below `xl` the two panes stack, and this is the class that decides which
-    // one you see first. Its absence is the regression: no error, no missing
-    // element, the map simply moves under the orchestrator.
-    expect(skyBlock).toContain("max-xl:order-first");
+describe("the project home's two panes", () => {
+  it("gives the chat the page and the map the right side of it", () => {
+    // The chat takes what is left after the map's column, which is what makes
+    // it read as a thread view rather than as a third of one.
+    expect(chatBlock).toContain("flex-1");
+    expect(chatBlock).toContain("min-w-0");
+    expect(skyBlock).toContain("xl:w-[34rem]");
+    expect(skyBlock).toContain("xl:flex-none");
   });
 
-  it("returns to source order once the layout is a row", () => {
-    // At `xl` the orchestrator is a fixed 30rem column on the left and the sky
-    // takes the rest — the Workbench's own shape, which ordering must not
-    // rearrange into an orchestrator on the right.
-    expect(skyBlock).toContain("xl:order-none");
-  });
-
-  it("leaves the orchestrator pane's own default alone", () => {
-    // The fix is ordering, not closing. A project that designates an
-    // orchestrator still opens with the pane; it just stops being the thing the
-    // map is underneath. `showMaster` staying as it was is the whole claim.
-    expect(homeSource).toContain("const showMaster = masterPaneOpen ?? designated !== null;");
-    // Only one of the two siblings carries an order, which is what keeps the
-    // rule readable: the sky moves, everything else stays where it was written.
-    expect(masterClassLine).toContain("xl:flex-none");
-    // Anchored to a class boundary rather than matched as a substring: this
-    // line is full of `border-…`, which contains "order-" and made the naive
-    // version of this assertion fail on correct code.
-    expect(masterClassLine).not.toMatch(/(?:^|[\s:"])order-/);
-  });
-
-  it("keeps both panes able to shrink, so neither pushes the other off", () => {
-    // `min-h-0` on a flex child is what lets it shrink below its content. Without
-    // it on the sky, its 340px floor would win the split and clip the pane above
-    // rather than sharing the column with it.
+  it("keeps the map visible when the layout is a column", () => {
+    // Below `xl` the panes stack, and the map has to claim half the height
+    // rather than being pushed off the bottom by a chat that grows.
+    expect(skyBlock).toContain("max-xl:flex-1");
     expect(skyBlock).toContain("min-h-0");
-    expect(skyBlock).toContain("flex-1");
+  });
+
+  it("renders the orchestrator as a chat, not as a pane with a header", () => {
+    // `WorkbenchMasterChat` is ChatView plus a readiness gate. `WorkbenchMasterPane`
+    // is that plus the Master/Change/Clear strip this view exists without.
+    // The element, not the name: the chat is imported from the pane's own
+    // module, so a bare substring match would find the import path.
+    expect(homeSource).toContain("<WorkbenchMasterChat");
+    expect(homeSource).not.toContain("<WorkbenchMasterPane");
+  });
+
+  it("offers a way out when the designated orchestrator is gone", () => {
+    // A project whose master thread was deleted must not be a dead pane: the
+    // start state comes back, so another thread can be named.
+    expect(homeSource).toContain("missingFallback={start}");
+  });
+
+  it("keeps the header to a mark and a name", () => {
+    const header = homeSource.slice(homeSource.indexOf("<header"), homeSource.indexOf("</header>"));
+    expect(header).toContain("ProjectGlyph");
+    expect(header).toContain("project.display.title");
+    // The strip Michael cut. Naming the labels rather than the components,
+    // because the regression is a button reappearing under any implementation.
+    for (const gone of ["Archive", "Delete", "Edit", "Orchestrator"]) {
+      expect(header).not.toContain(gone);
+    }
+  });
+
+  it("has no rollup row, no machine chips and no thread rail", () => {
+    // Each of these was a whole region of the old header or body. They are not
+    // hidden behind a toggle — they are gone, and the imports that fed them
+    // with them.
+    expect(homeSource).not.toContain("foldProjectFeatures");
+    expect(homeSource).not.toContain("project-feature-rollup");
+    expect(homeSource).not.toContain("<aside");
+    expect(homeSource).not.toContain("ProjectDeleteDialog");
+    expect(homeSource).not.toContain("ProjectEditDialog");
   });
 });

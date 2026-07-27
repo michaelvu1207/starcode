@@ -13,13 +13,24 @@
  * Notes are the piece that makes "organized through the tool calls" true in
  * both directions: a human writes what the project is, and `project_get` hands
  * that same text to every agent that asks.
+ *
+ * Archive and delete moved in here in F16.6, when the project home lost its
+ * header strip. They are the two things you do to a project that are not
+ * editing it, and this dialog is now the only surface that has a project rather
+ * than a thread in front of it — so it is where they have to live or they are
+ * unreachable. They sit at the bottom, behind a rule, in that order: archive is
+ * the answer to "I am done with this for now" and seeing it beside delete is
+ * what makes that obvious.
  */
 import type { ProjectCategoryDisplayPatch } from "@t3tools/contracts";
-import { ImagePlusIcon, PlusIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import { ArchiveIcon, ImagePlusIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { useEnvironments } from "../../state/environments";
+import { useProjectCatalogView, useProjectMembership } from "../../state/projectCatalog";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -34,9 +45,11 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import type { ProjectCategoryView } from "./ProjectCatalog.model";
+import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { encodeProjectIcon } from "./projectIconEncode";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { PROJECT_ACCENTS, PROJECT_GLYPH_VARIANTS, projectAccentHue } from "./ProjectsIndex.model";
+import { useProjectWriter } from "./useProjectWriter";
 import "./Projects.css";
 
 interface LinkDraft {
@@ -65,7 +78,10 @@ export function ProjectEditDialog({
   const [notes, setNotes] = useState(project.display.notes);
   const [links, setLinks] = useState<ReadonlyArray<LinkDraft>>(project.display.links);
   const [saving, setSaving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const writer = useProjectWriter();
 
   // Re-seed on open rather than on every prop change: the catalog polls, so a
   // refresh landing mid-edit would otherwise overwrite what is being typed.
@@ -136,248 +152,376 @@ export function ProjectEditDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Edit project</DialogTitle>
-          <DialogDescription>
-            These travel to every connected machine. Folders and filed threads stay where they are —
-            they only mean something on the machine that holds them.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit project</DialogTitle>
+            <DialogDescription>
+              These travel to every connected machine. Folders and filed threads stay where they are
+              — they only mean something on the machine that holds them.
+            </DialogDescription>
+          </DialogHeader>
 
-        <DialogPanel>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-title">Name</Label>
-              <Input
-                id="project-title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                autoFocus
-              />
-              <p className="text-[11px] text-muted-foreground/60">
-                Filed under <span className="font-mono">{project.slug}</span> on every machine. That
-                never changes, so renaming here is safe.
-              </p>
-            </div>
+          <DialogPanel>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-title">Name</Label>
+                <Input
+                  id="project-title"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  autoFocus
+                />
+                <p className="text-[11px] text-muted-foreground/60">
+                  Filed under <span className="font-mono">{project.slug}</span> on every machine.
+                  That never changes, so renaming here is safe.
+                </p>
+              </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="project-summary">Summary</Label>
-              <Input
-                id="project-summary"
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-                placeholder="One line, shown on the card"
-              />
-            </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-summary">Summary</Label>
+                <Input
+                  id="project-summary"
+                  value={summary}
+                  onChange={(event) => setSummary(event.target.value)}
+                  placeholder="One line, shown on the card"
+                />
+              </div>
 
-            {/* The mark, which is the only thing distinguishing one card from
+              {/* The mark, which is the only thing distinguishing one card from
                 another at a glance. Both halves default to "derived from the
                 slug", so this section is entirely optional — it exists for the
                 operator who has two projects whose auto-figures look alike. */}
-            <div className="space-y-2">
-              <Label>Mark</Label>
+              <div className="space-y-2">
+                <Label>Mark</Label>
 
-              {/* The uploaded icon, when there is one, wins over everything
+                {/* The uploaded icon, when there is one, wins over everything
                   below it — so it goes first, at the size the sidebar and the
                   cards actually draw it rather than as a large preview that
                   flatters a picture nobody will see that big. */}
-              <div className="flex items-center gap-2.5">
-                <span
-                  className="sc-project-mark size-9 shrink-0 rounded-md border border-border/40 p-1"
-                  style={{ "--sc-project-hue": `${hue}deg` } as never}
-                  data-testid="project-icon-preview"
-                >
-                  <ProjectGlyph slug={project.slug} variant={glyph} icon={icon} />
-                </span>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept="image/png,image/webp,image/jpeg,image/gif,image/svg+xml"
-                  className="hidden"
-                  data-testid="project-icon-input"
-                  onChange={(event) => {
-                    void pickIcon(event.target.files?.[0]);
-                    // Cleared so picking the same file twice still fires a
-                    // change — the second attempt after a rejection is the one
-                    // most likely to be the same file, re-exported.
-                    event.target.value = "";
-                  }}
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="sc-project-mark size-9 shrink-0 rounded-md border border-border/40 p-1"
+                    style={{ "--sc-project-hue": `${hue}deg` } as never}
+                    data-testid="project-icon-preview"
+                  >
+                    <ProjectGlyph slug={project.slug} variant={glyph} icon={icon} />
+                  </span>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    accept="image/png,image/webp,image/jpeg,image/gif,image/svg+xml"
+                    className="hidden"
+                    data-testid="project-icon-input"
+                    onChange={(event) => {
+                      void pickIcon(event.target.files?.[0]);
+                      // Cleared so picking the same file twice still fires a
+                      // change — the second attempt after a rejection is the one
+                      // most likely to be the same file, re-exported.
+                      event.target.value = "";
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={encoding}
+                    onClick={() => fileInput.current?.click()}
+                    data-testid="project-icon-upload"
+                  >
+                    <ImagePlusIcon className="size-3" />
+                    {encoding ? "Shrinking…" : icon.length > 0 ? "Replace icon" : "Upload icon"}
+                  </Button>
+                  {icon.length > 0 ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-[11px] text-muted-foreground"
+                      onClick={() => {
+                        setIcon("");
+                        setIconError("");
+                      }}
+                      data-testid="project-icon-clear"
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+                {iconError.length > 0 ? (
+                  <p className="text-[11px] text-destructive" data-testid="project-icon-error">
+                    {iconError}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Shrunk to 96px square and stored with the project, so it shows on every machine.
+                    {icon.length > 0 ? " The figures below apply when there is no icon." : ""}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {PROJECT_GLYPH_VARIANTS.map((variant) => (
+                    <button
+                      key={variant === "" ? "auto" : variant}
+                      type="button"
+                      onClick={() => setGlyph(variant)}
+                      aria-pressed={glyph === variant}
+                      aria-label={variant === "" ? "Figure from the name" : `Figure ${variant}`}
+                      className={cn(
+                        "sc-project-mark size-9 rounded-md border p-1.5 transition-colors",
+                        glyph === variant
+                          ? "border-border bg-muted/50"
+                          : "border-border/40 hover:bg-muted/25",
+                      )}
+                      style={{ "--sc-project-hue": `${hue}deg` } as never}
+                    >
+                      <ProjectGlyph slug={project.slug} variant={variant} />
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {PROJECT_ACCENTS.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      onClick={() =>
+                        // Clicking the accent a project already wears returns it
+                        // to the derived one, so "undo" needs no separate control.
+                        setAccent((current) => (current === choice.id ? "" : choice.id))
+                      }
+                      aria-pressed={accent === choice.id}
+                      aria-label={choice.label}
+                      title={choice.label}
+                      className={cn(
+                        "sc-project-mark size-6 rounded-full border transition-colors",
+                        accent === choice.id ? "border-foreground/60" : "border-border/40",
+                      )}
+                      style={{ "--sc-project-hue": `${choice.hue}deg` } as never}
+                    >
+                      <span className="block size-full rounded-full bg-current opacity-80" />
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground/60">
+                  {accent === "" && glyph === ""
+                    ? "Both come from the name. Pick a figure or a colour to override either."
+                    : "Click the selected colour again to go back to the one the name gives."}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="project-notes">Notes</Label>
+                <Textarea
+                  id="project-notes"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  rows={5}
+                  placeholder="What this project is, for you and for any agent that asks"
                 />
+                <p className="text-[11px] text-muted-foreground/60">
+                  Readable by the project tools, so an agent working here can look up what it is
+                  working on.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Links</Label>
+                <ul className="space-y-1.5">
+                  {links.map((link, index) => (
+                    // Index-keyed on purpose: these rows have no identity of
+                    // their own until they are saved, and keying on a
+                    // half-typed URL would remount the input mid-word.
+                    // eslint-disable-next-line react/no-array-index-key
+                    <li key={index} className="flex items-center gap-1.5">
+                      <Input
+                        value={link.label}
+                        onChange={(event) =>
+                          setLinks((current) =>
+                            current.map((entry, position) =>
+                              position === index ? { ...entry, label: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                        placeholder="Label"
+                        className="w-32 shrink-0"
+                        aria-label={`Link ${index + 1} label`}
+                      />
+                      <Input
+                        value={link.url}
+                        onChange={(event) =>
+                          setLinks((current) =>
+                            current.map((entry, position) =>
+                              position === index ? { ...entry, url: event.target.value } : entry,
+                            ),
+                          )
+                        }
+                        placeholder="https://"
+                        className="min-w-0 flex-1"
+                        aria-label={`Link ${index + 1} URL`}
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 shrink-0"
+                        onClick={() =>
+                          setLinks((current) => current.filter((_, position) => position !== index))
+                        }
+                        aria-label={`Remove link ${index + 1}`}
+                      >
+                        <XIcon className="size-3.5" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-[11px]"
-                  disabled={encoding}
-                  onClick={() => fileInput.current?.click()}
-                  data-testid="project-icon-upload"
+                  onClick={() => setLinks((current) => [...current, { label: "", url: "" }])}
                 >
-                  <ImagePlusIcon className="size-3" />
-                  {encoding ? "Shrinking…" : icon.length > 0 ? "Replace icon" : "Upload icon"}
+                  <PlusIcon className="size-3" />
+                  Add link
                 </Button>
-                {icon.length > 0 ? (
+              </div>
+
+              {/* The two things that are not edits. Behind a rule and last,
+                because a dialog you open to rename something should not put
+                "Delete project" where the eye lands first. */}
+              <div className="space-y-2.5 border-t border-border/50 pt-4">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground">
+                      {project.archived ? "Unarchive" : "Archive"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      {project.archived
+                        ? "Puts it back with your live projects."
+                        : "Hides it behind the sidebar's archived disclosure. Its threads stay where they are."}
+                    </p>
+                  </div>
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-7 px-2 text-[11px] text-muted-foreground"
+                    className="h-7 shrink-0 px-2 text-[11px]"
+                    disabled={archiving}
+                    data-testid="project-archive"
                     onClick={() => {
-                      setIcon("");
-                      setIconError("");
+                      setArchiving(true);
+                      void writer
+                        .setArchived(project.slug, !project.archived)
+                        .finally(() => setArchiving(false));
                     }}
-                    data-testid="project-icon-clear"
                   >
-                    Remove
+                    <ArchiveIcon className="size-3" />
+                    {project.archived ? "Unarchive" : "Archive"}
                   </Button>
-                ) : null}
-              </div>
-              {iconError.length > 0 ? (
-                <p className="text-[11px] text-destructive" data-testid="project-icon-error">
-                  {iconError}
-                </p>
-              ) : (
-                <p className="text-[11px] text-muted-foreground/60">
-                  Shrunk to 96px square and stored with the project, so it shows on every machine.
-                  {icon.length > 0 ? " The figures below apply when there is no icon." : ""}
-                </p>
-              )}
+                </div>
 
-              <div className="flex flex-wrap gap-1.5">
-                {PROJECT_GLYPH_VARIANTS.map((variant) => (
-                  <button
-                    key={variant === "" ? "auto" : variant}
-                    type="button"
-                    onClick={() => setGlyph(variant)}
-                    aria-pressed={glyph === variant}
-                    aria-label={variant === "" ? "Figure from the name" : `Figure ${variant}`}
-                    className={cn(
-                      "sc-project-mark size-9 rounded-md border p-1.5 transition-colors",
-                      glyph === variant
-                        ? "border-border bg-muted/50"
-                        : "border-border/40 hover:bg-muted/25",
-                    )}
-                    style={{ "--sc-project-hue": `${hue}deg` } as never}
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground">Delete</p>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      Removes the name from every machine. No thread is deleted — they come back as
+                      Chats.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                    data-testid="project-delete"
+                    onClick={() => {
+                      // The confirm replaces this dialog rather than stacking on
+                      // it: two popups deep is where an operator loses track of
+                      // which one the Escape key closes.
+                      onOpenChange(false);
+                      setConfirmingDelete(true);
+                    }}
                   >
-                    <ProjectGlyph slug={project.slug} variant={variant} />
-                  </button>
-                ))}
+                    <Trash2Icon className="size-3" />
+                    Delete project
+                  </Button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {PROJECT_ACCENTS.map((choice) => (
-                  <button
-                    key={choice.id}
-                    type="button"
-                    onClick={() =>
-                      // Clicking the accent a project already wears returns it
-                      // to the derived one, so "undo" needs no separate control.
-                      setAccent((current) => (current === choice.id ? "" : choice.id))
-                    }
-                    aria-pressed={accent === choice.id}
-                    aria-label={choice.label}
-                    title={choice.label}
-                    className={cn(
-                      "sc-project-mark size-6 rounded-full border transition-colors",
-                      accent === choice.id ? "border-foreground/60" : "border-border/40",
-                    )}
-                    style={{ "--sc-project-hue": `${choice.hue}deg` } as never}
-                  >
-                    <span className="block size-full rounded-full bg-current opacity-80" />
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-muted-foreground/60">
-                {accent === "" && glyph === ""
-                  ? "Both come from the name. Pick a figure or a colour to override either."
-                  : "Click the selected colour again to go back to the one the name gives."}
-              </p>
             </div>
+          </DialogPanel>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="project-notes">Notes</Label>
-              <Textarea
-                id="project-notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                rows={5}
-                placeholder="What this project is, for you and for any agent that asks"
-              />
-              <p className="text-[11px] text-muted-foreground/60">
-                Readable by the project tools, so an agent working here can look up what it is
-                working on.
-              </p>
-            </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} disabled={saving || title.trim().length === 0}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
-            <div className="space-y-1.5">
-              <Label>Links</Label>
-              <ul className="space-y-1.5">
-                {links.map((link, index) => (
-                  // Index-keyed on purpose: these rows have no identity of
-                  // their own until they are saved, and keying on a
-                  // half-typed URL would remount the input mid-word.
-                  // eslint-disable-next-line react/no-array-index-key
-                  <li key={index} className="flex items-center gap-1.5">
-                    <Input
-                      value={link.label}
-                      onChange={(event) =>
-                        setLinks((current) =>
-                          current.map((entry, position) =>
-                            position === index ? { ...entry, label: event.target.value } : entry,
-                          ),
-                        )
-                      }
-                      placeholder="Label"
-                      className="w-32 shrink-0"
-                      aria-label={`Link ${index + 1} label`}
-                    />
-                    <Input
-                      value={link.url}
-                      onChange={(event) =>
-                        setLinks((current) =>
-                          current.map((entry, position) =>
-                            position === index ? { ...entry, url: event.target.value } : entry,
-                          ),
-                        )
-                      }
-                      placeholder="https://"
-                      className="min-w-0 flex-1"
-                      aria-label={`Link ${index + 1} URL`}
-                    />
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-8 shrink-0"
-                      onClick={() =>
-                        setLinks((current) => current.filter((_, position) => position !== index))
-                      }
-                      aria-label={`Remove link ${index + 1}`}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-[11px]"
-                onClick={() => setLinks((current) => [...current, { label: "", url: "" }])}
-              >
-                <PlusIcon className="size-3" />
-                Add link
-              </Button>
-            </div>
-          </div>
-        </DialogPanel>
+      {/* Mounted only while it is open, so the membership fold and the
+          environment list it needs are not computed once per project row for a
+          dialog nobody has asked for. */}
+      {confirmingDelete ? (
+        <ProjectDeleteConfirm project={project} onClose={() => setConfirmingDelete(false)} />
+      ) : null}
+    </>
+  );
+}
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={() => void save()} disabled={saving || title.trim().length === 0}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogPopup>
-    </Dialog>
+/**
+ * The delete confirmation, wired to what the fold knows.
+ *
+ * It gathers its own facts — how many threads lose their label, which machines
+ * could not be read — because the two places that open the edit dialog have a
+ * project in hand and nothing else, and passing four more props through both of
+ * them would only move this lookup, not remove it.
+ */
+function ProjectDeleteConfirm({
+  project,
+  onClose,
+}: {
+  readonly project: ProjectCategoryView;
+  readonly onClose: () => void;
+}): ReactNode {
+  const view = useProjectCatalogView();
+  const membership = useProjectMembership(view);
+  const writer = useProjectWriter();
+  const { environments } = useEnvironments();
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
+
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
+  const threadCount = (membership.threadKeysBySlug.get(project.slug) ?? []).length;
+  /** Machines the catalog fold could not read at all — see the delete dialog. */
+  const unreachableLabels = useMemo(() => view.notes.map((note) => note.label), [view.notes]);
+
+  return (
+    <ProjectDeleteDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      slug={project.slug}
+      title={project.display.title}
+      threadCount={threadCount}
+      // Every machine the fold could not read, not just the ones carrying this
+      // project: a machine that did not answer cannot be asked whether it holds
+      // the category, and reporting the count as if it could is the claim
+      // invariant 12 forbids.
+      unreachableLabels={unreachableLabels}
+      environmentLabelById={environmentLabelById}
+      onDelete={writer.remove}
+      onDeleted={() => {
+        onClose();
+        // Only if you were standing in it. Deleting a project from the sidebar
+        // while reading an unrelated thread must not move you.
+        if (pathname.startsWith(`/projects/${encodeURIComponent(project.slug)}`)) {
+          void navigate({ to: "/" });
+        }
+      }}
+    />
   );
 }

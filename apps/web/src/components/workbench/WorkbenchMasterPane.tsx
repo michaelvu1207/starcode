@@ -15,6 +15,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ServerIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -87,7 +88,25 @@ function PaneHeader({
   );
 }
 
-function MasterChat({ threadRef }: { threadRef: ScopedThreadRef }) {
+/**
+ * The master thread as a chat, and nothing else.
+ *
+ * Exported because the project home renders exactly this and no pane header —
+ * *"It should just be the chat, like a new thread view"* — so the two surfaces
+ * share the readiness gate rather than each keeping their own copy of it.
+ */
+export function WorkbenchMasterChat({
+  threadRef,
+  missingFallback,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  /**
+   * What to render when the designated id names a thread this machine does not
+   * have. The pane says so in a sentence; a surface whose only orchestrator is
+   * gone needs a way to name another one, or it is a dead end.
+   */
+  readonly missingFallback?: ReactNode;
+}) {
   const shell = useEnvironmentQuery(environmentShell.stateAtom(threadRef.environmentId));
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
@@ -108,6 +127,7 @@ function MasterChat({ threadRef }: { threadRef: ScopedThreadRef }) {
     // deleted, or the draft that reserved the id has not sent its first
     // message yet. Both are recoverable by the operator, and neither is an
     // error worth shouting about.
+    if (missingFallback !== undefined) return missingFallback;
     return (
       <p className="px-3 py-4 text-xs text-muted-foreground/60">
         This thread has not started yet. Send its first message, or choose another thread.
@@ -185,7 +205,7 @@ export function WorkbenchMasterPane({
           />
         </div>
       ) : threadRef !== null ? (
-        <MasterChat threadRef={threadRef} />
+        <WorkbenchMasterChat threadRef={threadRef} />
       ) : null}
     </div>
   );
