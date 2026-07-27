@@ -143,10 +143,11 @@ export function SidebarProjectsMenu({
                 setSeedOpen(true);
               }}
             >
+              {/* No trailing hint on this one. The other two need theirs to
+                  say which kind of "project" they mean; this label already
+                  says what it does, and the hint only pushed it onto a second
+                  line. */}
               Set up {seedPlan.proposals.length} from your folders
-              <span className="ml-1 text-[10px] text-muted-foreground/55">
-                repositories we found
-              </span>
             </button>
           ) : null}
         </PopoverPopup>
