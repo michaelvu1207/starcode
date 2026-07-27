@@ -217,6 +217,45 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+/**
+ * Budget for captured process output.
+ *
+ * `detail` is a one-line row label and stays at ~180 chars, but output is
+ * rendered as a scrollable block, so it gets a far larger allowance. The cap
+ * exists to bound event-store and websocket payloads, not to keep the label
+ * short — a full test run should survive it.
+ */
+const OUTPUT_CHAR_LIMIT = 16_000;
+
+/**
+ * Keep the tail rather than the head: the interesting part of a failing
+ * command's output — the error, the summary line, the exit status — is at the
+ * end, and the UI is bottom-anchored for the same reason.
+ */
+function truncateOutput(value: string): { output: string; truncated: boolean } {
+  if (value.length <= OUTPUT_CHAR_LIMIT) {
+    return { output: value, truncated: false };
+  }
+  return { output: value.slice(value.length - OUTPUT_CHAR_LIMIT), truncated: true };
+}
+
+/** Payload fragment carrying captured output, for spreading into an activity. */
+function outputPayloadFields(payload: {
+  readonly output?: string | undefined;
+  readonly exitCode?: number | undefined;
+}): Record<string, unknown> {
+  const exitCodeFields = payload.exitCode !== undefined ? { exitCode: payload.exitCode } : {};
+  if (payload.output === undefined || payload.output.length === 0) {
+    return exitCodeFields;
+  }
+  const { output, truncated } = truncateOutput(payload.output);
+  return {
+    output,
+    ...(truncated ? { outputTruncated: true } : {}),
+    ...exitCodeFields,
+  };
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -689,6 +728,7 @@ export function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...outputPayloadFields(event.payload),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -711,6 +751,7 @@ export function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...outputPayloadFields(event.payload),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,

@@ -475,14 +475,27 @@ function messageRoleForPart(
   return part.type === "tool" ? "assistant" : undefined;
 }
 
+/**
+ * Short row label for a tool part.
+ *
+ * Note this deliberately does NOT return `state.output` for a completed part:
+ * `detail` is a one-line label and gets truncated hard downstream, so putting
+ * captured output there renders a slice of stdout as the row title. The output
+ * belongs in `output` — see {@link outputFromToolPart}.
+ */
 function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
+  const state = part.state as { title?: unknown };
+  const title = typeof state.title === "string" ? state.title : undefined;
+  return title ?? part.tool;
+}
+
+/** Captured tool output, rendered as a block rather than as the row label. */
+function outputFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
   switch (part.state.status) {
     case "completed":
       return part.state.output;
     case "error":
       return part.state.error;
-    case "running":
-      return part.state.title;
     default:
       return undefined;
   }
@@ -902,6 +915,7 @@ export function makeOpenCodeAdapter(
             const title =
               part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
             const detail = detailFromToolPart(part);
+            const output = outputFromToolPart(part);
             const payload = {
               itemType,
               ...(part.state.status === "error"
@@ -911,6 +925,7 @@ export function makeOpenCodeAdapter(
                   : { status: "inProgress" as const }),
               ...(title ? { title } : {}),
               ...(detail ? { detail } : {}),
+              ...(output && output.length > 0 ? { output } : {}),
               data: {
                 tool: part.tool,
                 state: part.state,

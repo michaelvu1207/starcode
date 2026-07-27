@@ -181,6 +181,7 @@ export function makeAcpToolCallEvent(input: {
       ...(runtimeStatus ? { status: runtimeStatus } : {}),
       ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
       ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),
+      ...(input.toolCall.output ? { output: input.toolCall.output } : {}),
       ...(Object.keys(input.toolCall.data).length > 0 ? { data: input.toolCall.data } : {}),
     },
     raw: {

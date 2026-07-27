@@ -1377,6 +1377,16 @@ function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
 ): string | null {
+  // Captured output, when the provider reported it as its own field. Preferred
+  // over everything below: those paths reconstruct output by parsing it back
+  // out of `detail`, which is a one-line row label that was truncated on the
+  // way here — so they can only ever recover a clipped prefix of it. Providers
+  // and stored history that predate the field fall through unchanged.
+  const reportedOutput = asTrimmedString(payload?.output);
+  if (reportedOutput) {
+    return payload?.outputTruncated === true ? `${reportedOutput}\n…` : reportedOutput;
+  }
+
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
