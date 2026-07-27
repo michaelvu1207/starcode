@@ -310,12 +310,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     // Stored as text so the schema-driven provider settings form (text /
     // password / textarea / switch only) can edit it; parsed and clamped by
     // `resolveClaudeContextLimitTokens` in @t3tools/shared/claudeContextLimit.
+    // Fork: this seeds the composer's per-thread Context selector — it is the
+    // choice a new thread starts on, not a ceiling over the one it picks.
     contextLimitTokens: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
-        title: "Context limit",
+        title: "Default context for new threads",
         description:
-          "Token budget this instance is allowed to fill before Claude compacts the conversation. Blank uses the 600k default; accepts 600000 or 600k. Clamped to 200k–1M, the band Claude Code honors.",
+          "Context each new thread starts on, before you change it in the composer. Blank uses the 600k default; accepts 600000 or 600k. Rounded down to the nearest size the chosen model offers (200k, 600k, 1M).",
         providerSettingsForm: {
           placeholder: "600k",
           clearWhenEmpty: "omit",

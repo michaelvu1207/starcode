@@ -11,6 +11,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
+import { CLAUDE_CONTEXT_OPTION_ID } from "@t3tools/shared/claudeContextLimit";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
@@ -23,10 +24,15 @@ import {
 } from "./TraitsPicker";
 
 /**
- * Fork: the context window gets its own popover row, so the traits control
- * renders everything except it and a second, filtered instance renders it.
+ * Fork: context gets its own popover row, so the traits control renders
+ * everything except it and a second, filtered instance renders it.
+ *
+ * Two ids because two providers name the same idea differently: Claude's fork
+ * control is `context` (one number — 200k / 600k / 1M — that decides both the
+ * API window and where the transcript compacts), while Cursor still declares
+ * an upstream `contextWindow`. Either one belongs in the Context row.
  */
-const CONTEXT_WINDOW_DESCRIPTOR_ID = "contextWindow";
+const CONTEXT_DESCRIPTOR_IDS = [CLAUDE_CONTEXT_OPTION_ID, "contextWindow"] as const;
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -92,24 +98,22 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 }
 
 /**
- * Fork: the selected model's context window, resolved the same way the traits
- * control resolves it (declared default included), for the popover's context
- * row copy.
+ * Fork: whether the selected model offers a context choice at all. Models that
+ * do not (custom Claude slugs, whose window we cannot know) fall back to the
+ * instance default, which the row states as a read-only chip.
  */
-export function getComposerContextWindowState(input: ComposerProviderStateInput): {
+export function getComposerContextState(input: ComposerProviderStateInput): {
   readonly hasSelector: boolean;
-  readonly value: string | null;
 } {
   const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
   const descriptors = getProviderOptionDescriptors({ caps, selections: input.modelOptions });
-  const descriptor = descriptors.find(
-    (candidate) => candidate.id === CONTEXT_WINDOW_DESCRIPTOR_ID && candidate.type === "select",
-  );
-  if (!descriptor) {
-    return { hasSelector: false, value: null };
-  }
-  const value = getProviderOptionCurrentValue(descriptor);
-  return { hasSelector: true, value: typeof value === "string" ? value : null };
+  return {
+    hasSelector: descriptors.some(
+      (candidate) =>
+        candidate.type === "select" &&
+        (CONTEXT_DESCRIPTOR_IDS as ReadonlyArray<string>).includes(candidate.id),
+    ),
+  };
 }
 
 function renderTraitsControl(
@@ -157,13 +161,13 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input, {
-    excludeDescriptorIds: [CONTEXT_WINDOW_DESCRIPTOR_ID],
+    excludeDescriptorIds: CONTEXT_DESCRIPTOR_IDS,
   });
 }
 
-/** The context-window selector alone, for the popover's own context row. */
-export function renderProviderContextWindowPicker(input: TraitsRenderInput): ReactNode {
+/** The context selector alone, for the popover's own context row. */
+export function renderProviderContextPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input, {
-    includeDescriptorIds: [CONTEXT_WINDOW_DESCRIPTOR_ID],
+    includeDescriptorIds: CONTEXT_DESCRIPTOR_IDS,
   });
 }

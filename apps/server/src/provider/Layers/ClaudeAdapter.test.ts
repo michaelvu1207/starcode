@@ -621,7 +621,8 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         alwaysThinkingEnabled: false,
-        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+        // Haiku has no 1M window, so 200k is the only context it can offer.
+        autoCompactWindow: 200_000,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -646,7 +647,8 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
-        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+        // Sonnet is 200k-default in Claude Code; 1M is opt-in there too.
+        autoCompactWindow: 200_000,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -654,7 +656,56 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("caps the session context window at the configured limit", () => {
+  it.effect("derives both halves of the session context from the thread's choice", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+          [{ id: "context", value: "1m" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      // One choice sets the API window and the point it compacts at.
+      assert.equal(createInput?.options.model, "claude-fable-5[1m]");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 1_000_000 });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("drops the 1M model variant when the thread asks for 200k", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+          [{ id: "context", value: "200k" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-fable-5");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 200_000 });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts a thread on the instance default, rounded down to an offered size", () => {
     const harness = makeHarness({ claudeConfig: { contextLimitTokens: "400k" } });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -664,15 +715,64 @@ describe("ClaudeAdapterLive", () => {
         modelSelection: createModelSelection(
           ProviderInstanceId.make("claudeAgent"),
           "claude-fable-5",
-          [{ id: "contextWindow", value: "1m" }],
+          [],
         ),
         runtimeMode: "full-access",
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      // The 1M model variant is still selected; the cap governs compaction.
-      assert.equal(createInput?.options.model, "claude-fable-5[1m]");
-      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 400_000 });
+      // 400k is not one of the three sizes, so it settles on 200k rather than
+      // rounding up into a larger window than the instance asked for.
+      assert.equal(createInput?.options.model, "claude-fable-5");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 200_000 });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("never sends the 1M variant of a natively-1M model", () => {
+    const harness = makeHarness({ claudeConfig: { contextLimitTokens: "1m" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-8",
+          [{ id: "context", value: "1m" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-opus-4-8");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 1_000_000 });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("degrades a stale 600k choice onto a model that cannot reach it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-haiku-4-5",
+          [{ id: "context", value: "600k" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-haiku-4-5");
+      assert.deepEqual(createInput?.options.settings, { autoCompactWindow: 200_000 });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -746,7 +846,8 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
-        autoCompactWindow: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+        // Sonnet is 200k-default in Claude Code; 1M is opt-in there too.
+        autoCompactWindow: 200_000,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -1978,6 +2079,7 @@ describe("ClaudeAdapterLive", () => {
           usage: {
             usedTokens: 321,
             lastUsedTokens: 321,
+            maxTokens: DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
             toolUses: 2,
             durationMs: 654,
           },
@@ -3426,7 +3528,7 @@ describe("ClaudeAdapterLive", () => {
         modelSelection: createModelSelection(
           ProviderInstanceId.make("claudeAgent"),
           "claude-opus-4-6",
-          [{ id: "contextWindow", value: "1m" }],
+          [{ id: "context", value: "1m" }],
         ),
         attachments: [],
       });
@@ -3436,7 +3538,7 @@ describe("ClaudeAdapterLive", () => {
         modelSelection: createModelSelection(
           ProviderInstanceId.make("claudeAgent"),
           "claude-opus-4-6",
-          [{ id: "contextWindow", value: "200k" }],
+          [{ id: "context", value: "200k" }],
         ),
         attachments: [],
       });

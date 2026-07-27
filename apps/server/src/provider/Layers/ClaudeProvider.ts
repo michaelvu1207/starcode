@@ -21,6 +21,17 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
+  CLAUDE_CONTEXT_CHOICES,
+  CLAUDE_CONTEXT_OPTION_ID,
+  type ClaudeContextChoice,
+  claudeContextChoiceLabel,
+  claudeContextChoiceTokens,
+  clampToClaudeContextChoice,
+  DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
+  isClaudeContextChoice,
+  resolveClaudeInstanceContextDefault,
+} from "@t3tools/shared/claudeContextLimit";
+import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
@@ -46,6 +57,94 @@ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+/**
+ * Fork: how a model reaches its context window, which is the only thing that
+ * decides whether a choice above 200k is expressible and whether the `[1m]`
+ * model-id suffix is a legal thing to send.
+ *
+ * - `opt-in-1m` — the 1M window is requested by suffixing the model id, exactly
+ *   as Claude Code does (`claude-fable-5[1m]`).
+ * - `native-1m` — always 1M at the API. The suffix is not a valid id for these,
+ *   so smaller choices are implemented by `autoCompactWindow` alone.
+ * - `fixed-200k` — no 1M window exists, so 200k is the only honest choice.
+ *
+ * Unknown slugs (custom models) fall through to no context descriptor at all
+ * rather than a guess: we would be inventing both a window and a suffix.
+ */
+type ClaudeContextWindowKind = "opt-in-1m" | "native-1m" | "fixed-200k";
+
+interface ClaudeContextProfile {
+  readonly kind: ClaudeContextWindowKind;
+  /**
+   * Where a thread starts when the instance has configured no default of its
+   * own. These reproduce what each model effectively got before the selector
+   * existed — Claude Code's own window default, narrowed by the fork's old
+   * 600k compaction cap — so an upgrade changes no running thread's behavior.
+   */
+  readonly defaultChoice: ClaudeContextChoice;
+}
+
+const CLAUDE_CONTEXT_PROFILES: Readonly<Record<string, ClaudeContextProfile>> = {
+  "claude-fable-5": { kind: "opt-in-1m", defaultChoice: "600k" },
+  "claude-opus-5": { kind: "opt-in-1m", defaultChoice: "600k" },
+  "claude-opus-4-8": { kind: "native-1m", defaultChoice: "600k" },
+  "claude-opus-4-7": { kind: "native-1m", defaultChoice: "600k" },
+  "claude-opus-4-6": { kind: "opt-in-1m", defaultChoice: "600k" },
+  "claude-opus-4-5": { kind: "fixed-200k", defaultChoice: "200k" },
+  // Sonnet is 200k-default in Claude Code; 1M is opt-in there too.
+  "claude-sonnet-5": { kind: "opt-in-1m", defaultChoice: "200k" },
+  "claude-sonnet-4-6": { kind: "opt-in-1m", defaultChoice: "200k" },
+  "claude-haiku-4-5": { kind: "fixed-200k", defaultChoice: "200k" },
+};
+
+function claudeContextChoicesFor(
+  profile: ClaudeContextProfile,
+): ReadonlyArray<ClaudeContextChoice> {
+  return profile.kind === "fixed-200k" ? (["200k"] as const) : CLAUDE_CONTEXT_CHOICES;
+}
+
+/**
+ * Fork: attach the context selector to each built-in model.
+ *
+ * The default choice is the instance's configured one where it has set it —
+ * clamped down to what the model can actually reach, so a 1M default on Haiku
+ * reads as 200k rather than as an option that silently does nothing — and the
+ * model's own starting size otherwise.
+ */
+function withClaudeContextDescriptors(
+  models: ReadonlyArray<ServerProviderModel>,
+  instanceDefaultTokens: number | null,
+): ReadonlyArray<ServerProviderModel> {
+  return models.map((model) => {
+    const profile = CLAUDE_CONTEXT_PROFILES[model.slug];
+    if (!profile) {
+      return model;
+    }
+    const choices = claudeContextChoicesFor(profile);
+    const defaultChoice =
+      instanceDefaultTokens === null
+        ? profile.defaultChoice
+        : clampToClaudeContextChoice(instanceDefaultTokens, choices);
+    return {
+      ...model,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          ...(model.capabilities?.optionDescriptors ?? []),
+          buildSelectOptionDescriptor({
+            id: CLAUDE_CONTEXT_OPTION_ID,
+            label: "Context",
+            options: choices.map((choice) => ({
+              value: choice,
+              label: claudeContextChoiceLabel(choice),
+              ...(choice === defaultChoice ? { isDefault: true } : {}),
+            })),
+          }),
+        ],
+      }),
+    };
+  });
+}
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -77,14 +176,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
           ],
           promptInjectedValues: ["ultrathink"],
         }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
-        }),
       ],
     }),
   },
@@ -111,15 +202,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildBooleanOptionDescriptor({
           id: "fastMode",
           label: "Fast Mode",
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Claude Code selects the 1M variant explicitly (`claude-opus-5[1m]`).
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
         }),
       ],
     }),
@@ -199,14 +281,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
           id: "fastMode",
           label: "Fast Mode",
         }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
-        }),
       ],
     }),
   },
@@ -252,15 +326,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
           ],
           promptInjectedValues: ["ultrathink"],
         }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
       ],
     }),
   },
@@ -281,15 +346,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
             { value: "ultrathink", label: "Ultrathink" },
           ],
           promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
         }),
       ],
     }),
@@ -365,10 +421,17 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
 }
 
-export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
+export function getClaudeModelCapabilities(
+  model: string | null | undefined,
+  instanceDefaultTokens: number | null = null,
+): ModelCapabilities {
   const slug = model?.trim();
+  const builtIn = BUILT_IN_MODELS.find((candidate) => candidate.slug === slug);
+  if (!builtIn) {
+    return DEFAULT_CLAUDE_MODEL_CAPABILITIES;
+  }
   return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
+    withClaudeContextDescriptors([builtIn], instanceDefaultTokens)[0]?.capabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
 }
@@ -425,27 +488,62 @@ export function isClaudeUltracodeEffort(effort: string | null | undefined): bool
   return effort === "ultracode";
 }
 
-export function resolveClaudeContextWindow(
+/**
+ * Fork: the thread's context choice, or the instance default when it carries
+ * none.
+ *
+ * Resolution goes through the model's own descriptor, which is what degrades a
+ * stale choice: a thread that was set to 600k and then switched to Haiku reads
+ * back as 200k, the same value the composer shows, rather than a number the
+ * model cannot honor.
+ */
+export function resolveClaudeContextChoice(
   modelSelection: ModelSelection | undefined,
-): string | undefined {
-  const caps = getClaudeModelCapabilities(modelSelection?.model);
-  const raw = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
+  instanceDefaultTokens: number | null = null,
+): ClaudeContextChoice | undefined {
+  const caps = getClaudeModelCapabilities(modelSelection?.model, instanceDefaultTokens);
+  const raw = getModelSelectionStringOptionValue(modelSelection, CLAUDE_CONTEXT_OPTION_ID);
   const descriptors = getProviderOptionDescriptors({
     caps,
-    ...(raw ? { selections: [{ id: "contextWindow", value: raw }] } : {}),
+    ...(raw ? { selections: [{ id: CLAUDE_CONTEXT_OPTION_ID, value: raw }] } : {}),
   });
-  const descriptor = descriptors.find((candidate) => candidate.id === "contextWindow");
+  const descriptor = descriptors.find((candidate) => candidate.id === CLAUDE_CONTEXT_OPTION_ID);
   const value = getProviderOptionCurrentValue(descriptor);
-  return typeof value === "string" ? value : undefined;
+  return typeof value === "string" && isClaudeContextChoice(value) ? value : undefined;
 }
 
-export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
-  switch (resolveClaudeContextWindow(modelSelection)) {
-    case "1m":
-      return `${modelSelection.model}[1m]`;
-    default:
-      return modelSelection.model;
+/**
+ * The effective context in tokens: what the composer's Context row says, what
+ * the footer meter counts against, and what `autoCompactWindow` is set to.
+ *
+ * Models with no context descriptor (custom slugs) have no choice to make, so
+ * they land on the instance default — which is what they got before the
+ * selector existed.
+ */
+export function resolveClaudeContextTokens(
+  modelSelection: ModelSelection | undefined,
+  instanceDefaultTokens: number | null = null,
+): number {
+  const choice = resolveClaudeContextChoice(modelSelection, instanceDefaultTokens);
+  return choice
+    ? claudeContextChoiceTokens(choice)
+    : (instanceDefaultTokens ?? DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS);
+}
+
+/**
+ * The model id sent to the API. The `[1m]` suffix is appended only for models
+ * that reach 1M by opting in — appending it to a natively-1M model (Opus 4.8,
+ * 4.7) or to one with no 1M window at all would be an id the API rejects.
+ */
+export function resolveClaudeApiModelId(
+  modelSelection: ModelSelection,
+  instanceDefaultTokens: number | null = null,
+): string {
+  if (CLAUDE_CONTEXT_PROFILES[modelSelection.model.trim()]?.kind !== "opt-in-1m") {
+    return modelSelection.model;
   }
+  const choice = resolveClaudeContextChoice(modelSelection, instanceDefaultTokens);
+  return choice && choice !== "200k" ? `${modelSelection.model}[1m]` : modelSelection.model;
 }
 
 function toTitleCaseWords(value: string): string {
@@ -792,8 +890,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const instanceDefaultTokens = resolveClaudeInstanceContextDefault(
+    claudeSettings.contextLimitTokens,
+  );
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    withClaudeContextDescriptors(BUILT_IN_MODELS, instanceDefaultTokens),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -883,7 +984,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
+    withClaudeContextDescriptors(
+      getBuiltInClaudeModelsForVersion(parsedVersion),
+      instanceDefaultTokens,
+    ),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -956,7 +1060,10 @@ export const makePendingClaudeProvider = (
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
+      withClaudeContextDescriptors(
+        BUILT_IN_MODELS,
+        resolveClaudeInstanceContextDefault(claudeSettings.contextLimitTokens),
+      ),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );

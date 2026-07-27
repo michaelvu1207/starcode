@@ -81,10 +81,10 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
-  getComposerContextWindowState,
+  getComposerContextState,
   getComposerPromptInjectionState,
   getComposerProviderState,
-  renderProviderContextWindowPicker,
+  renderProviderContextPicker,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ComposerModeControls } from "./ComposerModeControls";
@@ -1032,7 +1032,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
   };
   const providerTraitsPicker = renderProviderTraitsPicker(traitsRenderInput);
-  const providerContextWindowPicker = renderProviderContextWindowPicker(traitsRenderInput);
+  const providerContextPicker = renderProviderContextPicker(traitsRenderInput);
 
   // Fork: model / effort / access live behind the composer options chevron, so
   // the trigger has to carry enough of their state to stay glanceable.
@@ -1055,7 +1055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const claudeContextLimitTokens = useEnvironmentSettings(environmentId, (settings) =>
     readClaudeContextLimitTokens(settings, selectedInstanceId),
   );
-  const composerContextWindow = getComposerContextWindowState({
+  const composerContext = getComposerContextState({
     provider: selectedProvider,
     model: selectedModel,
     models: selectedProviderModels,
@@ -1063,16 +1063,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const composerContextRow = useMemo(() => {
     const row = buildComposerContextRow({
-      hasWindowSelector: composerContextWindow.hasSelector,
-      windowValue: composerContextWindow.value,
-      capTokens: selectedProvider === "claudeAgent" ? claudeContextLimitTokens : null,
+      hasSelector: composerContext.hasSelector,
+      fallbackTokens: selectedProvider === "claudeAgent" ? claudeContextLimitTokens : null,
     });
-    return row ? { ...row, picker: providerContextWindowPicker } : null;
+    return row ? { ...row, picker: providerContextPicker } : null;
   }, [
     claudeContextLimitTokens,
-    composerContextWindow.hasSelector,
-    composerContextWindow.value,
-    providerContextWindowPicker,
+    composerContext.hasSelector,
+    providerContextPicker,
     selectedProvider,
   ]);
   const pendingPrimaryAction = useMemo(

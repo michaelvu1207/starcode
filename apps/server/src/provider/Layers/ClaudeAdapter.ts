@@ -20,7 +20,7 @@ import {
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { resolveClaudeContextLimitTokens } from "@t3tools/shared/claudeContextLimit";
+import { resolveClaudeInstanceContextDefault } from "@t3tools/shared/claudeContextLimit";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
@@ -31,7 +31,6 @@ import {
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ModelSelection,
   ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
@@ -78,7 +77,7 @@ import {
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
   resolveClaudeApiModelId,
-  resolveClaudeContextWindow,
+  resolveClaudeContextTokens,
   resolveClaudeEffort,
 } from "./ClaudeProvider.ts";
 import {
@@ -205,6 +204,10 @@ interface ClaudeSessionContext {
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
+  /** Fork: the context this thread was set to; caps what the meter reports. */
+  readonly contextWindowCeiling: number | undefined;
+  /** Fork: instance default, for re-deriving the model id on a mid-session switch. */
+  readonly instanceDefaultContextTokens: number | null;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
@@ -344,24 +347,20 @@ function maxClaudeContextWindowFromModelUsage(
   return maxContextWindow;
 }
 
-function selectedClaudeContextWindow(
-  modelSelection: ModelSelection | undefined,
+/**
+ * Fork: the meter's denominator is the context the thread was set to, not the
+ * model's native window. Claude Code reports the native window (1M for an
+ * opted-in model) while compacting at `autoCompactWindow`, so an unclamped
+ * meter would show a thread filling toward a number it will never reach.
+ */
+function clampToSelectedContextWindow(
+  contextWindow: number | undefined,
+  ceiling: number | undefined,
 ): number | undefined {
-  switch (modelSelection?.model) {
-    case "claude-opus-4-8":
-    case "claude-opus-4-7":
-      // Always 1M at the API; these models expose no contextWindow option.
-      return 1_000_000;
+  if (contextWindow === undefined) {
+    return ceiling;
   }
-
-  switch (resolveClaudeContextWindow(modelSelection)) {
-    case "1m":
-      return 1_000_000;
-    case "200k":
-      return 200_000;
-    default:
-      return undefined;
-  }
+  return ceiling === undefined ? contextWindow : Math.min(contextWindow, ceiling);
 }
 
 function finiteNonNegativeInteger(value: unknown): number | undefined {
@@ -1798,7 +1797,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
-    context.lastKnownContextWindow = usage.maxTokens;
+    context.lastKnownContextWindow = clampToSelectedContextWindow(
+      usage.maxTokens,
+      context.contextWindowCeiling,
+    );
     return normalizeClaudeContextUsageApiSnapshot(usage, totalProcessedTokens);
   });
 
@@ -1891,7 +1893,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
-    const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
+    const resultContextWindow = clampToSelectedContextWindow(
+      maxClaudeContextWindowFromModelUsage(result?.modelUsage),
+      context.contextWindowCeiling,
+    );
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
     }
@@ -3500,10 +3505,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
+      // Fork: the instance's configured default is what a thread carrying no
+      // context choice of its own resolves to, so it has to be in hand before
+      // either half of the context pair is derived.
+      const instanceDefaultTokens = resolveClaudeInstanceContextDefault(
+        claudeSettings.contextLimitTokens,
+      );
+      const caps = getClaudeModelCapabilities(modelSelection?.model, instanceDefaultTokens);
       const descriptors = getProviderOptionDescriptors({ caps });
-      const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
-      const initialContextWindow = selectedClaudeContextWindow(modelSelection);
+      const apiModelId = modelSelection
+        ? resolveClaudeApiModelId(modelSelection, instanceDefaultTokens)
+        : undefined;
+
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort = resolveClaudeEffort(caps, rawEffort) ?? null;
       const fastModeSupported = descriptors.some(
@@ -3526,16 +3539,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
-      // `autoCompactWindow` is the only knob Claude Code offers over how much
-      // context a session may accumulate: it becomes the effective window in
-      // the CLI's compaction arithmetic, so the transcript is summarized on
-      // approach instead of growing to the model's native 1M.
-      const contextLimitTokens = resolveClaudeContextLimitTokens(claudeSettings.contextLimitTokens);
+      // Fork: one choice drives both halves of the thread's context — the API
+      // window, via the model id resolved above, and the point Claude Code
+      // compacts at. `autoCompactWindow` is the only knob the CLI offers over
+      // the latter: it becomes the effective window in the compaction
+      // arithmetic, so the transcript is summarized on approach rather than
+      // growing to whatever the model natively allows.
+      const effectiveContextTokens = resolveClaudeContextTokens(
+        modelSelection,
+        instanceDefaultTokens,
+      );
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
-        autoCompactWindow: contextLimitTokens,
+        autoCompactWindow: effectiveContextTokens,
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       const queryOptions: ClaudeQueryOptions = {
@@ -3653,7 +3671,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         turnState: undefined,
-        lastKnownContextWindow: initialContextWindow,
+        lastKnownContextWindow: effectiveContextTokens,
+        contextWindowCeiling: effectiveContextTokens,
+        instanceDefaultContextTokens: instanceDefaultTokens,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
@@ -3756,7 +3776,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (modelSelection?.model) {
-      const apiModelId = resolveClaudeApiModelId(modelSelection);
+      const apiModelId = resolveClaudeApiModelId(
+        modelSelection,
+        context.instanceDefaultContextTokens,
+      );
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),

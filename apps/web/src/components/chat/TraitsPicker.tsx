@@ -131,8 +131,6 @@ function getSelectedTraits(
       descriptor.type === "boolean",
   );
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
-  const contextWindowDescriptor =
-    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
@@ -156,7 +154,6 @@ function getSelectedTraits(
     typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
   const fastModeEnabled =
     typeof fastModeDescriptor?.currentValue === "boolean" ? fastModeDescriptor.currentValue : false;
-  const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
   const selectedAgent = getDescriptorStringValue(agentDescriptor);
   const selectedAgentLabel = agentDescriptor
     ? getProviderOptionCurrentLabel(agentDescriptor)
@@ -181,14 +178,12 @@ function getSelectedTraits(
     booleanDescriptors: visibleBooleanDescriptors,
     visibleDescriptors,
     primarySelectDescriptor,
-    contextWindowDescriptor,
     agentDescriptor,
     fastModeDescriptor,
     thinkingDescriptor,
     effort,
     thinkingEnabled,
     fastModeEnabled,
-    contextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
     selectedAgent,

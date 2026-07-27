@@ -4,27 +4,27 @@
  * Two different numbers used to be on screen at once — the model's context
  * window (a per-thread selector, "200k" / "1M") and the instance's compaction
  * cap (a Claude Code setting, "600k") — sitting in adjacent rows of the same
- * popover and reading as a contradiction. They are not the same claim, but
- * only one of them is the point: Claude compacts at whichever is lower.
+ * popover and reading as a contradiction. They were never the same claim, and
+ * the one the user could see was not the one that bound.
  *
- * So the popover keeps one context row. Its control is the window selector
- * where the model has one, and this module writes the line underneath that
- * states where the conversation will actually compact.
+ * So there is one concept now, chosen per thread beside the model: Context,
+ * one of 200k / 600k / 1M. The server derives the API window and the
+ * compaction point from it (see `@t3tools/shared/claudeContextLimit`), and
+ * nothing else caps what the user picked. This module decides only what the
+ * row shows when the model offers no choice to make.
  *
  * @module composerContext
  */
-import {
-  formatClaudeContextLimitLabel,
-  parseClaudeContextLimitTokens,
-} from "@t3tools/shared/claudeContextLimit";
+import { formatClaudeContextLimitLabel } from "@t3tools/shared/claudeContextLimit";
 
 export interface ComposerContextRowInput {
-  /** Whether the selected model exposes a `contextWindow` option to pick from. */
-  readonly hasWindowSelector: boolean;
-  /** Resolved `contextWindow` selection ("200k", "1m"), or null when absent. */
-  readonly windowValue: string | null;
-  /** Compaction cap the server will enforce; null for drivers without one. */
-  readonly capTokens: number | null;
+  /** Whether the selected model exposes a context option to pick from. */
+  readonly hasSelector: boolean;
+  /**
+   * Context this thread gets when the model offers no choice — the instance
+   * default. Null for providers that make no context claim at all (Codex).
+   */
+  readonly fallbackTokens: number | null;
 }
 
 export interface ComposerContextRow {
@@ -33,34 +33,24 @@ export interface ComposerContextRow {
    * nothing to choose, so the row still has to say something.
    */
   readonly chipLabel: string | null;
-  /** Sub-label under "Context". Empty when we cannot claim a compaction point. */
+  /** Sub-label under "Context". Empty when the selector speaks for itself. */
   readonly hint: string;
 }
 
 /**
  * Build the row, or `null` when this provider has nothing to say about context
- * (no window selector and no cap — every Codex model, for instance).
+ * (no selector and no default — every Codex model, for instance).
  */
 export function buildComposerContextRow(input: ComposerContextRowInput): ComposerContextRow | null {
-  const { hasWindowSelector, windowValue, capTokens } = input;
-  if (!hasWindowSelector && capTokens === null) {
+  const { hasSelector, fallbackTokens } = input;
+  if (hasSelector) {
+    return { chipLabel: null, hint: "" };
+  }
+  if (fallbackTokens === null) {
     return null;
   }
-
-  const windowTokens = parseClaudeContextLimitTokens(windowValue);
-  const chipLabel =
-    hasWindowSelector || capTokens === null ? null : formatClaudeContextLimitLabel(capTokens);
-
-  // The cap only binds when it is below the window. A 200k model on a 600k cap
-  // compacts at 200k, and saying "600k" there would be wrong.
-  if (capTokens !== null && (windowTokens === null || capTokens < windowTokens)) {
-    return {
-      chipLabel,
-      hint: `Compacts near ${formatClaudeContextLimitLabel(capTokens)}. Change in Settings.`,
-    };
-  }
-  if (capTokens !== null && windowTokens !== null) {
-    return { chipLabel, hint: `Compacts near ${formatClaudeContextLimitLabel(windowTokens)}.` };
-  }
-  return { chipLabel, hint: "" };
+  return {
+    chipLabel: formatClaudeContextLimitLabel(fallbackTokens),
+    hint: "This model offers no choice. Change the default in Settings.",
+  };
 }
