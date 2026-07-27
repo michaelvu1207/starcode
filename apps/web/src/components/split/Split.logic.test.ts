@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  SPLIT_CLOSE_ARM_FRACTION,
+  SPLIT_CLOSE_DISARM_FRACTION,
   SPLIT_DEFAULT_RATIO,
   SPLIT_DIVIDER_PX,
   SPLIT_MIN_PANE_PX,
@@ -10,6 +12,9 @@ import {
   resolveKeyboardOwner,
   resolvePendingUserInputDigitSelection,
   resolveSidebarOpenTarget,
+  resolveSplitCloseAction,
+  resolveSplitCloseArm,
+  resolveSplitDragRelease,
   resolveSplitRenderState,
   splitFitsContainer,
   splitGridTemplate,
@@ -261,6 +266,163 @@ describe("nextRatioForKey", () => {
     expect(
       nextRatioForKey({ key: "a", shiftKey: false, ratio: 0.5, containerWidth: width }),
     ).toBeNull();
+  });
+});
+
+describe("overdrag close", () => {
+  const width = 1600;
+  const available = width - SPLIT_DIVIDER_PX;
+  /** The ratio at which the named pane is `px` wide. */
+  const ratioFor = (pane: SplitPaneId, px: number) =>
+    pane === "primary" ? px / available : 1 - px / available;
+  const armPx = SPLIT_MIN_PANE_PX * SPLIT_CLOSE_ARM_FRACTION;
+  const disarmPx = SPLIT_MIN_PANE_PX * SPLIT_CLOSE_DISARM_FRACTION;
+  const base = { containerWidth: width, hasSecondary: true, armed: null } as const;
+
+  it("stays quiet for every drag the clamp can absorb", () => {
+    const { min, max } = splitRatioBounds(width);
+    expect(resolveSplitCloseArm({ ...base, ratio: SPLIT_DEFAULT_RATIO })).toBeNull();
+    expect(resolveSplitCloseArm({ ...base, ratio: min })).toBeNull();
+    expect(resolveSplitCloseArm({ ...base, ratio: max })).toBeNull();
+    // A pane pushed a little under its floor is still an overshoot, not a
+    // decision: the threshold sits well past where the divider stopped.
+    expect(
+      resolveSplitCloseArm({ ...base, ratio: ratioFor("primary", SPLIT_MIN_PANE_PX - 40) }),
+    ).toBeNull();
+    expect(
+      resolveSplitCloseArm({ ...base, ratio: ratioFor("secondary", SPLIT_MIN_PANE_PX - 40) }),
+    ).toBeNull();
+  });
+
+  /**
+   * The direction gate. Crushing a pane must arm *that* pane — an
+   * implementation that swaps the two sides, or that reads the clamped ratio
+   * instead of the raw pointer projection, fails here.
+   */
+  it("arms the pane the pointer is squeezing, and only that one", () => {
+    expect(resolveSplitCloseArm({ ...base, ratio: ratioFor("primary", armPx - 1) })).toBe(
+      "primary",
+    );
+    expect(resolveSplitCloseArm({ ...base, ratio: ratioFor("secondary", armPx - 1) })).toBe(
+      "secondary",
+    );
+    // Dragging left, all the way off the edge, never arms the right pane.
+    for (const ratio of [0.19, 0.1, 0, -0.4]) {
+      expect(resolveSplitCloseArm({ ...base, ratio })).toBe("primary");
+    }
+    for (const ratio of [0.81, 0.9, 1, 1.4]) {
+      expect(resolveSplitCloseArm({ ...base, ratio })).toBe("secondary");
+    }
+  });
+
+  it("takes a real shove past the stop, not an overshoot", () => {
+    // 105px of travel into a wall at the shipped fraction.
+    expect(SPLIT_MIN_PANE_PX - armPx).toBeCloseTo(105);
+    expect(SPLIT_CLOSE_ARM_FRACTION).toBeLessThan(SPLIT_CLOSE_DISARM_FRACTION);
+  });
+
+  it("holds the warning through the hysteresis band, and drops it outside", () => {
+    const between = ratioFor("primary", (armPx + disarmPx) / 2);
+    expect(resolveSplitCloseArm({ ...base, ratio: between })).toBeNull();
+    expect(resolveSplitCloseArm({ ...base, ratio: between, armed: "primary" })).toBe("primary");
+    // Back inside the wider threshold: the warning goes, and so does the close.
+    expect(
+      resolveSplitCloseArm({
+        ...base,
+        ratio: ratioFor("primary", disarmPx + 1),
+        armed: "primary",
+      }),
+    ).toBeNull();
+  });
+
+  it("never arms the left pane while the right one is still the picker", () => {
+    const pickerBase = { ...base, hasSecondary: false };
+    for (const ratio of [0.19, 0.1, 0, -0.4]) {
+      expect(resolveSplitCloseArm({ ...pickerBase, ratio })).toBeNull();
+    }
+    // The picker itself is still dismissable — that pane holds nothing to keep.
+    expect(resolveSplitCloseArm({ ...pickerBase, ratio: 0.9 })).toBe("secondary");
+  });
+
+  it("declines to arm on a container it cannot reason about", () => {
+    expect(resolveSplitCloseArm({ ...base, ratio: Number.NaN })).toBeNull();
+    expect(
+      resolveSplitCloseArm({ ...base, ratio: 0.05, containerWidth: EXACT_FIT - 1 }),
+    ).toBeNull();
+  });
+
+  /**
+   * The outcome gate: you keep the thread you did not crush. Swapping these
+   * two arms leaves the user staring at the pane they just shoved off screen.
+   */
+  it("keeps the thread the user did not crush", () => {
+    const survivor = (closingPane: SplitPaneId, hasSecondary: boolean) =>
+      resolveSplitCloseAction({ closingPane, hasSecondary }) === "promote-secondary"
+        ? "second-thread"
+        : "route-thread";
+
+    expect(survivor("secondary", true)).toBe("route-thread");
+    expect(survivor("primary", true)).toBe("second-thread");
+    // Nothing to promote: the split just closes and the route stands.
+    expect(survivor("primary", false)).toBe("route-thread");
+  });
+
+  describe("release", () => {
+    /**
+     * The cancel gate. Releasing with nothing armed must commit a width and
+     * close nothing at all — an implementation that closes on "the pointer was
+     * once past the threshold" rather than on "it is past it now" fails here.
+     */
+    it("commits a clamped ratio when nothing is armed", () => {
+      const release = resolveSplitDragRelease({
+        closing: null,
+        pendingRatio: 0.05,
+        containerWidth: width,
+      });
+      expect(release.kind).toBe("commit");
+      expect(release).toEqual({ kind: "commit", ratio: splitRatioBounds(width).min });
+    });
+
+    it("closes the armed pane and commits nothing", () => {
+      const release = resolveSplitDragRelease({
+        closing: "secondary",
+        pendingRatio: splitRatioBounds(width).max,
+        containerWidth: width,
+      });
+      expect(release).toEqual({ kind: "close", pane: "secondary" });
+      expect(release).not.toHaveProperty("ratio");
+    });
+  });
+
+  /**
+   * The gesture end to end, over exactly the functions the pointer handler
+   * calls: shove left past the threshold, change your mind, let go. The split
+   * must survive, and the ratio it keeps must be a sane one.
+   */
+  it("survives a shove the user backs out of", () => {
+    const startRatio = SPLIT_DEFAULT_RATIO;
+    const track = [0.4, 0.25, 0.15, 0.1, 0.24, startRatio];
+    let armed: SplitPaneId | null = null;
+    let pending = startRatio;
+    const armedAt: Array<SplitPaneId | null> = [];
+    for (const projected of track) {
+      pending = clampSplitRatio(projected, width);
+      armed = resolveSplitCloseArm({
+        ratio: projected,
+        containerWidth: width,
+        hasSecondary: true,
+        armed,
+      });
+      armedAt.push(armed);
+    }
+
+    expect(armedAt).toEqual([null, null, "primary", "primary", null, null]);
+    const release = resolveSplitDragRelease({
+      closing: armed,
+      pendingRatio: pending,
+      containerWidth: width,
+    });
+    expect(release).toEqual({ kind: "commit", ratio: startRatio });
   });
 });
 

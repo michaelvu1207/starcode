@@ -43,6 +43,30 @@ describe("splitStore", () => {
     expect(state.focusedPane).toBe("primary");
   });
 
+  /**
+   * The order `SplitContainer` uses when an overdrag crushes the left pane.
+   * `setSecondary` focuses the second pane, so promoting before closing is the
+   * only sequence that ends with the keyboard on a pane still on screen —
+   * swapping these two lines strands ownership on a pane that just went away.
+   */
+  it("leaves the keyboard on the survivor when a crushed left pane is promoted", () => {
+    useSplitStore.getState().openSplit();
+    useSplitStore.getState().setSecondary(threadA);
+    useSplitStore.getState().setRatio(0.4);
+
+    useSplitStore.getState().setSecondary(null);
+    useSplitStore.getState().closeSplit();
+
+    const state = useSplitStore.getState();
+    expect(state.enabled).toBe(false);
+    expect(state.focusedPane).toBe("primary");
+    // The promoted thread is the route's now; leaving it here would reopen the
+    // split with the same thread in both panes.
+    expect(state.secondary).toBeNull();
+    // And the gesture never writes a width, so the split reopens as it was.
+    expect(state.ratio).toBe(0.4);
+  });
+
   it("holds a thread on any machine", () => {
     useSplitStore.getState().setSecondary(threadB);
     expect(useSplitStore.getState().secondary).toEqual(threadB);

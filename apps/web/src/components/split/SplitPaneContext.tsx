@@ -92,14 +92,22 @@ export function usePaneKeyboardGate(): () => boolean {
  *    listened for as well as `pointerdown`, so a pane that grabs focus in code
  *    also takes ownership — which is what keeps `document.activeElement`-based
  *    helpers like `getTerminalFocusOwner` agreeing with the owner.
+ *
+ * `closing` is the mid-drag warning: this is the pane that release would
+ * dismiss. It scrims rather than resizes, because the panes hold two live
+ * transcripts and reflowing one to nothing on every armed frame — and back
+ * again on every cancel — is a lot of layout to spend on a preview. The rule
+ * down the scrim's outer edge is where the divider would have ended up.
  */
 export function SplitPaneProvider({
   paneId,
   className,
+  closing = false,
   children,
 }: {
   readonly paneId: SplitPaneId;
   readonly className?: string;
+  readonly closing?: boolean;
   readonly children: ReactNode;
 }) {
   const composerRef = useRef<ChatComposerHandle | null>(null);
@@ -126,11 +134,17 @@ export function SplitPaneProvider({
         <div
           data-split-pane={paneId}
           data-split-pane-focused={focusedPane === paneId ? "true" : "false"}
+          data-split-pane-closing={closing ? "true" : "false"}
           className={className}
           onPointerDownCapture={takeFocus}
           onFocusCapture={takeFocus}
         >
           {children}
+          {closing ? (
+            <div className="sc-split-pane-scrim" data-testid={`split-scrim-${paneId}`}>
+              <span className="sc-split-pane-scrim-label">Release to close this pane</span>
+            </div>
+          ) : null}
         </div>
       </ComposerHandleContext>
     </SplitPaneIdContext>

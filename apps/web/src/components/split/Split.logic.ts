@@ -26,6 +26,25 @@ export const SPLIT_DIVIDER_PX = 6;
 
 export const SPLIT_DEFAULT_RATIO = 0.5;
 
+/**
+ * How far past the clamp the drag has to go before releasing closes a pane,
+ * as a fraction of the minimum pane width.
+ *
+ * The divider already stops dead at `SPLIT_MIN_PANE_PX`, so every overshoot is
+ * a pointer that kept travelling while the layout did not — which makes the
+ * number a question about intent, not about pixels. At 0.75 the pointer has to
+ * project the pane a quarter below a width it can no longer reach: 105px of
+ * travel into a wall. Trackpad overshoot on a normal resize lands well inside
+ * that; a deliberate shove does not.
+ *
+ * The second number is hysteresis, not a second threshold. Arming and
+ * disarming on the same value makes the scrim strobe when a hand rests on the
+ * boundary, and a warning that flickers reads as a bug rather than as a
+ * warning.
+ */
+export const SPLIT_CLOSE_ARM_FRACTION = 0.75;
+export const SPLIT_CLOSE_DISARM_FRACTION = 0.85;
+
 /** Arrow-key nudge, and its shifted coarse step. */
 export const SPLIT_RATIO_KEY_STEP = 0.02;
 export const SPLIT_RATIO_KEY_STEP_COARSE = 0.1;
@@ -78,6 +97,86 @@ export function clampSplitRatio(ratio: number, containerWidth: number | null): n
   if (containerWidth === null) return Math.min(1, Math.max(0, ratio));
   const { min, max } = splitRatioBounds(containerWidth);
   return Math.min(max, Math.max(min, ratio));
+}
+
+/**
+ * Which pane a drag is about to dismiss, or `null` for an ordinary resize.
+ *
+ * `ratio` here is the *unclamped* projection of the pointer — the clamped one
+ * is what the grid renders, and it stops at the minimum by construction, so it
+ * can never say anything about overshoot. The pane the pointer is squeezing is
+ * the one that closes: push right and the right pane goes, push left and the
+ * left one does.
+ *
+ * `armed` is the currently armed pane and is what makes the wider disarm
+ * threshold apply only on the way back out.
+ *
+ * The primary side does not arm while the second pane is still the picker.
+ * Crushing the picker from the left would close the split and leave the user
+ * on the pane they just crushed, which is the one outcome this gesture must
+ * never produce.
+ */
+export function resolveSplitCloseArm(input: {
+  /** Unclamped pointer projection, 0..1. */
+  readonly ratio: number;
+  readonly containerWidth: number;
+  readonly hasSecondary: boolean;
+  readonly armed: SplitPaneId | null;
+}): SplitPaneId | null {
+  if (!Number.isFinite(input.ratio)) return null;
+  if (!splitFitsContainer(input.containerWidth)) return null;
+  const available = availableWidth(input.containerWidth);
+  const limitFor = (pane: SplitPaneId): number =>
+    SPLIT_MIN_PANE_PX *
+    (input.armed === pane ? SPLIT_CLOSE_DISARM_FRACTION : SPLIT_CLOSE_ARM_FRACTION);
+
+  if (input.hasSecondary && available * input.ratio <= limitFor("primary")) return "primary";
+  if (available * (1 - input.ratio) <= limitFor("secondary")) return "secondary";
+  return null;
+}
+
+/**
+ * What releasing an armed drag actually does.
+ *
+ * The rule is that you keep the thread you did not crush. Crushing the right
+ * pane closes the split and leaves the route where it was — the same thing the
+ * pane menu's "Close this pane" does, so the gesture and the button agree.
+ * Crushing the left pane has to move the route instead: the surviving thread
+ * lives in the store, not in the URL, so closing without promoting it would
+ * dismiss the pane the user kept and keep the one they threw away.
+ */
+export type SplitCloseAction = "close-split" | "promote-secondary";
+
+export function resolveSplitCloseAction(input: {
+  readonly closingPane: SplitPaneId;
+  readonly hasSecondary: boolean;
+}): SplitCloseAction {
+  return input.closingPane === "primary" && input.hasSecondary
+    ? "promote-secondary"
+    : "close-split";
+}
+
+/**
+ * What letting go does — the whole of it, so "released inside the threshold"
+ * and "released while armed" are one decision with one test rather than a
+ * branch buried in a pointer handler.
+ *
+ * A close commits nothing. The overshoot is a gesture, not a width, and
+ * writing it to the store would mean reopening the split later at the size of
+ * the pane the user threw away.
+ */
+export type SplitDragRelease =
+  | { readonly kind: "commit"; readonly ratio: number }
+  | { readonly kind: "close"; readonly pane: SplitPaneId };
+
+export function resolveSplitDragRelease(input: {
+  /** The armed pane at the moment of release, from `resolveSplitCloseArm`. */
+  readonly closing: SplitPaneId | null;
+  readonly pendingRatio: number;
+  readonly containerWidth: number | null;
+}): SplitDragRelease {
+  if (input.closing !== null) return { kind: "close", pane: input.closing };
+  return { kind: "commit", ratio: clampSplitRatio(input.pendingRatio, input.containerWidth) };
 }
 
 export function resolveSplitRenderState(input: {

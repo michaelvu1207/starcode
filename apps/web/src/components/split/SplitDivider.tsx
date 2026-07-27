@@ -20,18 +20,21 @@ import {
   type RefObject,
 } from "react";
 
-import { nextRatioForKey } from "./Split.logic";
+import { nextRatioForKey, type SplitPaneId } from "./Split.logic";
 import { useSplitStore } from "./splitStore";
 import type { ResizableRatioHandlers } from "./useResizableRatio";
 
 export function SplitDivider({
   ratio,
   dragging,
+  closingPane = null,
   handlers,
   containerRef,
 }: {
   readonly ratio: number;
   readonly dragging: boolean;
+  /** The pane releasing would dismiss, so the track can say so. */
+  readonly closingPane?: SplitPaneId | null;
   readonly handlers: ResizableRatioHandlers;
   readonly containerRef: RefObject<HTMLElement | null>;
 }) {
@@ -81,6 +84,7 @@ export function SplitDivider({
       tabIndex={0}
       data-testid="split-divider"
       data-dragging={dragging ? "true" : "false"}
+      data-closing={closingPane ?? "none"}
       className="sc-split-divider"
       onKeyDown={onKeyDown}
       {...handlers}

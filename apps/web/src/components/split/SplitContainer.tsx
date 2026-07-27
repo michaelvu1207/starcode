@@ -12,10 +12,18 @@
  *
  * @module SplitContainer
  */
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { useIsMobile } from "../../hooks/useMediaQuery";
-import { resolveSplitRenderState, splitGridTemplate, clampSplitRatio } from "./Split.logic";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import {
+  resolveSplitCloseAction,
+  resolveSplitRenderState,
+  splitGridTemplate,
+  clampSplitRatio,
+  type SplitPaneId,
+} from "./Split.logic";
 import { SplitDivider } from "./SplitDivider";
 import { SplitPaneProvider } from "./SplitPaneContext";
 import { SplitSecondaryPane } from "./SplitSecondaryPane";
@@ -77,9 +85,38 @@ export function SplitContainer({ children }: { readonly children: ReactNode }) {
     useSplitStore.getState().focusPane("primary");
   }, [renderState]);
 
-  const { ratio, dragging, handlers } = useResizableRatio({
+  // Dragging a pane past its clamp dismisses it. The pane that survives is
+  // the one the user did not crush — which for the left pane means the route
+  // has to follow the second thread, because the route *is* the left pane's
+  // identity and closing without moving it would keep the wrong thread.
+  const navigate = useNavigate();
+  const closePaneFromDrag = useCallback(
+    (pane: SplitPaneId) => {
+      const state = useSplitStore.getState();
+      const secondary = state.secondary;
+      const action = resolveSplitCloseAction({
+        closingPane: pane,
+        hasSecondary: secondary !== null,
+      });
+      if (action === "promote-secondary" && secondary !== null) {
+        state.setSecondary(null);
+        state.closeSplit();
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(secondary),
+        });
+        return;
+      }
+      state.closeSplit();
+    },
+    [navigate],
+  );
+
+  const { ratio, dragging, closingPane, handlers } = useResizableRatio({
     containerRef,
     ratio: clampSplitRatio(storedRatio, containerWidth),
+    hasSecondary,
+    onDragClose: closePaneFromDrag,
   });
 
   if (renderState === "off") {
@@ -98,16 +135,25 @@ export function SplitContainer({ children }: { readonly children: ReactNode }) {
       className="sc-split-container grid min-h-0 min-w-0 flex-1"
       style={{ gridTemplateColumns: splitGridTemplate(ratio) }}
     >
-      <SplitPaneProvider paneId="primary" className={PANE_CLASS}>
+      <SplitPaneProvider
+        paneId="primary"
+        className={PANE_CLASS}
+        closing={closingPane === "primary"}
+      >
         {children}
       </SplitPaneProvider>
       <SplitDivider
         ratio={ratio}
         dragging={dragging}
+        closingPane={closingPane}
         handlers={handlers}
         containerRef={containerRef}
       />
-      <SplitPaneProvider paneId="secondary" className={PANE_CLASS}>
+      <SplitPaneProvider
+        paneId="secondary"
+        className={PANE_CLASS}
+        closing={closingPane === "secondary"}
+      >
         <SplitSecondaryPane />
       </SplitPaneProvider>
     </div>

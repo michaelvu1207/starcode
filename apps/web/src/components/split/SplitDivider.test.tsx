@@ -33,6 +33,29 @@ describe("SplitDivider", () => {
     expect(markup).toContain("35% to the left pane");
   });
 
+  it("names the pane an overdrag would close, and says so only then", () => {
+    const idle = renderToStaticMarkup(
+      <SplitDivider
+        ratio={0.5}
+        dragging
+        handlers={noopHandlers}
+        containerRef={createRef<HTMLElement>()}
+      />,
+    );
+    expect(idle).toContain('data-closing="none"');
+
+    const armed = renderToStaticMarkup(
+      <SplitDivider
+        ratio={0.27}
+        dragging
+        closingPane="primary"
+        handlers={noopHandlers}
+        containerRef={createRef<HTMLElement>()}
+      />,
+    );
+    expect(armed).toContain('data-closing="primary"');
+  });
+
   it("says when it is being dragged, so styling never guesses", () => {
     const dragging = renderToStaticMarkup(
       <SplitDivider

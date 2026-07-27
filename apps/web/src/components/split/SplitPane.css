@@ -54,6 +54,18 @@
   );
 }
 
+/* Armed to close. The same butter, at the same ceiling, but the rule is no
+   longer a hairline — the track reads as a wall the drag has run into rather
+   than as a handle that is still moving. */
+.sc-split-divider:not([data-closing="none"])::before {
+  width: 2px;
+  background-color: color-mix(
+    in srgb,
+    var(--sc-butter) calc(var(--sc-star-chrome-max) * 100%),
+    var(--border)
+  );
+}
+
 .sc-split-divider:focus-visible {
   outline: none;
 }
@@ -121,4 +133,60 @@
   .sc-split-container[data-split-live="true"] .sc-split-pane[data-split-pane-focused="false"] {
     transition: none;
   }
+}
+
+/**
+ * The doomed pane, mid-drag.
+ *
+ * The unfocused pane already dims by 6% to say where the keyboard is, so
+ * "about to be closed" cannot be more dimming — it has to be a different kind
+ * of mark or the two states blur into one. This is the ground itself coming
+ * back over the transcript: the body sky is what is left when a pane goes, so
+ * the scrim is that colour rather than a neutral black, and the pane looks
+ * like it is already half gone instead of merely disabled.
+ *
+ * The rule down its outer edge is the divider's destination, drawn where the
+ * track would have landed had the clamp let it travel. Positioning is claimed
+ * only while the state is live, so the pane is an ordinary flex column every
+ * other frame of its life.
+ */
+.sc-split-pane[data-split-pane-closing="true"] {
+  position: relative;
+}
+
+.sc-split-pane-scrim {
+  position: absolute;
+  inset: 0;
+  /* Above everything a transcript stacks inside a pane — the tallest thing in
+     `ChatView` is `z-[70]`, and a warning under the thing it is warning about
+     is not a warning. */
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Nothing here is clickable, and the pointer is mid-capture anyway. */
+  pointer-events: none;
+  background-color: color-mix(in srgb, var(--background) 82%, transparent);
+}
+
+.sc-split-pane[data-split-pane="primary"] .sc-split-pane-scrim {
+  border-left: 1px solid
+    color-mix(in srgb, var(--sc-butter) calc(var(--sc-star-chrome-max) * 100%), var(--border));
+}
+
+.sc-split-pane[data-split-pane="secondary"] .sc-split-pane-scrim {
+  border-right: 1px solid
+    color-mix(in srgb, var(--sc-butter) calc(var(--sc-star-chrome-max) * 100%), var(--border));
+}
+
+.sc-split-pane-scrim-label {
+  padding: 0.25rem 0.625rem;
+  border-radius: calc(var(--radius) - 2px);
+  background-color: var(--card);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  /* A pane can be squeezed to 315px of preview; the label must not wrap. */
+  white-space: nowrap;
 }
