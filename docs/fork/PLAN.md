@@ -1230,6 +1230,15 @@ cannot give — *which connections carry this project* (chips, not geography) an
 the flow*. Deployment state belongs on this surface when it exists (§4 gap 4), attached to the
 feature, never to the machine.
 
+**Amendment (07-26, F16.6 — Michael's verdict, which overrides the paragraph above where they
+disagree):** *"There should not be a global projects view… the Orchestrator tab shouldn't have all
+this top bar… It should just be the chat, like a new thread view, and on the right side there's the
+map."* The global card index is **deleted**; the sidebar's projects view is the list. The project
+home is its orchestrator's chat and the filtered sky, and nothing else — the connection chips this
+section asked for went with the header strip that held them, and a fact about a project's machines
+earns its way back by being on a row or a hover card, never as a strip above the work. Editing,
+archiving and deleting a project all live in the sidebar pencil's dialog.
+
 ---
 
 ### 4. Master planner doctrine
