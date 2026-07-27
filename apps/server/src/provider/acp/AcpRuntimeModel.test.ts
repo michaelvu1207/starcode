@@ -185,6 +185,10 @@ describe("AcpRuntimeModel", () => {
           status: "pending",
           command: "bun run typecheck",
           detail: "bun run typecheck",
+          // The tool's text content is captured output, not the row label — it
+          // renders as a block, so it travels in `output` rather than being
+          // truncated into `detail`.
+          output: "Running checks",
           data: {
             toolCallId: "tool-1",
             kind: "execute",

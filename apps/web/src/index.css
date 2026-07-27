@@ -218,6 +218,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       opacity: 1;
     }
   }
+  /* A brighter window sweeping across running activity text. Stepped rather
+     than smooth, matching the duty-cycled indicators above: the compositor
+     draws 48 discrete frames instead of one per vsync, and the stepping is
+     also what gives the sweep its texture instead of a soft gradient wipe. */
+  @keyframes activity-shimmer-sweep {
+    0% {
+      transform: translateX(-50%);
+    }
+    100% {
+      transform: translateX(125%);
+    }
+  }
+  @keyframes activity-shimmer-highlight {
+    0% {
+      transform: translateX(50%);
+    }
+    100% {
+      transform: translateX(-125%);
+    }
+  }
 }
 
 @layer base {
@@ -1059,6 +1079,40 @@ code {
 
 .turn-chip-strip::-webkit-scrollbar {
   display: none;
+}
+
+/* Running-activity shimmer. The base text sits dim and an aria-hidden copy of
+   the same text, clipped to a moving gradient window, sweeps across it bright.
+   Duplicating the text is what keeps the highlight aligned to the glyphs under
+   any font or wrapping, which a background-clip gradient does not. */
+.activity-shimmer-sweep {
+  pointer-events: none;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  overflow: hidden;
+  transform: translateX(-50%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 20% 30%, transparent 50% 100%);
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.activity-shimmer-active .activity-shimmer-sweep {
+  animation: activity-shimmer-sweep 1s steps(48, end) 1;
+}
+
+.activity-shimmer-active .activity-shimmer-highlight {
+  animation: activity-shimmer-highlight 1s steps(48, end) 1;
+  display: inline-block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-shimmer-sweep,
+  .activity-shimmer-active .activity-shimmer-sweep,
+  .activity-shimmer-active .activity-shimmer-highlight {
+    animation: none;
+    display: none;
+  }
 }
 
 /* Terminal drawer scrollbar parity with chat */

@@ -76,14 +76,45 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  /**
+   * Captured process output, rendered as a block rather than as the label.
+   * Absent for providers that do not report it — the card then shows the
+   * command alone rather than an empty output pane.
+   */
+  output?: string;
+  /** True when the server clipped `output`, so the card can say so. */
+  outputTruncated?: boolean;
+  /** Process exit status, when the provider reports one. */
+  exitCode?: number;
+  /** Lines added/removed by a file change, when the provider reports them. */
+  diffStat?: { added: number; removed: number };
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
 }
 
+/**
+ * Whether the entry is still running.
+ *
+ * Derived rather than stored: the lifecycle status is what the provider
+ * reports, and "is this row still going" is a question about that status plus
+ * whether the turn itself has settled — a row left `inProgress` by an
+ * interrupted turn must not shimmer forever.
+ */
+export function workLogEntryPhase(
+  entry: Pick<WorkLogEntry, "toolLifecycleStatus">,
+  turnSettled: boolean,
+): "running" | "settled" {
+  if (turnSettled) {
+    return "settled";
+  }
+  return entry.toolLifecycleStatus === "inProgress" ? "running" : "settled";
+}
+
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
-  collapseKey?: string;
   toolCallId?: string;
+  /** The provider's own item id — the join key across lifecycle events. */
+  providerItemId?: string;
 }
 
 export interface PendingApproval {
@@ -137,6 +168,14 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
+    }
+  | {
+      id: string;
+      kind: "reasoning";
+      createdAt: string;
+      turnId: TurnId | null;
+      /** One reasoning paragraph, rendered as prose rather than as a log row. */
+      text: string;
     };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
@@ -251,6 +290,12 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
   if (!workLogEntryIsToolLike(entry)) {
+    return false;
+  }
+  // "Neutral" means finished with nothing to report, and callers filter those
+  // rows out. A tool that is still running has not finished, so treating it as
+  // neutral would hide every row for exactly as long as it is interesting.
+  if (entry.toolLifecycleStatus === "inProgress") {
     return false;
   }
   if (workEntryIndicatesToolFailure(entry)) {
@@ -630,15 +675,20 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
+    // `tool.started` is kept: it is the only event that exists while a tool is
+    // actually running, and dropping it is why a row used to appear only after
+    // the work it describes had already finished. It merges into the later
+    // `tool.updated`/`tool.completed` for the same item below.
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
+    // Reasoning is prose, not a log row — see deriveReasoningEntries.
+    if (activity.kind === "reasoning") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
+    const { activityKind, ...rest } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
 }
@@ -749,58 +799,171 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolCallId) {
     entry.toolCallId = toolCallId;
   }
+  const providerItemId = asTrimmedString(payload?.itemId);
+  if (providerItemId) {
+    entry.providerItemId = providerItemId;
+  }
+  const output = extractToolOutput(payload);
+  if (output !== null) {
+    entry.output = output;
+  }
+  if (payload?.outputTruncated === true) {
+    entry.outputTruncated = true;
+  }
+  const exitCode = extractExitCode(payload, detail);
+  if (exitCode !== null) {
+    entry.exitCode = exitCode;
+  }
+  const diffStat = extractDiffStat(payload);
+  if (diffStat !== null) {
+    entry.diffStat = diffStat;
+  }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
   }
+  if (!toolLifecycleStatus && activity.kind === "tool.started") {
+    toolLifecycleStatus = "inProgress";
+  }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
-  }
-  const collapseKey = deriveToolLifecycleCollapseKey(entry);
-  if (collapseKey) {
-    entry.collapseKey = collapseKey;
   }
   return entry;
 }
 
+/**
+ * Fold each tool's lifecycle events into a single row.
+ *
+ * Merging is keyed rather than adjacency-only. Once `tool.started` is kept, a
+ * tool's start and completion are no longer neighbours whenever calls overlap
+ * — a provider that runs two tools concurrently emits start A, start B,
+ * complete A, complete B — and an adjacency merge would leave four rows where
+ * there are two calls.
+ *
+ * The merged row keeps the position of the *first* event, so a row appears
+ * when its work starts and then updates in place, rather than materialising
+ * only once the work is already over.
+ */
 function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  // Only *open* calls are indexed. Removing a key on completion is what makes a
+  // later identical command start a new row instead of reopening the old one.
+  const openIndexByKey = new Map<string, number>();
+
+  const closeEntry = (entry: DerivedWorkLogEntry) => {
+    for (const key of collapseKeysForEntry(entry)) {
+      openIndexByKey.delete(key);
+    }
+  };
+
   for (const entry of entries) {
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const keys = collapseKeysForEntry(entry);
+    if (keys.length === 0) {
+      collapsed.push(entry);
       continue;
     }
+
+    let mergedIndex: number | undefined;
+    for (const key of keys) {
+      const existingIndex = openIndexByKey.get(key);
+      const existing = existingIndex === undefined ? undefined : collapsed[existingIndex];
+      if (
+        existingIndex !== undefined &&
+        existing !== undefined &&
+        shouldCollapseToolLifecycleEntries(existing, entry)
+      ) {
+        const merged = mergeDerivedWorkLogEntries(existing, entry);
+        collapsed[existingIndex] = merged;
+        mergedIndex = existingIndex;
+        if (merged.activityKind === "tool.completed") {
+          closeEntry(merged);
+        }
+        break;
+      }
+    }
+    if (mergedIndex !== undefined) {
+      continue;
+    }
+
+    const index = collapsed.length;
     collapsed.push(entry);
+    if (entry.activityKind === "tool.completed") {
+      // Already terminal on arrival — nothing will ever merge into it.
+      continue;
+    }
+    for (const key of keys) {
+      openIndexByKey.set(key, index);
+    }
   }
   return collapsed;
+}
+
+/**
+ * Every key an entry can be joined on, strongest first.
+ *
+ * Providers are inconsistent about which identifier they put on which lifecycle
+ * event — some send a tool id on the update but omit it from the completion —
+ * so an entry is indexed under all of its keys and matched on any of them. The
+ * label triple is last because it cannot tell two identical commands apart.
+ */
+function collapseKeysForEntry(entry: DerivedWorkLogEntry): string[] {
+  if (!isToolLifecycleActivityKind(entry.activityKind)) {
+    return [];
+  }
+  const keys: string[] = [];
+  if (entry.providerItemId) {
+    keys.push(`item:${entry.providerItemId}`);
+  }
+  if (entry.toolCallId) {
+    keys.push(`tool:${entry.toolCallId}`);
+  }
+  const labelKey = deriveToolLabelCollapseKey(entry);
+  if (labelKey) {
+    keys.push(labelKey);
+  }
+  return keys;
+}
+
+const TOOL_LIFECYCLE_ACTIVITY_KINDS = new Set(["tool.started", "tool.updated", "tool.completed"]);
+
+function isToolLifecycleActivityKind(kind: OrchestrationThreadActivity["kind"]): boolean {
+  return TOOL_LIFECYCLE_ACTIVITY_KINDS.has(kind);
 }
 
 function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (!isToolLifecycleActivityKind(previous.activityKind)) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (!isToolLifecycleActivityKind(next.activityKind)) {
     return false;
   }
+  // Completion is terminal: a later event for the same item is a different
+  // call, not more of this one.
   if (previous.activityKind === "tool.completed") {
     return false;
   }
-  if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
-    return true;
+  // Two calls that both carry a strong id and disagree on it are different
+  // calls, however similar their labels.
+  if (
+    previous.providerItemId !== undefined &&
+    next.providerItemId !== undefined &&
+    previous.providerItemId !== next.providerItemId
+  ) {
+    return false;
   }
-  return (
+  if (
     previous.toolCallId !== undefined &&
-    next.toolCallId === undefined &&
-    previous.itemType === next.itemType &&
-    normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
-      normalizeCompactToolLabel(next.toolTitle ?? next.label)
-  );
+    next.toolCallId !== undefined &&
+    previous.toolCallId !== next.toolCallId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function mergeDerivedWorkLogEntries(
@@ -814,13 +977,22 @@ function mergeDerivedWorkLogEntries(
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
+  const providerItemId = next.providerItemId ?? previous.providerItemId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const output = next.output ?? previous.output;
+  const exitCode = next.exitCode ?? previous.exitCode;
+  const outputTruncated = next.outputTruncated ?? previous.outputTruncated;
+  const diffStat = next.diffStat ?? previous.diffStat;
   return {
     ...previous,
     ...next,
+    // The merged row keeps the earlier event's identity and position: `id` and
+    // `createdAt` come from when the work started, which is where the row sits
+    // in the transcript, not from whichever event happened to land last.
+    id: previous.id,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -828,10 +1000,14 @@ function mergeDerivedWorkLogEntries(
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
-    ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
+    ...(providerItemId ? { providerItemId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(outputTruncated !== undefined ? { outputTruncated } : {}),
+    ...(diffStat !== undefined ? { diffStat } : {}),
   };
 }
 
@@ -846,12 +1022,10 @@ function mergeChangedFiles(
   return [...new Set(merged)];
 }
 
-function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+/** Weakest join key: what the row says about itself. */
+function deriveToolLabelCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (!isToolLifecycleActivityKind(entry.activityKind)) {
     return undefined;
-  }
-  if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -1210,6 +1384,63 @@ function stripTrailingExitCode(value: string): {
   };
 }
 
+/**
+ * Captured output for a tool row.
+ *
+ * Only the typed `output` field counts. `detail` is deliberately not used as a
+ * fallback: it is the row's own label, and echoing the label into the output
+ * pane renders every row as a card containing a copy of its own title.
+ */
+function extractToolOutput(payload: Record<string, unknown> | null): string | null {
+  const output = payload?.output;
+  if (typeof output !== "string") {
+    return null;
+  }
+  // Trailing newlines are near-universal in captured output and would render
+  // as blank lines at the bottom of the pane.
+  const trimmed = output.replace(/\s+$/, "");
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Exit status for a tool row.
+ *
+ * Prefers the typed field, and falls back to the `<exited with exit code N>`
+ * marker some providers append to the detail text — that parse already existed
+ * to detect failure, and this is the same information the footer needs to
+ * distinguish "Exit code 1" from a generic failure.
+ */
+function extractExitCode(
+  payload: Record<string, unknown> | null,
+  detail: string | null | undefined,
+): number | null {
+  const exitCode = payload?.exitCode;
+  if (typeof exitCode === "number" && Number.isInteger(exitCode)) {
+    return exitCode;
+  }
+  if (typeof detail === "string") {
+    const parsed = stripTrailingExitCode(detail);
+    if (parsed.exitCode !== undefined) {
+      return parsed.exitCode;
+    }
+  }
+  return null;
+}
+
+/** Added/removed line counts for a file-change row, when the server sent them. */
+function extractDiffStat(
+  payload: Record<string, unknown> | null,
+): { added: number; removed: number } | null {
+  const added = payload?.linesAdded;
+  const removed = payload?.linesRemoved;
+  const addedCount = typeof added === "number" && Number.isInteger(added) ? added : 0;
+  const removedCount = typeof removed === "number" && Number.isInteger(removed) ? removed : 0;
+  if (addedCount === 0 && removedCount === 0) {
+    return null;
+  }
+  return { added: addedCount, removed: removedCount };
+}
+
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
@@ -1337,10 +1568,44 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+/**
+ * Reasoning paragraphs, in order.
+ *
+ * The server publishes each paragraph as its own activity under a stable id and
+ * republishes it as the text grows, so this is a straight projection — the
+ * accumulation already happened upstream, where it can be done once instead of
+ * once per connected client.
+ */
+export function deriveReasoningEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): Array<Extract<TimelineEntry, { kind: "reasoning" }>> {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const entries: Array<Extract<TimelineEntry, { kind: "reasoning" }>> = [];
+  for (const activity of ordered) {
+    if (activity.kind !== "reasoning") {
+      continue;
+    }
+    const payload = asRecord(activity.payload);
+    const text = asTrimmedString(payload?.text);
+    if (!text) {
+      continue;
+    }
+    entries.push({
+      id: activity.id,
+      kind: "reasoning",
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      text,
+    });
+  }
+  return entries;
+}
+
 export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
+  reasoningEntries: ReadonlyArray<Extract<TimelineEntry, { kind: "reasoning" }>> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1360,7 +1625,7 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
+  return [...messageRows, ...proposedPlanRows, ...workRows, ...reasoningEntries].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

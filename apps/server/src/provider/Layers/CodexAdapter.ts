@@ -268,6 +268,73 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
   }
 }
 
+/**
+ * Added/removed line counts across a file-change item's patches.
+ *
+ * `+++`/`---` are the unified-diff file headers, not content, and counting them
+ * inflates every single-file edit by one add and one remove.
+ */
+function diffStatsFromChanges(changes: ReadonlyArray<{ readonly diff: string }>): {
+  linesAdded?: number;
+  linesRemoved?: number;
+} {
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const change of changes) {
+    for (const line of change.diff.split(/\r?\n/)) {
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+")) linesAdded += 1;
+      else if (line.startsWith("-")) linesRemoved += 1;
+    }
+  }
+  return {
+    ...(linesAdded > 0 ? { linesAdded } : {}),
+    ...(linesRemoved > 0 ? { linesRemoved } : {}),
+  };
+}
+
+/**
+ * Captured process output and exit status, for the item types that have them.
+ *
+ * Deliberately separate from {@link itemDetail}: `detail` is a one-line row
+ * label and gets truncated hard downstream, while output is rendered as a
+ * block and carries a much larger budget.
+ */
+function itemOutcome(item: CodexLifecycleItem): {
+  output?: string;
+  exitCode?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+} {
+  if (item.type === "fileChange") {
+    return diffStatsFromChanges(item.changes);
+  }
+  if (item.type !== "commandExecution") {
+    return {};
+  }
+  const output = typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : undefined;
+  const exitCode = typeof item.exitCode === "number" ? item.exitCode : undefined;
+  return {
+    ...(output !== undefined && output.length > 0 ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+  };
+}
+
+/**
+ * Reasoning summary paragraphs, in order, from a completed reasoning item.
+ *
+ * Codex streams these as `summaryTextDelta` while thinking and then repeats the
+ * finished text here, so this is the authoritative version that replaces
+ * whatever the deltas accumulated.
+ */
+export function codexReasoningSummaryParts(item: CodexLifecycleItem): ReadonlyArray<string> {
+  if (item.type !== "reasoning") {
+    return [];
+  }
+  const parts = item.summary ?? item.content ?? [];
+  return parts.filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+}
+
 function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
   const itemRecord = item as Record<string, unknown>;
   const action = itemRecord.action as Record<string, unknown> | undefined;
@@ -474,6 +541,7 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
+  const outcome = itemOutcome(item);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -489,6 +557,7 @@ function mapItemLifecycle(
       ...(status ? { status } : {}),
       ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
+      ...outcome,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };

@@ -2442,6 +2442,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: itemStatus,
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          // The SDK reports failure via `is_error` rather than an exit status,
+          // so `exitCode` stays absent here and the UI falls back to `status`.
+          ...(toolResult.text.length > 0 ? { output: toolResult.text } : {}),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {

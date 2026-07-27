@@ -660,6 +660,8 @@ describe("workEntryIndicatesToolFailure", () => {
       }),
     ).toBe(false);
     expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+    // Not neutral: neutral rows get filtered out of the timeline, and a tool
+    // that is still running is precisely the row worth showing.
     expect(
       workEntryIndicatesToolNeutralStatus({
         ...base,
@@ -667,7 +669,7 @@ describe("workEntryIndicatesToolFailure", () => {
         toolLifecycleStatus: "inProgress",
         detail: "…",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       workEntryIndicatesToolNeutralStatus({
         ...base,
@@ -691,24 +693,115 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
+  it("folds a tool's start into its completion and keeps the start's position", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
         summary: "Tool call complete",
         kind: "tool.completed",
+        payload: { itemId: "item-1", itemType: "command_execution" },
       }),
       makeActivity({
         id: "tool-start",
         createdAt: "2026-02-23T00:00:02.000Z",
         summary: "Tool call",
         kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
       }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    // One row, anchored where the work started rather than where it finished —
+    // the row exists for the whole time the tool is running.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("tool-start");
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:02.000Z");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("keeps a still-running tool as its own in-progress entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Tool call",
+        kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolLifecycleStatus).toBe("inProgress");
+  });
+
+  it("does not merge concurrent tool calls that interleave", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "start-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-a", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "start-b",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-b", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "complete-a",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: { itemId: "item-a", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "complete-b",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: { itemId: "item-b", itemType: "command_execution" },
+      }),
+    ];
+
+    // Two calls, not four rows and not one: the completions are not adjacent to
+    // their starts, so an adjacency-only merge would get this wrong.
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["start-a", "start-b"]);
+  });
+
+  it("carries captured output and exit code onto the merged entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: {
+          itemId: "item-1",
+          itemType: "command_execution",
+          output: "boom\n",
+          outputTruncated: true,
+          exitCode: 1,
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.output).toBe("boom");
+    expect(entry?.outputTruncated).toBe(true);
+    expect(entry?.exitCode).toBe(1);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -1207,7 +1300,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "grep-complete",
+      id: "grep-update",
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",
@@ -1256,7 +1349,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "read-complete",
+      id: "read-update",
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",
@@ -1332,7 +1425,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "legacy-read-complete",
+      id: "legacy-read-update",
       toolTitle: "Read File",
       itemType: "dynamic_tool_call",
     });
@@ -1384,9 +1477,11 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
 
     expect(entries).toHaveLength(1);
+    // Identity and position come from the first event so the row holds still
+    // while the tool runs; the later events contribute their content.
     expect(entries[0]).toMatchObject({
-      id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      id: "tool-update-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
@@ -1445,7 +1540,7 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
 
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-update", "tool-2-update"]);
   });
 
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
@@ -1488,7 +1583,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
 
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+    expect(entries[0]?.id).toBe("z-update-earlier");
   });
 });
 

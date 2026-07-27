@@ -630,7 +630,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
-  it("renders a failure marker for failed tool lifecycle entries", () => {
+  it("reports command failure in the expanded footer, not as a per-row glyph", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -642,17 +642,73 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Glob",
+              label: "Bash",
               tone: "tool",
+              itemType: "command_execution",
+              command: "npm test",
               toolLifecycleStatus: "failed",
-              detail: "No files found",
+              output: "1 test failed",
+              exitCode: 1,
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
+    // The settled row is collapsed by default, so the status lives behind the
+    // disclosure rather than in a column of glyphs down the transcript.
+    expect(markup).toContain("Ran");
+    expect(markup).toContain("npm test");
+    expect(markup).not.toContain('aria-label="Tool call failed"');
+  });
+
+  it("expands a running command by default and shows its captured output", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Bash",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "npm test",
+              toolLifecycleStatus: "inProgress",
+              output: "running suite…",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running");
+    expect(markup).toContain("running suite…");
+    expect(markup).toContain("Shell");
+  });
+
+  it("renders a reasoning entry as prose", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "reasoning-1",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            turnId: null,
+            text: "I'll check the test suite first.",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("I&#x27;ll check the test suite first.");
+    expect(markup).toContain('data-timeline-row-kind="reasoning"');
   });
 });

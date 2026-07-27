@@ -405,7 +405,31 @@ export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Short, single-line preview used as a row label. Adapters put the command
+   * here for `command_execution`, the path for `file_change`, and so on.
+   * Truncated aggressively downstream — never the place to put output.
+   */
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Captured process output, stdout and stderr aggregated in emission order.
+   * Kept separate from `detail` because it is rendered as a block, survives a
+   * far larger truncation budget, and must not be collapsed into the label.
+   */
+  output: Schema.optional(Schema.String),
+  /** True when `output` was clipped, so the UI can say so instead of lying. */
+  outputTruncated: Schema.optional(Schema.Boolean),
+  /** Process exit status. Absent when the provider does not report one. */
+  exitCode: Schema.optional(Schema.Int),
+  /**
+   * Lines added / removed by a `file_change` item, summed across its files.
+   *
+   * Computed by the adapter from the patch it already has, rather than left to
+   * each client to re-parse — the count is the same everywhere, and doing it
+   * once server-side keeps web and mobile from disagreeing about it.
+   */
+  linesAdded: Schema.optional(Schema.Int),
+  linesRemoved: Schema.optional(Schema.Int),
   data: Schema.optional(Schema.Unknown),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;

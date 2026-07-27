@@ -63,6 +63,11 @@ export interface AcpToolCallState {
   readonly status?: "pending" | "inProgress" | "completed" | "failed";
   readonly command?: string;
   readonly detail?: string;
+  /**
+   * Captured tool output, rendered as a block. Kept apart from `detail`, which
+   * is a one-line row label and is truncated hard downstream.
+   */
+  readonly output?: string;
   readonly data: Record<string, unknown>;
 }
 
@@ -375,6 +380,7 @@ function makeToolCallState(
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
+    ...(textContent ? { output: textContent } : {}),
     data,
   };
 }
@@ -410,6 +416,7 @@ export function mergeToolCallState(
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
+  const output = next.output ?? previous?.output;
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),
@@ -417,6 +424,7 @@ export function mergeToolCallState(
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
+    ...(output ? { output } : {}),
     data: {
       ...previous?.data,
       ...next.data,

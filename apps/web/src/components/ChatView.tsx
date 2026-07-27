@@ -82,6 +82,7 @@ import {
   deriveActivePlanState,
   findSidebarProposedPlan,
   findLatestProposedPlan,
+  deriveReasoningEntries,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
@@ -1933,6 +1934,10 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const reasoningEntries = useMemo(
+    () => deriveReasoningEntries(threadActivities),
+    [threadActivities],
+  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -2266,8 +2271,13 @@ function ChatViewContent(props: ChatViewProps) {
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      deriveTimelineEntries(
+        timelineMessages,
+        activeThread?.proposedPlans ?? [],
+        workLogEntries,
+        reasoningEntries,
+      ),
+    [activeThread?.proposedPlans, timelineMessages, workLogEntries, reasoningEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =

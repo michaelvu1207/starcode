@@ -8,6 +8,13 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  activityKindFromItemType,
+  activityPhrase,
+  formatActivityPhrase,
+  summarizeActivityGroup,
+  type ActivityKind,
+} from "@t3tools/shared/activityPhrasing";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -52,7 +59,11 @@ export interface ThreadFeedActivity {
     | "wrench"
     | "zap";
   readonly toolLike: boolean;
-  readonly status: "success" | "failure" | "neutral" | null;
+  readonly status: "success" | "failure" | "neutral" | "running" | null;
+  /** Lines added/removed, when this activity changed files. */
+  readonly diffStat?: { added: number; removed: number } | undefined;
+  /** Shared classification, so a run summarizes identically to the web. */
+  readonly activityKind: ActivityKind;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -74,11 +85,18 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  /** Captured process output, rendered as a block rather than as the label. */
+  output?: string;
+  outputTruncated?: boolean;
+  exitCode?: number;
+  diffStat?: { added: number; removed: number };
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
+  /** The provider's own item id — the join key across lifecycle events. */
+  providerItemId?: string;
 }
 
 type RawThreadFeedEntry =
@@ -89,6 +107,13 @@ type RawThreadFeedEntry =
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
+      readonly type: "reasoning";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly text: string;
+    }
+  | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
@@ -97,7 +122,7 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
-  | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "message" | "reasoning" }>
   | {
       readonly type: "working";
       readonly id: string;
@@ -119,6 +144,8 @@ export type ThreadFeedEntry =
       readonly hiddenCount: number;
       readonly expanded: boolean;
       readonly onlyToolActivities: boolean;
+      /** Sentence describing the run — "Read files, ran commands". */
+      readonly label: string;
     }
   | {
       readonly type: "turn-fold";
@@ -240,9 +267,11 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
+    // Kept, and merged into the tool's later events below — a row has to exist
+    // while the tool runs, not only once it is over. Mirrors the web client.
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "reasoning") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
@@ -333,9 +362,36 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (requestKind) {
     entry.requestKind = requestKind;
   }
+  const providerItemId =
+    typeof payload?.itemId === "string" && payload.itemId.trim().length > 0
+      ? payload.itemId.trim()
+      : null;
+  if (providerItemId) {
+    entry.providerItemId = providerItemId;
+  }
+  if (typeof payload?.output === "string") {
+    const output = payload.output.replace(/\s+$/, "");
+    if (output.length > 0) {
+      entry.output = output;
+    }
+  }
+  if (payload?.outputTruncated === true) {
+    entry.outputTruncated = true;
+  }
+  if (typeof payload?.exitCode === "number" && Number.isInteger(payload.exitCode)) {
+    entry.exitCode = payload.exitCode;
+  }
+  const linesAdded = typeof payload?.linesAdded === "number" ? payload.linesAdded : 0;
+  const linesRemoved = typeof payload?.linesRemoved === "number" ? payload.linesRemoved : 0;
+  if (linesAdded > 0 || linesRemoved > 0) {
+    entry.diffStat = { added: linesAdded, removed: linesRemoved };
+  }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
+  }
+  if (!toolLifecycleStatus && activity.kind === "tool.started") {
+    toolLifecycleStatus = "inProgress";
   }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
@@ -347,35 +403,109 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   return entry;
 }
 
+/**
+ * Fold each tool's lifecycle events into one entry.
+ *
+ * Keyed, not adjacency-based: once `tool.started` is kept, a tool's start and
+ * completion are no longer neighbours whenever calls overlap. Mirrors the web
+ * client's `collapseDerivedWorkLogEntries` — the two must agree or the same
+ * thread reads differently on phone and desktop.
+ */
 function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  const openIndexByKey = new Map<string, number>();
+
+  const closeEntry = (entry: DerivedWorkLogEntry) => {
+    for (const key of collapseKeysForEntry(entry)) {
+      openIndexByKey.delete(key);
+    }
+  };
+
   for (const entry of entries) {
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const keys = collapseKeysForEntry(entry);
+    if (keys.length === 0) {
+      collapsed.push(entry);
       continue;
     }
+
+    let merged = false;
+    for (const key of keys) {
+      const existingIndex = openIndexByKey.get(key);
+      const existing = existingIndex === undefined ? undefined : collapsed[existingIndex];
+      if (
+        existingIndex !== undefined &&
+        existing !== undefined &&
+        shouldCollapseToolLifecycleEntries(existing, entry)
+      ) {
+        const next = mergeDerivedWorkLogEntries(existing, entry);
+        collapsed[existingIndex] = next;
+        merged = true;
+        if (next.activityKind === "tool.completed") {
+          closeEntry(next);
+        }
+        break;
+      }
+    }
+    if (merged) {
+      continue;
+    }
+
+    const index = collapsed.length;
     collapsed.push(entry);
+    if (entry.activityKind === "tool.completed") {
+      continue;
+    }
+    for (const key of keys) {
+      openIndexByKey.set(key, index);
+    }
   }
   return collapsed;
+}
+
+const TOOL_LIFECYCLE_ACTIVITY_KINDS = new Set(["tool.started", "tool.updated", "tool.completed"]);
+
+function isToolLifecycleActivityKind(kind: OrchestrationThreadActivity["kind"]): boolean {
+  return TOOL_LIFECYCLE_ACTIVITY_KINDS.has(kind);
+}
+
+/** Every key an entry can be joined on, strongest first. */
+function collapseKeysForEntry(entry: DerivedWorkLogEntry): string[] {
+  if (!isToolLifecycleActivityKind(entry.activityKind)) {
+    return [];
+  }
+  const keys: string[] = [];
+  if (entry.providerItemId) {
+    keys.push(`item:${entry.providerItemId}`);
+  }
+  if (entry.collapseKey) {
+    keys.push(entry.collapseKey);
+  }
+  return keys;
 }
 
 function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (!isToolLifecycleActivityKind(previous.activityKind)) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (!isToolLifecycleActivityKind(next.activityKind)) {
     return false;
   }
   if (previous.activityKind === "tool.completed") {
     return false;
   }
-  return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
+  if (
+    previous.providerItemId !== undefined &&
+    next.providerItemId !== undefined &&
+    previous.providerItemId !== next.providerItemId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function mergeDerivedWorkLogEntries(
@@ -392,9 +522,23 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const providerItemId = next.providerItemId ?? previous.providerItemId;
+  const output = next.output ?? previous.output;
+  const exitCode = next.exitCode ?? previous.exitCode;
+  const outputTruncated = next.outputTruncated ?? previous.outputTruncated;
+  const diffStat = next.diffStat ?? previous.diffStat;
   return {
     ...previous,
     ...next,
+    // Identity and position come from the first event, so the row holds still
+    // while the tool runs.
+    id: previous.id,
+    createdAt: previous.createdAt,
+    ...(providerItemId ? { providerItemId } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(outputTruncated !== undefined ? { outputTruncated } : {}),
+    ...(diffStat !== undefined ? { diffStat } : {}),
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -499,6 +643,11 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
   if (!workLogEntryIsToolLike(entry)) {
     return null;
   }
+  // Neutral rows are filtered out of the feed, and a tool that is still running
+  // has not finished with nothing to say — it is the row worth showing.
+  if (entry.toolLifecycleStatus === "inProgress") {
+    return "running";
+  }
   if (workEntryIndicatesToolFailure(entry)) {
     return "failure";
   }
@@ -575,7 +724,34 @@ function capitalizePhrase(value: string): string {
   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
 }
 
+/**
+ * Row heading — "Ran npm test", "Reading README.md".
+ *
+ * Wording comes from the shared phrasing module so phone and desktop describe
+ * the same event with the same words. Entries with no verb in the vocabulary
+ * (warnings, approvals, subagent progress) keep their own label, which already
+ * reads as a sentence.
+ */
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  const kind = activityKindFromItemType({
+    itemType: workEntry.itemType,
+    requestKind: workEntry.requestKind,
+    hasCommand: (workEntry.command?.trim().length ?? 0) > 0,
+    hasChangedFiles: (workEntry.changedFiles?.length ?? 0) > 0,
+  });
+  if (kind !== "other") {
+    const phase = workEntry.toolLifecycleStatus === "inProgress" ? "running" : "settled";
+    const phrase = activityPhrase({
+      kind,
+      phase,
+      ...(workEntry.toolLifecycleStatus === "stopped" ? { stopped: true } : {}),
+    });
+    // Mobile renders the target on its own line below the heading, so a phrase
+    // that already carries a generic target ("Ran command") would repeat what
+    // the next line says more precisely. Fall back to the bare verb whenever
+    // there is a detail line to carry the target.
+    return workEntryPreview(workEntry) ? phrase.verb : formatActivityPhrase(phrase);
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1179,10 +1355,30 @@ function appendPresentedFeedEntry(
 
   const groupId = entry.id;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
 
-  for (const activity of visibleActivities) {
+  // Summary first, then the lines it stands for — same order and same wording
+  // as the web timeline.
+  result.push({
+    type: "work-toggle",
+    id: `work-toggle:${groupId}`,
+    createdAt: entry.createdAt,
+    turnId: entry.turnId,
+    groupId,
+    hiddenCount: activities.length,
+    expanded,
+    onlyToolActivities: activities.every((activity) => activity.toolLike),
+    label: summarizeActivityGroup({
+      members: activities.map((activity) => ({
+        kind: activity.activityKind,
+        phase: activity.status === "running" ? "running" : "settled",
+      })),
+    }),
+  });
+
+  if (!expanded) {
+    return;
+  }
+  for (const activity of activities) {
     result.push({
       type: "activity-group",
       id: activity.id,
@@ -1191,16 +1387,6 @@ function appendPresentedFeedEntry(
       activities: [activity],
     });
   }
-  result.push({
-    type: "work-toggle",
-    id: `work-toggle:${groupId}`,
-    createdAt: entry.createdAt,
-    turnId: entry.turnId,
-    groupId,
-    hiddenCount,
-    expanded,
-    onlyToolActivities: activities.every((activity) => activity.toolLike),
-  });
 }
 
 export function derivePendingApprovals(
@@ -1323,6 +1509,36 @@ export function buildPendingUserInputAnswers(
   return answers;
 }
 
+/**
+ * Reasoning paragraphs as feed entries.
+ *
+ * Rendered as prose rather than as log rows: this is the agent narrating what
+ * it is doing, and it is the only part of the transcript that explains why the
+ * tool calls below it happened.
+ */
+function deriveReasoningFeedEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): RawThreadFeedEntry[] {
+  const entries: RawThreadFeedEntry[] = [];
+  for (const activity of Arr.sort(activities, activityOrder)) {
+    if (activity.kind !== "reasoning") {
+      continue;
+    }
+    const text = asTrimmedString(asRecord(activity.payload)?.text);
+    if (!text) {
+      continue;
+    }
+    entries.push({
+      type: "reasoning",
+      id: activity.id,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      text,
+    });
+  }
+  return entries;
+}
+
 export function buildThreadFeed(
   thread: OrchestrationThread,
   options?: {
@@ -1335,6 +1551,7 @@ export function buildThreadFeed(
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const entries = Arr.sortWith(
     [
+      ...deriveReasoningFeedEntries(thread.activities),
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
         type: "message",
         id: message.id,
@@ -1374,6 +1591,13 @@ export function buildThreadFeed(
                 .join("\n"),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              activityKind: activityKindFromItemType({
+                itemType: entry.itemType,
+                requestKind: entry.requestKind,
+                hasCommand: (entry.command?.trim().length ?? 0) > 0,
+                hasChangedFiles: (entry.changedFiles?.length ?? 0) > 0,
+              }),
+              ...(entry.diffStat ? { diffStat: entry.diffStat } : {}),
             },
           };
         }),
