@@ -113,6 +113,10 @@ import {
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
+  parseMailboxMessageSegments,
+  type MailboxMessageEntry,
+} from "@t3tools/client-runtime/messages";
+import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
   parseReviewCommentMessageSegments,
@@ -602,7 +606,17 @@ function resolveFinalAssistantTextForTurn(
 }
 
 function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+  // An agent-delivered message is a user message carrying an envelope, so the
+  // raw text starts `<mailbox-messages count="1"> Messages sent to this thread
+  // …` — boilerplate identical for every such message, which is the worst
+  // possible jump label and the screen-reader label too. Take what the sender
+  // actually said instead.
+  const source = text ?? "";
+  const segments = parseMailboxMessageSegments(source);
+  const spoken = segments
+    .map((segment) => (segment.kind === "mailbox" ? segment.entry.body : segment.text))
+    .join(" ");
+  const compact = (spoken.length > 0 ? spoken : source).replace(/\s+/g, " ").trim();
   return compact.length > 0 ? compact : null;
 }
 
@@ -1625,6 +1639,32 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     );
   };
 
+  const mailboxSegments = parseMailboxMessageSegments(props.text);
+  if (mailboxSegments.some((segment) => segment.kind === "mailbox")) {
+    return (
+      <div className="space-y-3 text-sm leading-relaxed text-foreground">
+        {mailboxSegments.map((segment) =>
+          segment.kind === "text" ? (
+            segment.text.trim().length > 0 ? (
+              <div key={segment.id} className="wrap-break-word">
+                <ChatMarkdown
+                  text={segment.text.trim()}
+                  cwd={props.markdownCwd}
+                  threadRef={ctx.threadRef ?? undefined}
+                  skills={props.skills}
+                  className="text-foreground"
+                  lineBreaks
+                />
+              </div>
+            ) : null
+          ) : (
+            <UserMessageMailboxCard key={segment.id} entry={segment.entry} />
+          ),
+        )}
+      </div>
+    );
+  }
+
   const reviewCommentSegments = parseReviewCommentMessageSegments(props.text);
   if (reviewCommentSegments.some((segment) => segment.kind === "review-comment")) {
     return (
@@ -1756,6 +1796,43 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     />
   );
 });
+
+/**
+ * An agent's message, marked as one.
+ *
+ * The whole reason this is a card rather than text: it arrives in the transcript
+ * wearing the user role, in the same bubble as everything the operator typed,
+ * because immediate delivery makes it the text of the turn it started. Saying
+ * who sent it in prose was the cheap fix and it works for readers with no
+ * parser; showing it as visibly not-yours is the honest one.
+ */
+function UserMessageMailboxCard({ entry }: { entry: MailboxMessageEntry }) {
+  const ctx = use(TimelineRowCtx);
+  const from = [entry.fromThread, entry.fromMachine].filter(Boolean).join(" · ");
+
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed border-border/70 bg-background/70 p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-xs font-medium text-foreground">
+          {from.length > 0 ? from : "Another agent"}
+        </div>
+        {entry.sentAt !== null && (
+          <div className="text-[11px] text-muted-foreground">{entry.sentAt}</div>
+        )}
+      </div>
+      <div className="wrap-break-word">
+        <ChatMarkdown
+          text={entry.body}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          skills={ctx.skills}
+          className="text-foreground"
+          lineBreaks
+        />
+      </div>
+    </div>
+  );
+}
 
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
   const ctx = use(TimelineRowCtx);

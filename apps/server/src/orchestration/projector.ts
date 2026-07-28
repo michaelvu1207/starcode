@@ -455,6 +455,7 @@ export function projectEvent(
           {
             id: payload.messageId,
             role: payload.role,
+            authoredBy: payload.authoredBy,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,

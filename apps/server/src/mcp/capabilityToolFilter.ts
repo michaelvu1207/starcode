@@ -33,10 +33,12 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  * each one needs. Declared here rather than inline so the list a session is
  * shown and the list its handlers enforce cannot drift apart.
  *
- * Note what is deliberately absent: `peer_thread_send`. Leaving a message in
- * another thread's mailbox is available to every session by design, so hiding
- * it would remove the one federation write ordinary agents are meant to have.
- * Only the two tools that spend another machine's turn are gated.
+ * Note what is deliberately absent: `peer_thread_send`. Reaching a thread that
+ * already exists is available to every session by design, so hiding it would
+ * remove the one federation write ordinary agents are meant to have — and it is
+ * the only one they need, now that it delivers rather than queues. What stays
+ * gated is creating a thread that did not exist, which is the write no worker
+ * has a reason to make on another machine.
  *
  * `project_file_thread` is absent for the same reason, and it is the clearest
  * case of why this list is about *visibility* rather than about writes: the
@@ -67,7 +69,6 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
 export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.McpCapability> =
   new Map([
     ["peer_thread_create", "peers-operate"],
-    ["peer_thread_dispatch", "peers-operate"],
     // Same split on the feature map: reading it helps every agent orient,
     // writing it is the orchestrator's alone. `feature_map_list` is absent for
     // exactly the reason `peer_thread_send` is.

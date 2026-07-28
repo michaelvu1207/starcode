@@ -702,12 +702,17 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                // A DPoP token is bound to a proof key and refreshable, so it
+                // stays short. A bearer minted here is a machine credential —
+                // the peer-registration path lands exactly here — and nothing
+                // refreshes it, so it gets the machine lifetime rather than the
+                // browser default.
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
                     }
-                  : {}),
+                  : { ttl: SessionStore.MACHINE_SESSION_TTL }),
                 client: {
                   ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),
@@ -820,7 +825,11 @@ export const make = Effect.gen(function* () {
           ...(input?.label ? { label: input.label } : {}),
           deviceType: "bot",
         },
-        ...(input?.ttl ? { ttl: input.ttl } : {}),
+        // `deviceType: "bot"` is the whole argument: this is the token a
+        // machine holds, minted by `t3 auth session issue` and pasted into a
+        // peer registration. An explicit ttl still wins for a caller that wants
+        // a short-lived one.
+        ttl: input?.ttl ?? SessionStore.MACHINE_SESSION_TTL,
       })
       .pipe(
         Effect.map(

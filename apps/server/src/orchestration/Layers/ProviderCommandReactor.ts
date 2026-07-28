@@ -803,9 +803,23 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    /**
+     * A thread's title and branch are generated from its first user message, and
+     * an agent-delivered message wears the user role like any other. Without
+     * this, the first thing said to a thread nobody had typed into yet names it
+     * — so a thread would be titled from another agent's words, and the titler
+     * would be handed text it fetched from a stranger under the header "User
+     * message:".
+     *
+     * Read from the message rather than sniffed out of its text. Both wear the
+     * `user` role — to the provider they are the same kind of input — so
+     * `authoredBy` is the only thing that distinguishes them, and it is set by
+     * the writer that delivered the message rather than inferred downstream.
+     */
+    const isAgentDeliveredMessage = message.authoredBy === "agent";
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+    if (isFirstUserMessageTurn && !isAgentDeliveredMessage) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -834,16 +848,61 @@ const make = Effect.gen(function* () {
       }
     }
 
+    /**
+     * A turn that carried an agent's message and then failed has destroyed that
+     * message, and the sender was told it was delivered long before this — the
+     * provider call is forked, so `peer_thread_send` returned the moment the
+     * command was accepted.
+     *
+     * The window is small but real: a Codex thread cannot accept a same-turn
+     * steer while it is running `/review` or a manual `/compact` and rejects the
+     * turn outright. Putting the message back in the mailbox turns that from a
+     * lost instruction into a late one — it rides the thread's next turn, which
+     * is exactly where it would have gone had the sender asked to queue it.
+     *
+     * The text re-queued is the rendered envelope rather than the original body,
+     * because that is all this layer has. Delivering it later therefore nests one
+     * envelope inside another, which is ugly and harmless: the inner tags are
+     * escaped on the way out and the provenance line survives as prose.
+     */
+    const requeueAgentMessageOnFailure = () =>
+      isAgentDeliveredMessage
+        ? threadMailbox
+            .enqueue({
+              threadId: event.payload.threadId,
+              message: message.text,
+              origin: {
+                environmentId: null,
+                environmentLabel: null,
+                threadId: null,
+                threadTitle: null,
+              },
+              sentAt: event.payload.createdAt,
+            })
+            .pipe(
+              Effect.asVoid,
+              Effect.catchCause((cause) =>
+                Effect.logWarning("could not requeue an undelivered agent message", {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            )
+        : Effect.void;
+
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
-        threadId: event.payload.threadId,
-        detail,
-        createdAt: event.payload.createdAt,
-      }).pipe(
+      return requeueAgentMessageOnFailure().pipe(
+        Effect.andThen(
+          setThreadSessionErrorOnTurnStartFailure({
+            threadId: event.payload.threadId,
+            detail,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
         Effect.flatMap(() =>
           appendProviderFailureActivity({
             threadId: event.payload.threadId,

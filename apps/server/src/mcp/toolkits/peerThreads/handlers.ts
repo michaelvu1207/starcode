@@ -51,7 +51,7 @@ const requireOperateCapability = (operation: PeerFederationOperation) =>
             operation,
             reason: "capability_unavailable",
             detail:
-              "Only the designated workbench master thread may create or interrupt threads. Use peer_thread_send to leave a message instead.",
+              "Only the designated workbench master thread may create threads on other machines. Use peer_thread_send to reach a thread that already exists.",
           }),
     ),
   );
@@ -153,7 +153,24 @@ const resolveOrigin = (invocation: McpInvocationContext.McpInvocationScope) =>
 const handlers = {
   peers_list: () =>
     Effect.gen(function* () {
-      yield* requirePeerCapability("list");
+      const invocation = yield* requirePeerCapability("list");
+      /**
+       * The SSH login is withheld from ordinary sessions.
+       *
+       * Everything else this toolkit exposes is bounded by the toolkit: a worker
+       * can read a peer thread and send it a message, and cannot do anything
+       * else to that machine. `ssh user@host` is not bounded by anything — it is
+       * a shell, on a box, as a user who can run the agent stack. Handing that to
+       * every session while carefully gating `peer_thread_create` behind
+       * `peers-operate` would make the gate decorative, since the cheaper way
+       * around it was two fields down in the same response.
+       *
+       * It is a withholding rather than a refusal: the connection still lists,
+       * with its name and URL, because those are what the other tools take. Only
+       * the login is absent, and only for sessions that were not trusted with
+       * operating on other machines in the first place.
+       */
+      const mayReachMachines = invocation.capabilities.has("peers-operate");
       const registry = yield* PeerRegistry;
       const peers = yield* registry.list.pipe(
         Effect.catchCause(
@@ -171,8 +188,8 @@ const handlers = {
             name: peer.name,
             label: peer.label,
             baseUrl: peer.baseUrl,
-            sshHost: sshHostFromBaseUrl(peer.baseUrl),
-            sshUser: peer.sshUser,
+            sshHost: mayReachMachines ? sshHostFromBaseUrl(peer.baseUrl) : null,
+            sshUser: mayReachMachines ? peer.sshUser : null,
             credentialClass: peer.credentialClass,
             environmentId: peer.environmentId,
           }))
@@ -233,6 +250,7 @@ const handlers = {
         ...(input.peer === undefined ? {} : { peer: input.peer }),
         threadId: input.threadId,
         message: input.message,
+        ...(input.queue === undefined ? {} : { queue: input.queue }),
         origin,
       });
     }),
@@ -265,16 +283,6 @@ const handlers = {
         ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
         ...(input.interactionMode === undefined ? {} : { interactionMode: input.interactionMode }),
-      });
-    }),
-  peer_thread_dispatch: (input) =>
-    Effect.gen(function* () {
-      yield* requireOperateCapability("dispatch");
-      const writer = yield* PeerThreadWriter.PeerThreadWriter;
-      return yield* writer.dispatchThread({
-        peer: input.peer,
-        threadId: input.threadId,
-        message: input.message,
       });
     }),
 } satisfies Parameters<typeof PeerThreadsToolkit.toLayer>[0];

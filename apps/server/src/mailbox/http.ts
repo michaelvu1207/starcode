@@ -2,10 +2,16 @@
  * Mailbox HTTP routes.
  *
  * `send` carries `orchestration:operate` rather than a read scope: leaving text
- * that a thread will act on next turn is an operation on that thread. It is
- * deliberately *not* routed through `/api/orchestration/dispatch`, because
- * every command that endpoint accepts which carries user text also starts a
- * turn, and not starting one is the entire point.
+ * that a thread will act on is an operation on that thread. It is deliberately
+ * *not* routed through `/api/orchestration/dispatch`, because every command that
+ * endpoint accepts which carries user text also starts a turn.
+ *
+ * That used to be the whole point, and since 07-28 it is only half of it.
+ * `peer_thread_send` now delivers immediately by default and does go through the
+ * dispatch route; this one is what it falls back to, and what `queue: true` asks
+ * for outright. So the route is no longer "the way messages arrive" — it is the
+ * way a message arrives *without* costing the recipient a turn, which is still a
+ * thing the dispatch endpoint cannot express.
  *
  * @module MailboxHttp
  */

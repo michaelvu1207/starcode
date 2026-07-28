@@ -2,7 +2,7 @@
 
 Date: 2026-07-24. Source: `~/Documents/Programming/agent-hub/t3code` @ `hub` (upstream `41a430a88`).
 
-**This file is a delta, not a map.** It contains only findings that are *not* in `NOTES.md`
+**This file is a delta, not a map.** It contains only findings that are _not_ in `NOTES.md`
 (written by t3-fork-build). Read `NOTES.md` first — it is accurate and I independently verified its
 load-bearing claims (multi-connection registry, MCP injection across five adapters, the
 `ProviderRuntimeIngestion` drop, the `CLAUDE_CONFIG_DIR`-not-`HOME` constraint, and the §3.5
@@ -16,7 +16,7 @@ mechanical gaps.
 ## 0. One correction to NOTES.md
 
 **NOTES.md line 75** cites `threadLastActivityAt` at `apps/web/src/components/Sidebar.snooze.ts:7`.
-That file is snooze *preset* math (evening/tomorrow/next-week boundaries) and does not contain the
+That file is snooze _preset_ math (evening/tomorrow/next-week boundaries) and does not contain the
 function. The canonical definition is:
 
 - `threadLastActivityAt(shell)` — **`packages/client-runtime/src/state/threadSettled.ts:7`**
@@ -43,22 +43,22 @@ History: 2117 commits, 2026-02-07 → 2026-07-24, **~13 commits/day**. The last 
 
 ### 7.1 Churn — hottest files (last 500 commits)
 
-| count | file |
-|---|---|
-| 34 | `apps/web/src/components/ChatView.tsx` |
-| 30 | `pnpm-lock.yaml` |
-| 26 | `apps/web/src/index.css` |
-| 24 | `apps/web/src/components/Sidebar.tsx` |
-| 23 | `apps/server/src/server.test.ts` |
-| 21 | `apps/web/src/components/SidebarV2.tsx` |
-| **20** | **`apps/server/src/ws.ts`** |
-| 19 | `apps/web/src/components/chat/ChatComposer.tsx` |
-| 13 | `apps/web/src/components/settings/SettingsPanels.tsx` |
-| 12 | `apps/web/src/components/Sidebar.logic.ts` |
-| 11 | `packages/contracts/src/settings.ts` |
-| **11** | **`apps/server/src/server.ts`** |
-| 10 | `apps/server/src/provider/Layers/ClaudeProvider.ts` |
-| 9 | `scripts/build-desktop-artifact.ts` |
+| count  | file                                                  |
+| ------ | ----------------------------------------------------- |
+| 34     | `apps/web/src/components/ChatView.tsx`                |
+| 30     | `pnpm-lock.yaml`                                      |
+| 26     | `apps/web/src/index.css`                              |
+| 24     | `apps/web/src/components/Sidebar.tsx`                 |
+| 23     | `apps/server/src/server.test.ts`                      |
+| 21     | `apps/web/src/components/SidebarV2.tsx`               |
+| **20** | **`apps/server/src/ws.ts`**                           |
+| 19     | `apps/web/src/components/chat/ChatComposer.tsx`       |
+| 13     | `apps/web/src/components/settings/SettingsPanels.tsx` |
+| 12     | `apps/web/src/components/Sidebar.logic.ts`            |
+| 11     | `packages/contracts/src/settings.ts`                  |
+| **11** | **`apps/server/src/server.ts`**                       |
+| 10     | `apps/server/src/provider/Layers/ClaudeProvider.ts`   |
+| 9      | `scripts/build-desktop-artifact.ts`                   |
 
 90-day view (747 commits): `ChatView.tsx` 64, `server.test.ts` 53, **`ws.ts` 51**, `Sidebar.tsx` 40,
 **`server.ts` 35**, **`contracts/src/ipc.ts` 32**, `SettingsPanels.tsx` 28,
@@ -68,18 +68,18 @@ Within `apps/web/src` (500-window): `components` **621** vs **`routes` 28**.
 
 ### 7.2 Verdict on the files our three features touch
 
-| file | 500 / 90d | verdict |
-|---|---|---|
-| `apps/server/src/ws.ts` (2150 lines) | 20 / 51 | 🔴 hottest server file — **avoid** |
-| `apps/server/src/server.ts` (503 lines) | 11 / 35 | 🔴 hot, but our diff is one `Layer.provide` line |
-| `apps/server/src/http.ts` (293 lines) | 6 / ~14 | 🟡 moderate |
-| `packages/contracts/src/environmentHttp.ts` | **2** | 🟢 **cold — good for F2** |
-| `packages/contracts/src/settings.ts` | 11 / 23 | 🔴 hot — F3 lands here |
-| `packages/client-runtime/src/**` | 318 (dir) | 🔴 hot in aggregate but **flat** — no file above 7 |
-| `apps/web/src/routes/**` | **28** | 🟢 **cold — good for F1** |
-| `apps/web/src/components/SidebarV2.tsx` | 21 | 🔴 hot — the NOTES.md §1 step-3 refactor lands here |
-| `persistence/Migrations/` (files) | 2 | 🟢 cold at file level |
-| `persistence/Migrations.ts` (registry) | 3 | 🟡 cold count, 100% append-conflict shape |
+| file                                        | 500 / 90d | verdict                                             |
+| ------------------------------------------- | --------- | --------------------------------------------------- |
+| `apps/server/src/ws.ts` (2150 lines)        | 20 / 51   | 🔴 hottest server file — **avoid**                  |
+| `apps/server/src/server.ts` (503 lines)     | 11 / 35   | 🔴 hot, but our diff is one `Layer.provide` line    |
+| `apps/server/src/http.ts` (293 lines)       | 6 / ~14   | 🟡 moderate                                         |
+| `packages/contracts/src/environmentHttp.ts` | **2**     | 🟢 **cold — good for F2**                           |
+| `packages/contracts/src/settings.ts`        | 11 / 23   | 🔴 hot — F3 lands here                              |
+| `packages/client-runtime/src/**`            | 318 (dir) | 🔴 hot in aggregate but **flat** — no file above 7  |
+| `apps/web/src/routes/**`                    | **28**    | 🟢 **cold — good for F1**                           |
+| `apps/web/src/components/SidebarV2.tsx`     | 21        | 🔴 hot — the NOTES.md §1 step-3 refactor lands here |
+| `persistence/Migrations/` (files)           | 2         | 🟢 cold at file level                               |
+| `persistence/Migrations.ts` (registry)      | 3         | 🟡 cold count, 100% append-conflict shape           |
 
 ⚠️ Note the tension with NOTES.md §1 "Smallest additive shape" step 3 (lift the partition block out
 of `SidebarV2.tsx:1362-1420`). That is the right refactor for correctness, but it lands a permanent
@@ -99,21 +99,21 @@ one-line call site behind, rather than restructuring in place.
   `apps/server/src/ws.ts:1108` (`WsRpcGroup.of({...})`, one object literal running to ~line 2080
   inside the repo's hottest file). Plus 25 files in `packages/client-runtime/src` reference
   `WS_METHODS`.
-  **This is the strongest argument for keeping F2 on HTTP.** F3's account-switch *action* is the one
+  **This is the strongest argument for keeping F2 on HTTP.** F3's account-switch _action_ is the one
   place we may be forced into an RPC (NOTES.md §3.4 step 2 recommends exactly that, modelled on
   `WsServerUpdateProviderRpc`); if so, append behind a `// ---- FORK METHODS ----` sentinel and put
-  the handler *body* in a fork-owned module so the in-place `ws.ts` diff is one line.
+  the handler _body_ in a fork-owned module so the in-place `ws.ts` diff is one line.
 - **New SQLite migration** — 🔴 guaranteed conflict; §7.4.
 
 **There is no plugin/extension seam anywhere.** An exhaustive grep for
 `registerRoute|addRoute|registerPlugin|extensionPoint|moduleRegistry|registerHandler|registerMethod`
 across `apps/server/src`, `packages/contracts/src`, and `packages/client-runtime/src` returns exactly
 two files: `provider/Layers/ProviderRegistry.ts` and its test — and that registry is for AI agent
-*providers*, not general extensions. The only genuine seams are:
+_providers_, not general extensions. The only genuine seams are:
 
 1. **`ExecutionEnvironmentCapabilities`** (`packages/contracts/src/environment.ts:40-54`) — every
    field `optionalKey(Boolean)`, missing = unsupported. This is the same mechanism NOTES.md §1 flags
-   as the capability-skew trap, and it is *also* upstream's blessed way to declare fork features so
+   as the capability-skew trap, and it is _also_ upstream's blessed way to declare fork features so
    fork↔upstream clients and servers interoperate. **Declare our features here.**
 2. Effect `Layer` composition at `apps/server/src/server.ts:352-365`.
 
@@ -183,8 +183,11 @@ No protocol version, no compatibility gate, nothing refuses a connection. The on
 - The comparison, `apps/web/src/versionSkew.ts:26-44`:
 
 ```ts
-if (!normalizedClientVersion || !normalizedServerVersion ||
-    normalizedClientVersion === normalizedServerVersion) {
+if (
+  !normalizedClientVersion ||
+  !normalizedServerVersion ||
+  normalizedClientVersion === normalizedServerVersion
+) {
   return null;
 }
 return { clientVersion, serverVersion, hint: "Version mismatch. Try syncing..." };
@@ -215,7 +218,7 @@ places:
 
 **If we keep the package name `t3`, one click on the version-skew banner's "Update server" button
 pulls upstream's npm tarball over our running fork server.** There is no env var or config key to
-disable it — and per §7.5 the banner fires on *any* string difference, including every dev build.
+disable it — and per §7.5 the banner fires on _any_ string difference, including every dev build.
 
 Mitigations, in preference order: (1) rename the npm package and patch all three sites plus
 `apps/server/src/cli/service.ts:58-109` and `apps/server/src/bin.ts:35,43`; or (2) make
@@ -237,7 +240,7 @@ exported, or reusing a prebuilt upstream `app-update.yml`. Kill switch:
 
 One published package: **`t3`** (unscoped), `apps/server/package.json:2`, v`0.0.28`,
 `bin: { "t3": "./dist/bin.mjs" }`. Every other workspace package is `private: true`. Toolchain is
-Vite+ (`vp`), not turbo/nx. Desktop embeds the *workspace* server build, not npm, via
+Vite+ (`vp`), not turbo/nx. Desktop embeds the _workspace_ server build, not npm, via
 `scripts/build-desktop-artifact.ts` (1999 lines, which generates the entire electron-builder config
 at build time — there is no `electron-builder.yml` and no `build` key in `apps/desktop/package.json`).
 
@@ -268,13 +271,13 @@ Versioning: no changesets, no release-please. The git tag is the source of truth
 
 ### 7.8 Generated files — never hand-edit; regenerate on conflict
 
-| file | generator | churn |
-|---|---|---|
-| `apps/web/src/routeTree.gen.ts` | `tanstackRouter()` (`apps/web/vite.config.ts:4,94`) | 2/500 |
-| `packages/effect-codex-app-server/src/_generated/*.gen.ts` | its `scripts/generate.ts` | **16/500 — regenerate, don't merge** |
-| `packages/effect-acp/src/_generated/*.gen.ts` | `packages/effect-acp/scripts/generate.ts` | 2/500 |
-| `apps/desktop/src/preview/AnnotationStyles.generated.ts` | `apps/desktop/scripts/build-preview-annotation-css.mjs` | — |
-| `assets/{dev,nightly,prod}/*` | `scripts/export-brand-icons.ts` (`vp run icons:export`) | — |
+| file                                                       | generator                                               | churn                                |
+| ---------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |
+| `apps/web/src/routeTree.gen.ts`                            | `tanstackRouter()` (`apps/web/vite.config.ts:4,94`)     | 2/500                                |
+| `packages/effect-codex-app-server/src/_generated/*.gen.ts` | its `scripts/generate.ts`                               | **16/500 — regenerate, don't merge** |
+| `packages/effect-acp/src/_generated/*.gen.ts`              | `packages/effect-acp/scripts/generate.ts`               | 2/500                                |
+| `apps/desktop/src/preview/AnnotationStyles.generated.ts`   | `apps/desktop/scripts/build-preview-annotation-css.mjs` | —                                    |
+| `assets/{dev,nightly,prod}/*`                              | `scripts/export-brand-icons.ts` (`vp run icons:export`) | —                                    |
 
 Both `_generated` dirs are produced from upstream JSON Schema **fetched over HTTP** at generate time
 (`packages/effect-acp/scripts/generate.ts:14,34-41`), so regeneration requires network.
@@ -309,9 +312,13 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
       Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
         yield* annotateEnvironmentRequest(args.endpoint.name);
         yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-        return yield* projectionSnapshotQuery.getShellSnapshot().pipe(
-          Effect.catch((cause) => failEnvironmentInternal("orchestration_snapshot_failed", cause)),
-        );
+        return yield* projectionSnapshotQuery
+          .getShellSnapshot()
+          .pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_snapshot_failed", cause),
+            ),
+          );
       }),
     );
   }),
@@ -356,7 +363,7 @@ cursor is `(created_at, thread_id)`, matching the existing index
 ## 9. Mechanics of per-thread Claude HOME pinning
 
 NOTES.md §3.5 identifies the landmine and recommends option (a) — one instance per account. If that
-holds, this section is moot and F3 stays cheap. If we ever want a home pinned *per thread*, here is
+holds, this section is moot and F3 stays cheap. If we ever want a home pinned _per thread_, here is
 the exact work, because it is more invasive than it looks.
 
 Claude's env is frozen at **adapter construction**, not per session: `makeClaudeAdapter`
@@ -414,11 +421,11 @@ peer registry can be a config file of `{ label, baseUrl, token }`.
 
 ## 11. Risk framing for the three features
 
-| Feature | Risk | Why |
-|---|---|---|
-| **F1 dashboard** | 🟢 Low | Runtime spine exists; `apps/web/src/routes/**` is the coldest dir (28/500). Watch: the `SidebarV2.tsx` refactor lands in a 21/500 file (§7.2), and activity sort has no index (§0). |
-| **F2 federation** | 🟡 Medium | Cheap on HTTP + the existing `t3-code` MCP server. Becomes expensive the moment it needs a WS RPC method (§7.3). |
-| **F3 accounts/usage** | 🔴 High | The §3.5 landmine must be settled first; per-thread pinning has two hidden cache keys (§9); `contracts/src/settings.ts` is hot (23/90d); and the account-*action* path likely forces an RPC. |
+| Feature               | Risk      | Why                                                                                                                                                                                          |
+| --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **F1 dashboard**      | 🟢 Low    | Runtime spine exists; `apps/web/src/routes/**` is the coldest dir (28/500). Watch: the `SidebarV2.tsx` refactor lands in a 21/500 file (§7.2), and activity sort has no index (§0).          |
+| **F2 federation**     | 🟡 Medium | Cheap on HTTP + the existing `t3-code` MCP server. Becomes expensive the moment it needs a WS RPC method (§7.3).                                                                             |
+| **F3 accounts/usage** | 🔴 High   | The §3.5 landmine must be settled first; per-thread pinning has two hidden cache keys (§9); `contracts/src/settings.ts` is hot (23/90d); and the account-_action_ path likely forces an RPC. |
 
 **Top three fork-level risks, independent of feature:**
 

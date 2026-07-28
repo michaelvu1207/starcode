@@ -42,6 +42,19 @@ export const MAILBOX_MESSAGE_MAX_CHARS = 4_000;
 export const MAILBOX_PENDING_MAX = 25;
 
 /**
+ * The opening tag of the envelope agent-to-agent messages arrive in.
+ *
+ * Lives in contracts rather than beside the renderer because it is read far
+ * from where it is written. An immediately-delivered message is persisted as an
+ * ordinary user message, so anything deciding how to treat a stored message —
+ * whether to generate a thread title from it, whether it should spend the
+ * operator's snooze — has to be able to tell that an agent wrote it, and the
+ * event carries no authorship field to ask. Until it does, this prefix is the
+ * marker, and every reader has to agree on it exactly.
+ */
+export const MAILBOX_ENVELOPE_PREFIX = "<mailbox-messages";
+
+/**
  * Where a mailbox message came from. Every field is nullable because a sender
  * on an older or differently-configured server may not know its own label, and
  * a missing attribution must degrade to "unknown sender" rather than reject the

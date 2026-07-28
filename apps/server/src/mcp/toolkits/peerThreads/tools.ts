@@ -2,8 +2,6 @@ import {
   PeerFederationError,
   PeerThreadCreateInput,
   PeerThreadCreateResult,
-  PeerThreadDispatchInput,
-  PeerThreadDispatchResult,
   PeerThreadReadInput,
   PeerThreadReadResult,
   PeerThreadSendInput,
@@ -79,29 +77,29 @@ export const PeerThreadReadTool = peerReadTool(
 );
 
 /**
- * Writes are annotated honestly rather than uniformly. `send` is idempotent-ish
- * chatter that costs the recipient nothing until it turns anyway; `create` and
- * `dispatch` spend the recipient's money and take its attention, and a client
- * that decides whether to confirm a tool call from these annotations should be
- * told the difference.
+ * Every write here spends the recipient's money and takes its attention, so all
+ * three are annotated the same way. `send` was once the exception — it could not
+ * cause a turn, so it cost the recipient nothing until one happened anyway — and
+ * that stopped being true when it began delivering immediately. A client that
+ * decides whether to confirm a tool call from these annotations should be told
+ * what the call actually does now, not what it used to.
  */
-const peerWriteTool = <T extends Tool.Any>(tool: T, destructive: boolean): T =>
+const peerWriteTool = <T extends Tool.Any>(tool: T): T =>
   tool
     .annotate(Tool.Readonly, false)
-    .annotate(Tool.Destructive, destructive)
+    .annotate(Tool.Destructive, true)
     .annotate(Tool.Idempotent, false)
     .annotate(Tool.OpenWorld, true) as T;
 
 export const PeerThreadSendTool = peerWriteTool(
   Tool.make("peer_thread_send", {
     description:
-      "Leave a message in another thread's mailbox. The message is delivered the next time that thread takes a turn — it does NOT wake the thread, interrupt it, or cost it a turn, so a thread that is idle will not see it until something else starts it working. Use this for coordination between agents. Omit peer to message a thread on this machine. A thread cannot message itself.",
+      "Send a message to another agent thread. It arrives the way a message from your operator would: a thread sitting idle starts working on it right away, and a thread that is already working receives it as part of what it is doing. This costs that thread a turn, so send it something worth being interrupted for. Omit peer to message a thread on this machine; a thread cannot message itself. Pass queue=true instead to leave the message waiting for whenever that thread next works — free, but an idle thread may not read it for a long time.",
     parameters: PeerThreadSendInput,
     success: PeerThreadSendResult,
     failure: PeerFederationError,
     dependencies: writeDependencies,
   }).annotate(Tool.Title, "Send a message to a thread"),
-  false,
 );
 
 export const PeerThreadCreateTool = peerWriteTool(
@@ -113,19 +111,6 @@ export const PeerThreadCreateTool = peerWriteTool(
     failure: PeerFederationError,
     dependencies: writeDependencies,
   }).annotate(Tool.Title, "Create a thread on a peer"),
-  true,
-);
-
-export const PeerThreadDispatchTool = peerWriteTool(
-  Tool.make("peer_thread_dispatch", {
-    description:
-      "Send a message to a thread on a peer machine and start a turn on it immediately, interrupting whatever it is doing. This costs that thread a turn. Reserve it for starting and stopping work; for everything else use peer_thread_send, which waits.",
-    parameters: PeerThreadDispatchInput,
-    success: PeerThreadDispatchResult,
-    failure: PeerFederationError,
-    dependencies: writeDependencies,
-  }).annotate(Tool.Title, "Interrupt a thread on a peer"),
-  true,
 );
 
 /**
@@ -137,7 +122,7 @@ export const PeerThreadDispatchTool = peerWriteTool(
 export const PeersListTool = peerReadTool(
   Tool.make("peers_list", {
     description:
-      "List the machines this environment is paired with. Returns each connection's name — the name every other peer_* tool takes — plus its label, base URL, credential class, and the SSH login when one has been recorded. Combine sshUser with sshHost to reach a machine directly (ssh user@host) when you need to inspect it rather than talk to a thread on it. Reads the local registry only, so a machine that is down still appears.",
+      "List the machines this environment is paired with. Returns each connection's name — the name every other peer_* tool takes — plus its label, base URL and credential class. Orchestrator threads additionally get the SSH login: combine sshUser with sshHost to reach a machine directly (ssh user@host) when you need to inspect the box rather than talk to a thread on it. Both are null if this session is not one, which is a statement about this session rather than about the peer. Reads the local registry only, so a machine that is down still appears.",
     parameters: PeersListInput,
     success: PeersListResult,
     failure: PeerFederationError,
@@ -151,5 +136,4 @@ export const PeerThreadsToolkit = Toolkit.make(
   PeerThreadReadTool,
   PeerThreadSendTool,
   PeerThreadCreateTool,
-  PeerThreadDispatchTool,
 );

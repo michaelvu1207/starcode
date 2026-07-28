@@ -18,10 +18,10 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  choosePeerProjectLocation,
-  resolvePeerThreadModelSelection,
-  resolvePeerThreadModes,
-} from "./peerProjectPlacement.ts";
+  chooseProjectLocation,
+  resolveThreadModelSelection,
+  resolveThreadModes,
+} from "./threadPlacement.ts";
 
 const selection = (instanceId: string, model: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make(instanceId),
@@ -61,9 +61,9 @@ const category = (input: {
     },
   }) as ProjectCategoryRecord;
 
-describe("choosePeerProjectLocation", () => {
+describe("chooseProjectLocation", () => {
   it("takes the one bound folder without needing to be told", () => {
-    expect(choosePeerProjectLocation(category({ bindings: ["p-1"] }))).toEqual({
+    expect(chooseProjectLocation(category({ bindings: ["p-1"] }))).toEqual({
       kind: "bound",
       projectId: "p-1",
     });
@@ -73,7 +73,7 @@ describe("choosePeerProjectLocation", () => {
     // The bug: this used to be bindings[0], so p-1 won because the JSON listed
     // it first, and the preference the operator set did nothing.
     expect(
-      choosePeerProjectLocation(
+      chooseProjectLocation(
         category({
           bindings: ["p-1", "p-2"],
           defaults: { preferredProjectId: ProjectId.make("p-2") },
@@ -83,7 +83,7 @@ describe("choosePeerProjectLocation", () => {
   });
 
   it("refuses to guess between several folders when nothing prefers one", () => {
-    expect(choosePeerProjectLocation(category({ bindings: ["p-1", "p-2"] }))).toEqual({
+    expect(chooseProjectLocation(category({ bindings: ["p-1", "p-2"] }))).toEqual({
       kind: "ambiguous",
       projectIds: ["p-1", "p-2"],
     });
@@ -93,7 +93,7 @@ describe("choosePeerProjectLocation", () => {
     // A stale preference would otherwise file work outside the project it was
     // delegated to — silently, since the caller never named a folder.
     expect(
-      choosePeerProjectLocation(
+      chooseProjectLocation(
         category({
           bindings: ["p-1", "p-2"],
           defaults: { preferredProjectId: ProjectId.make("p-gone") },
@@ -104,7 +104,7 @@ describe("choosePeerProjectLocation", () => {
 
   it("still resolves a single binding when the preference is stale", () => {
     expect(
-      choosePeerProjectLocation(
+      chooseProjectLocation(
         category({
           bindings: ["p-1"],
           defaults: { preferredProjectId: ProjectId.make("p-gone") },
@@ -116,14 +116,14 @@ describe("choosePeerProjectLocation", () => {
   it("reports a category with no folder as unbound rather than picking one", () => {
     // Legal — the research project that lives in scratch dirs — but not
     // somewhere a thread can start.
-    expect(choosePeerProjectLocation(category({}))).toEqual({ kind: "unbound" });
+    expect(chooseProjectLocation(category({}))).toEqual({ kind: "unbound" });
   });
 });
 
-describe("resolvePeerThreadModelSelection", () => {
+describe("resolveThreadModelSelection", () => {
   it("lets the project's own default beat the folder's", () => {
     expect(
-      resolvePeerThreadModelSelection({
+      resolveThreadModelSelection({
         locationDefault: selection("claude", "sonnet"),
         categoryDefault: selection("codex", "gpt-5.5"),
         overrides: {},
@@ -133,7 +133,7 @@ describe("resolvePeerThreadModelSelection", () => {
 
   it("falls back to the folder when the project says nothing", () => {
     expect(
-      resolvePeerThreadModelSelection({
+      resolveThreadModelSelection({
         locationDefault: selection("claude", "sonnet"),
         categoryDefault: null,
         overrides: {},
@@ -143,7 +143,7 @@ describe("resolvePeerThreadModelSelection", () => {
 
   it("lets the caller override either half", () => {
     expect(
-      resolvePeerThreadModelSelection({
+      resolveThreadModelSelection({
         locationDefault: selection("claude", "sonnet"),
         categoryDefault: selection("codex", "gpt-5.5"),
         overrides: { model: "claude-fable-5" },
@@ -153,7 +153,7 @@ describe("resolvePeerThreadModelSelection", () => {
 
   it("says nothing rather than half a selection when no layer supplies one", () => {
     expect(
-      resolvePeerThreadModelSelection({
+      resolveThreadModelSelection({
         locationDefault: null,
         categoryDefault: null,
         overrides: { model: "claude-fable-5" },
@@ -163,7 +163,7 @@ describe("resolvePeerThreadModelSelection", () => {
 
   it("is complete once the caller supplies both halves itself", () => {
     expect(
-      resolvePeerThreadModelSelection({
+      resolveThreadModelSelection({
         locationDefault: null,
         categoryDefault: null,
         overrides: { instanceId: "codex", model: "gpt-5.5" },
@@ -172,13 +172,13 @@ describe("resolvePeerThreadModelSelection", () => {
   });
 });
 
-describe("resolvePeerThreadModes", () => {
+describe("resolveThreadModes", () => {
   // The literal, not `DEFAULT_RUNTIME_MODE`: this asserts the policy — a
   // delegated thread gets the same permissions as one the operator starts by
   // hand — and an assertion written against the constant would follow the
   // constant anywhere it moved and prove nothing.
   it("defaults a delegated thread to the app-wide new-thread mode", () => {
-    expect(resolvePeerThreadModes({ overrides: {} })).toEqual({
+    expect(resolveThreadModes({ overrides: {} })).toEqual({
       runtimeMode: "full-access",
       interactionMode: "default",
     });
@@ -186,7 +186,7 @@ describe("resolvePeerThreadModes", () => {
 
   it("takes the project's settings when it has them", () => {
     expect(
-      resolvePeerThreadModes({
+      resolveThreadModes({
         category: category({ defaults: { runtimeMode: "full-access", interactionMode: "plan" } }),
         overrides: {},
       }),
@@ -195,7 +195,7 @@ describe("resolvePeerThreadModes", () => {
 
   it("lets the caller override the project", () => {
     expect(
-      resolvePeerThreadModes({
+      resolveThreadModes({
         category: category({ defaults: { runtimeMode: "full-access", interactionMode: "plan" } }),
         overrides: { runtimeMode: "approval-required" },
       }),

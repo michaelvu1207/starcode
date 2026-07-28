@@ -716,7 +716,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      const targetThread = yield* requireThread({
+      /**
+       * Archived rather than merely present. Every other write to a thread
+       * already refuses once it is archived; this one used plain `requireThread`
+       * and so would start — and bill — a turn on a thread the operator had put
+       * away. That was hard to reach while the only senders were the composer
+       * and a master-only dispatch, and stopped being hard the moment agents
+       * could deliver messages: the peer path posts straight to the dispatch
+       * route, where nothing else stands between a stale thread id and a turn.
+       */
+      const targetThread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
@@ -757,6 +766,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.message.messageId,
           role: "user",
+          authoredBy: command.message.authoredBy,
           text: command.message.text,
           attachments: command.message.attachments,
           turnId: null,
@@ -792,6 +802,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // thread can auto-settle again after this burst of work goes stale.
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
+      //
+      // Except when the sender is another agent. That sentence was written when
+      // the only things reaching here were the operator's composer and a
+      // master-only dispatch, so "activity" and "the user re-engaging" were the
+      // same event. Now any thread can deliver a message, and a snooze is the
+      // one piece of thread state that is purely the operator's instruction —
+      // "not now" — rather than a description of the work. Letting an agent
+      // spend it means a thread put away until tomorrow is back in the sidebar
+      // because something else decided to say hello.
+      //
+      // Settled is treated the other way on purpose: waking a settled thread is
+      // the entire point of delivering to it, and unlike a snooze, settled is a
+      // statement about whether the work is live rather than about when the
+      // operator wants to see it again.
+      const isAgentDeliveredMessage = command.message.authoredBy === "agent";
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
       if (targetThread.settledOverride !== null) {
         lifecycleResetEvents.push({
@@ -809,7 +834,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
-      if (targetThread.snoozedUntil != null) {
+      if (targetThread.snoozedUntil != null && !isAgentDeliveredMessage) {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",

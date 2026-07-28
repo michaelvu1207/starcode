@@ -31,7 +31,14 @@ import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 
-export const ThreadToolOperation = Schema.Literals(["create"]);
+/**
+ * `deliver` is not a tool of its own — no MCP tool is named for it. It exists
+ * because `peer_thread_send` now hands its message to a thread on this machine
+ * through the same local writer, and a failure there has to say which operation
+ * it was. Reporting a delivery failure as a failed `create` would send a reader
+ * looking for a thread that was never being created.
+ */
+export const ThreadToolOperation = Schema.Literals(["create", "deliver"]);
 export type ThreadToolOperation = typeof ThreadToolOperation.Type;
 
 export const ThreadToolErrorReason = Schema.Literals([

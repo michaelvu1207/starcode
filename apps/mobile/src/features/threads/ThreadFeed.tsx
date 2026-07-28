@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { parseMailboxMessageSegments } from "@t3tools/client-runtime/messages";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -864,6 +865,25 @@ function renderFeedEntry(
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = message.text.includes("<review_comment");
+    /**
+     * An agent's message wears the `user` role and lands in the same bubble as
+     * everything the operator typed, because immediate delivery makes it the
+     * text of the turn it started. `authoredBy` is the server's own answer to
+     * "who wrote this", so the bubble can say so instead of showing the reader
+     * a wrapper full of tags and leaving them to work it out.
+     */
+    const mailboxSegments =
+      message.authoredBy === "agent" ? parseMailboxMessageSegments(message.text) : [];
+    const mailboxEntry = mailboxSegments.find((segment) => segment.kind === "mailbox");
+    const mailboxSender =
+      mailboxEntry?.kind === "mailbox"
+        ? [mailboxEntry.entry.fromThread, mailboxEntry.entry.fromMachine]
+            .filter(Boolean)
+            .join(" · ")
+        : null;
+    // Falls back to the raw text when the envelope does not parse, which is the
+    // safe direction: showing the wrapper beats showing nothing.
+    const messageText = mailboxEntry?.kind === "mailbox" ? mailboxEntry.entry.body : message.text;
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
@@ -889,9 +909,14 @@ function renderFeedEntry(
               ...(hasReviewCommentContext ? { width: props.reviewCommentBubbleWidth } : null),
             }}
           >
-            {message.text.trim().length > 0 ? (
+            {mailboxSender !== null ? (
+              <Text className="font-t3-medium text-[11px] uppercase tracking-wide text-white/70">
+                {mailboxSender}
+              </Text>
+            ) : null}
+            {messageText.trim().length > 0 ? (
               <UserMessageContent
-                text={message.text}
+                text={messageText}
                 markdownStyles={styles}
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
@@ -914,10 +939,10 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
-            {message.text.trim().length > 0 ? (
+            {messageText.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
-                text={message.text}
+                text={messageText}
                 tintColor={iconSubtleColor}
                 buttonSize={28}
                 iconSize={13}

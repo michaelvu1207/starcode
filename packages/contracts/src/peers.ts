@@ -11,8 +11,8 @@
  * looking at the registry instead of by auditing every caller. A `read` peer
  * carries `orchestration:read` and can only ever be read from. An `operate`
  * peer additionally carries `orchestration:operate`, which is what lets this
- * environment create threads, deliver mailbox messages, and interrupt work on
- * the peer. Registration refuses anything broader than its class requires, so a
+ * environment create threads on the peer and deliver messages to the ones
+ * already running there. Registration refuses anything broader than its class requires, so a
  * mis-issued administrative token cannot quietly become a federation credential.
  *
  * @module Peers
@@ -29,6 +29,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { MAILBOX_MESSAGE_MAX_CHARS } from "./mailbox.ts";
 import {
   ModelSelection,
   OrchestrationThreadPlanSummary,
@@ -384,6 +385,11 @@ export type PeerThreadReadInput = typeof PeerThreadReadInput.Type;
 /**
  * Message body accepted by `peer_thread_send`. Kept as its own schema so the
  * MCP tool and the HTTP route that carries it stay in step.
+ *
+ * The length cap is stated here as well as on `ThreadMailboxSendInput` rather
+ * than only there. A message now reaches the recipient as the text of a turn
+ * without necessarily passing through the mailbox at all, so a cap that lived
+ * only on the queue path would bound nothing on the path most messages take.
  */
 export const PeerThreadSendInput = Schema.Struct({
   peer: Schema.optional(
@@ -395,19 +401,41 @@ export const PeerThreadSendInput = Schema.Struct({
   threadId: ThreadId.annotate({
     description: "Thread to deliver to, as reported by peer_threads_list.",
   }),
-  message: TrimmedNonEmptyString.annotate({
+  message: TrimmedNonEmptyString.check(Schema.isMaxLength(MAILBOX_MESSAGE_MAX_CHARS)).annotate({
     description:
-      "Message to leave in the thread's mailbox. It is delivered the next time that thread takes a turn; it never starts one.",
+      "Message to deliver. It reaches the thread the way a message from your operator would: an idle thread starts a turn on it, and a thread that is already working receives it as part of the turn it is running.",
   }),
+  queue: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Set true to leave the message waiting instead of delivering it now. The thread picks it up whenever it next takes a turn for its own reasons, so it costs the recipient nothing and never interrupts. Use this for anything the thread does not need to act on immediately.",
+    }),
+  ),
 });
 export type PeerThreadSendInput = typeof PeerThreadSendInput.Type;
+
+/**
+ * How a send actually reached the thread.
+ *
+ * Reported rather than assumed because the two outcomes are genuinely different
+ * to a sender: `now` means the thread is already working on it, `queued` means
+ * nothing will happen until that thread turns for some other reason. A sender
+ * that treats the second as the first waits forever for an answer.
+ */
+export const PeerThreadSendDelivery = Schema.Literals(["now", "queued"]);
+export type PeerThreadSendDelivery = typeof PeerThreadSendDelivery.Type;
 
 export const PeerThreadSendResult = Schema.Struct({
   peer: Schema.NullOr(PeerName),
   threadId: ThreadId,
-  /** Undelivered messages waiting on the target thread, including this one. */
+  delivery: PeerThreadSendDelivery,
+  /**
+   * Undelivered messages waiting on the target thread, including this one.
+   * Zero when the message was delivered immediately, since nothing is waiting.
+   */
   pending: NonNegativeInt,
-  deliveredAt: Schema.Null,
+  /** When the message was handed to the thread, or null when it was queued. */
+  deliveredAt: Schema.NullOr(IsoDateTime),
 });
 export type PeerThreadSendResult = typeof PeerThreadSendResult.Type;
 
@@ -481,29 +509,7 @@ export const PeerThreadCreateResult = Schema.Struct({
 });
 export type PeerThreadCreateResult = typeof PeerThreadCreateResult.Type;
 
-export const PeerThreadDispatchInput = Schema.Struct({
-  peer: PeerName.annotate({ description: "Registered peer that hosts the thread." }),
-  threadId: ThreadId.annotate({ description: "Thread to interrupt." }),
-  message: TrimmedNonEmptyString.annotate({
-    description: "Message to send. This starts a turn immediately, interrupting the thread.",
-  }),
-});
-export type PeerThreadDispatchInput = typeof PeerThreadDispatchInput.Type;
-
-export const PeerThreadDispatchResult = Schema.Struct({
-  peer: PeerName,
-  threadId: ThreadId,
-  dispatched: Schema.Boolean,
-});
-export type PeerThreadDispatchResult = typeof PeerThreadDispatchResult.Type;
-
-export const PeerFederationOperation = Schema.Literals([
-  "list",
-  "read",
-  "send",
-  "create",
-  "dispatch",
-]);
+export const PeerFederationOperation = Schema.Literals(["list", "read", "send", "create"]);
 export type PeerFederationOperation = typeof PeerFederationOperation.Type;
 
 export const PeerFederationReason = Schema.Literals([

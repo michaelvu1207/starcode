@@ -35,6 +35,7 @@ import { ProjectCatalogRegistry } from "../projectCatalog/ProjectCatalogRegistry
 import {
   LOCAL_THREAD_CREATE_PER_TURN_LIMIT,
   LocalThreadWriter,
+  THREAD_WAKE_PER_TURN_LIMIT,
   layer as localThreadWriterLayer,
 } from "./LocalThreadWriter.ts";
 
@@ -340,4 +341,260 @@ describe("LocalThreadWriter.createThread", () => {
     expect(outcome.blocked._tag).toBe("Failure");
     expect(outcome.afterNewTurn._tag).toBe("Success");
   });
+});
+
+describe("delivering a message to a thread on this machine", () => {
+  const TARGET = ThreadId.make("thread-target");
+
+  it("hands the text to the thread as a turn, verbatim", async () => {
+    const { result, dispatched } = await run({}, (writer) =>
+      writer.deliverMessage({
+        callerThreadId: CALLER,
+        threadId: TARGET,
+        text: '<mailbox-messages count="1">…</mailbox-messages>',
+      }),
+    );
+
+    expect(result._tag).toBe("Success");
+    // One command, not the create/turn pair: the thread already exists.
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.type).toBe("thread.turn.start");
+    expect(dispatched[0]?.threadId).toBe(TARGET);
+    // The envelope reaches the thread unchanged. If this ever starts being
+    // rewritten, the trust label the recipient reads is no longer the one the
+    // mailbox wrote.
+    const delivered = dispatched[0] as { message: { text: string; role: string } };
+    expect(delivered.message.text).toBe('<mailbox-messages count="1">…</mailbox-messages>');
+    expect(delivered.message.role).toBe("user");
+  });
+
+  it("stops a sender that keeps waking threads inside one turn", async () => {
+    const { dispatched, layer } = harness({});
+    const outcomes = await Effect.gen(function* () {
+      const writer = yield* LocalThreadWriter;
+      const results: Array<string> = [];
+      for (let index = 0; index <= THREAD_WAKE_PER_TURN_LIMIT; index += 1) {
+        results.push(
+          yield* writer.deliverMessage({
+            callerThreadId: CALLER,
+            threadId: TARGET,
+            text: `message ${index}`,
+          }),
+        );
+      }
+      return results;
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+
+    expect(outcomes.filter((outcome) => outcome === "delivered")).toHaveLength(
+      THREAD_WAKE_PER_TURN_LIMIT,
+    );
+    // Refused as a value rather than an error: the caller queues instead, so a
+    // spent allowance must not read as a broken send.
+    expect(outcomes.at(-1)).toBe("rate_limited");
+    expect(dispatched).toHaveLength(THREAD_WAKE_PER_TURN_LIMIT);
+  });
+
+  it("gives the sender a fresh allowance on its next turn", async () => {
+    const dispatched: Array<Record<string, unknown>> = [];
+    // The turn key is read from the projection, so a caller cannot name its own
+    // turn — this drives the reset the way the real thing does.
+    let turn = "turn-1";
+    const outcomes = await Effect.gen(function* () {
+      const writer = yield* LocalThreadWriter;
+      const results: Array<string> = [];
+      for (let index = 0; index < THREAD_WAKE_PER_TURN_LIMIT; index += 1) {
+        results.push(
+          yield* writer.deliverMessage({ callerThreadId: CALLER, threadId: TARGET, text: "x" }),
+        );
+      }
+      turn = "turn-2";
+      results.push(
+        yield* writer.deliverMessage({ callerThreadId: CALLER, threadId: TARGET, text: "x" }),
+      );
+      return results;
+    }).pipe(
+      Effect.provide(
+        localThreadWriterLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(OrchestrationEngineService, {
+                dispatch: (command: unknown) => {
+                  dispatched.push(command as Record<string, unknown>);
+                  return Effect.succeed({ sequence: dispatched.length });
+                },
+                streamDomainEvents: Effect.die("unused") as never,
+                latestSequence: Effect.succeed(0),
+              } as never),
+              Layer.succeed(ProjectCatalogRegistry, { list: Effect.succeed([]) } as never),
+              Layer.succeed(ProjectionSnapshotQuery, {
+                getThreadShellById: () =>
+                  Effect.succeed(Option.some({ latestTurn: { turnId: turn } })),
+              } as never),
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(outcomes.at(-1)).toBe("delivered");
+  });
+
+  it("keeps the wake and create budgets apart", async () => {
+    const { layer } = harness({
+      categories: [category({ bindings: ["project-atlas"] })],
+      projects: [projectShell("project-atlas", selection("codex", "gpt-5.5"))],
+    });
+
+    const outcome = await Effect.gen(function* () {
+      const writer = yield* LocalThreadWriter;
+      // Spend the creation budget completely...
+      for (let index = 0; index < LOCAL_THREAD_CREATE_PER_TURN_LIMIT; index += 1) {
+        yield* writer.createThread({
+          callerThreadId: CALLER,
+          project: ProjectCategorySlug.make("atlas"),
+          title: `helper ${index}`,
+          message: "go",
+        });
+      }
+      // ...and confirm the thread can still speak. A shared counter would mute
+      // an orchestrator exactly when it had the most to tell the threads it
+      // just started.
+      return yield* writer.deliverMessage({
+        callerThreadId: CALLER,
+        threadId: TARGET,
+        text: "status?",
+      });
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+
+    expect(outcome).toBe("delivered");
+  });
+});
+
+/**
+ * Threads holding a conversation is the feature, so the thing worth pinning is
+ * that nothing cuts one off. A depth cap used to live here and was removed: its
+ * refusal downgraded the message to the mailbox, where an idle thread would not
+ * read it until something else woke it — the exact defect immediate delivery
+ * exists to remove, fired on the collaboration it was supposed to protect.
+ */
+describe("a conversation between two threads", () => {
+  const chainHarness = () => {
+    const dispatched: Array<Record<string, unknown>> = [];
+    // Delivering to a thread starts a turn on it, and that new turn is what it
+    // answers from. Modelling it matters: the per-turn allowance is scoped to a
+    // turn, so a stub that pinned one turn per thread would make an ordinary
+    // exchange look like one thread shouting six times.
+    const turns = new Map<string, number>();
+    const layer = localThreadWriterLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(OrchestrationEngineService, {
+            dispatch: (command: unknown) => {
+              const typed = command as { type: string; threadId: string };
+              dispatched.push(command as Record<string, unknown>);
+              if (typed.type === "thread.turn.start") {
+                turns.set(typed.threadId, (turns.get(typed.threadId) ?? 0) + 1);
+              }
+              return Effect.succeed({ sequence: dispatched.length });
+            },
+            streamDomainEvents: Effect.die("unused") as never,
+            latestSequence: Effect.succeed(0),
+          } as never),
+          Layer.succeed(ProjectCatalogRegistry, { list: Effect.succeed([]) } as never),
+          Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadShellById: (threadId: string) =>
+              Effect.succeed(
+                Option.some({
+                  latestTurn: { turnId: `${threadId}-turn-${turns.get(threadId) ?? 0}` },
+                }),
+              ),
+          } as never),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+    return { dispatched, layer };
+  };
+
+  it("runs as long as the two threads have something to say", async () => {
+    const { layer } = chainHarness();
+    const a = ThreadId.make("thread-a");
+    const b = ThreadId.make("thread-b");
+
+    const outcomes = await Effect.gen(function* () {
+      const writer = yield* LocalThreadWriter;
+      const results: Array<string> = [];
+      let sender = a;
+      let target = b;
+      // Twenty hops: far past anything a depth cap would have allowed, and an
+      // ordinary length for a review or a debugging session. Each side speaks
+      // once per turn, so no per-turn allowance is touched either.
+      for (let hop = 0; hop < 20; hop += 1) {
+        results.push(
+          yield* writer.deliverMessage({ callerThreadId: sender, threadId: target, text: "ping" }),
+        );
+        [sender, target] = [target, sender];
+      }
+      return results;
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+
+    expect(outcomes.every((outcome) => outcome === "delivered")).toBe(true);
+  });
+
+  it("still refuses a thread that fans out to everyone at once", async () => {
+    const { layer } = chainHarness();
+    const sender = ThreadId.make("thread-a");
+
+    const outcomes = await Effect.gen(function* () {
+      const writer = yield* LocalThreadWriter;
+      const results: Array<string> = [];
+      // Width is the exponential shape and stays bounded: this is what stops a
+      // fan-out from outrunning the operator, and it is untouched by any of the
+      // above.
+      for (let index = 0; index <= THREAD_WAKE_PER_TURN_LIMIT; index += 1) {
+        results.push(
+          yield* writer.deliverMessage({
+            callerThreadId: sender,
+            threadId: ThreadId.make(`thread-target-${index}`),
+            text: "ping",
+          }),
+        );
+      }
+      return results;
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+
+    expect(outcomes.at(-1)).toBe("rate_limited");
+  });
+});
+
+/**
+ * The budget is the sender's, not the target machine's — so a thread cannot
+ * spend it locally and then spend it again on every peer it knows. This is the
+ * one guard left standing, and it was briefly not applied to the remote path at
+ * all, which left the exponential case completely open across machines.
+ */
+it("charges one budget whether the target is local or on a peer", async () => {
+  const { layer } = harness({});
+  const caller = ThreadId.make("thread-caller");
+
+  const outcomes = await Effect.gen(function* () {
+    const writer = yield* LocalThreadWriter;
+    const results: Array<boolean> = [];
+    // Spend most of it locally...
+    for (let index = 0; index < THREAD_WAKE_PER_TURN_LIMIT - 1; index += 1) {
+      yield* writer.deliverMessage({
+        callerThreadId: caller,
+        threadId: ThreadId.make(`thread-local-${index}`),
+        text: "ping",
+      });
+    }
+    // ...and the remainder the way a peer wake does.
+    results.push(yield* writer.chargeWakeAllowance(caller));
+    results.push(yield* writer.chargeWakeAllowance(caller));
+    return results;
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+
+  expect(outcomes).toEqual([true, false]);
 });

@@ -66,15 +66,25 @@ export interface McpSessionRegistryOptions {
  * It also bought very little. The token sits in the process's argv, readable
  * by anything that can run `ps`; anyone reading it there can use it at once,
  * which refreshes `lastUsedAt` and defeats the idle window anyway. What
- * actually bounds exposure is the absolute lifetime below, the per-session
- * capability scope, the tailnet-scoped listener, and `revokeThread` on exit —
- * none of which the idle timer contributes to. Records live in an in-memory
- * Map, so they die with the process regardless.
+ * actually bounds exposure is the per-session capability scope, the
+ * tailnet-scoped listener, and `revokeThread` on exit — none of which the idle
+ * timer contributes to. Records live in an in-memory Map, so they die with the
+ * process regardless.
  *
- * `idleTimeoutMs` stays an option for a caller that genuinely wants it.
+ * The absolute lifetime is off for exactly the same reason, and it took a
+ * second round to see it: the argument above was written about the idle timer
+ * while an eight-hour cap sat on the line below, doing the identical damage on
+ * a slower clock. A thread whose provider session outlives the cap — an
+ * overnight run, a long-lived orchestrator, anything the operator leaves
+ * open — loses every MCP tool it has, permanently, with no error until a call
+ * fails and no way for the agent to recover. `issue` is reached only from
+ * `ProviderService.startSession`, so nothing re-mints until the session itself
+ * restarts. That is not an expiry policy; it is a time bomb on long work.
+ *
+ * Both stay options, for a caller that genuinely wants either.
  */
 const DEFAULT_IDLE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
-const DEFAULT_MAXIMUM_LIFETIME_MS = 8 * 60 * 60 * 1_000;
+const DEFAULT_MAXIMUM_LIFETIME_MS = Number.POSITIVE_INFINITY;
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -193,7 +203,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const expiresAt = issuedAt + maximumLifetimeMs;
+      /**
+       * `Infinity` is the honest in-memory value for "never", but it does not
+       * survive `JSON.stringify` — it serializes to `null`, and this timestamp
+       * is copied onto preview assignments that do cross a wire. Clamping to
+       * the largest safe integer keeps the comparison it feeds (`timestamp <=
+       * expiresAt`) true for the next quarter of a million years while staying
+       * an ordinary number everywhere it is read.
+       */
+      const expiresAt =
+        maximumLifetimeMs === Number.POSITIVE_INFINITY
+          ? Number.MAX_SAFE_INTEGER
+          : issuedAt + maximumLifetimeMs;
       // Read at mint time, not at layer construction, so re-designating a
       // master takes effect on the next session start rather than on the next
       // server restart.

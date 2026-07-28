@@ -225,9 +225,41 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+/**
+ * Who wrote a user message.
+ *
+ * The role says `user` for both, because to the provider they are the same
+ * thing: text that arrived from outside the model. This says which outside.
+ *
+ * It exists because agent-to-agent delivery makes another agent's words a
+ * first-class user message — persisted, replayed, read by the titler, shown in
+ * the transcript — and until now the only way to tell was to look for the
+ * envelope's opening tag in the text. That worked and was a string check
+ * standing in for a fact the event should have carried, in two places that had
+ * to agree about it forever.
+ *
+ * Decoding defaults to `operator` so every message written before this field
+ * existed keeps loading, and means the safe thing: unknown provenance is
+ * treated as the operator's, which is the reading that grants no special
+ * handling rather than the one that silently withholds it.
+ */
+export const OrchestrationMessageAuthor = Schema.Literals(["operator", "agent"]);
+export type OrchestrationMessageAuthor = typeof OrchestrationMessageAuthor.Type;
+
+/**
+ * Optional rather than defaulted-and-required, so the dozens of places that
+ * construct a turn-start or a message-sent payload — the socket handler, history
+ * import, every test fixture — keep compiling unchanged. Absent means the same
+ * thing as `operator`, and only the two writers that deliver between threads
+ * ever set it, which keeps the field's meaning tied to the one path that has
+ * something to say about authorship.
+ */
+const OrchestrationMessageAuthorField = Schema.optional(OrchestrationMessageAuthor);
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
+  authoredBy: OrchestrationMessageAuthorField,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
@@ -746,6 +778,13 @@ export const ThreadTurnStartCommand = Schema.Struct({
   message: Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
+    /**
+     * Set by the server, never by a client. The only callers that pass `agent`
+     * are the two writers that deliver a message from one thread to another,
+     * both of which run in-process; a command arriving over HTTP or the socket
+     * omits it and decodes to `operator`.
+     */
+    authoredBy: OrchestrationMessageAuthorField,
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
@@ -1099,6 +1138,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   role: OrchestrationMessageRole,
+  authoredBy: OrchestrationMessageAuthorField,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),

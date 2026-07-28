@@ -16,12 +16,19 @@ import { LocalThreadWriter } from "../../../threads/LocalThreadWriter.ts";
 import { ThreadsToolkit } from "./tools.ts";
 
 /**
- * The base capability every session holds. There is no operate-level check
- * here, and that absence is the feature: a worker that cannot start its own
- * helper is amputated the same way one that could not leave a mailbox message
- * would be. This check only fires for a credential minted without the base set
- * at all — a shape that should not occur — so it fails loudly rather than
- * quietly starting a thread for a session with no standing.
+ * The base capability every session holds.
+ *
+ * It is spelled `peers` even though this tool never leaves the machine, and that
+ * is not a leftover: the capability answers "may this session act on the thread
+ * graph", and starting a thread here is the same kind of act as messaging one
+ * over there. Splitting it would mean minting a second capability that is
+ * granted to exactly the same sessions, in exactly the same places, forever.
+ *
+ * There is no operate-level check, and that absence is the feature: a worker
+ * that cannot start its own helper is amputated the same way one that could not
+ * message a sibling would be. This check only fires for a credential minted
+ * without the base set at all — a shape that should not occur — so it fails
+ * loudly rather than quietly starting a thread for a session with no standing.
  */
 const requireThreadsCapability = Effect.gen(function* () {
   const invocation = yield* McpInvocationContext.McpInvocationContext;
@@ -29,7 +36,8 @@ const requireThreadsCapability = Effect.gen(function* () {
     return yield* new ThreadToolError({
       operation: "create",
       reason: "capability_unavailable",
-      detail: "This MCP credential does not grant the threads capability.",
+      detail:
+        "This MCP credential does not grant the peers capability, which every session that may act on threads holds.",
     });
   }
   return invocation;

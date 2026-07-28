@@ -63,9 +63,7 @@ export type PeerProjectLocationChoice =
  *    the tool call that caused it; the caller can pass `projectId`, or the
  *    operator can set a preferred location, and either is one retry away.
  */
-export function choosePeerProjectLocation(
-  category: ProjectCategoryRecord,
-): PeerProjectLocationChoice {
+export function chooseProjectLocation(category: ProjectCategoryRecord): PeerProjectLocationChoice {
   const bound = category.local.bindings.map((binding) => binding.projectId);
   if (bound.length === 0) return { kind: "unbound" };
 
@@ -91,7 +89,7 @@ export function choosePeerProjectLocation(
  * the caller reports as the configuration problem it is rather than sending a
  * half-formed command.
  */
-export function resolvePeerThreadModelSelection(input: {
+export function resolveThreadModelSelection(input: {
   /** The peer folder's default. Null on a folder nobody configured. */
   readonly locationDefault: ModelSelection | null;
   /** The peer category's default, when the thread was placed by slug. */
@@ -114,7 +112,7 @@ export function resolvePeerThreadModelSelection(input: {
  * category that says otherwise is the operator having decided otherwise for
  * that project; an explicit override on the call beats both.
  */
-export function resolvePeerThreadModes(input: {
+export function resolveThreadModes(input: {
   readonly category?: ProjectCategoryRecord | undefined;
   readonly overrides: PeerThreadCreateOverrides;
 }): { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode } {

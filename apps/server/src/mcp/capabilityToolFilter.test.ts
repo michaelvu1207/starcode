@@ -52,7 +52,6 @@ const ALL_PEER_TOOLS = [
   "peer_thread_read",
   "peer_thread_send",
   "peer_thread_create",
-  "peer_thread_dispatch",
 ] as const;
 
 it("gates the tools that spend another machine's turn, and the ones that rewrite the map", () => {
@@ -63,7 +62,6 @@ it("gates the tools that spend another machine's turn, and the ones that rewrite
     "feature_promote",
     "feature_update",
     "peer_thread_create",
-    "peer_thread_dispatch",
   ]);
   // Mailbox sends are universal by design; hiding them would take away the one
   // federation write an ordinary agent is meant to have. Reading the feature
@@ -217,7 +215,6 @@ it.effect("an ordinary session is never shown the master-only tools", () =>
     expect(tools).toContain("peer_thread_read");
     expect(tools).toContain("peer_thread_send");
     expect(tools).not.toContain("peer_thread_create");
-    expect(tools).not.toContain("peer_thread_dispatch");
   }),
 );
 
@@ -259,6 +256,5 @@ it.effect("the designated master session is shown all of them", () =>
     const tools = yield* listToolsFor(masterThreadId);
     expect(tools).toContain("peer_thread_send");
     expect(tools).toContain("peer_thread_create");
-    expect(tools).toContain("peer_thread_dispatch");
   }),
 );

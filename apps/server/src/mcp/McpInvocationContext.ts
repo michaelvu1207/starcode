@@ -8,14 +8,20 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
 /**
- * `peers` is federation read plus mailbox send — everything an agent can do to
- * another thread without costing it a turn, granted to every session.
+ * `peers` is the ordinary agent's grant: read what other threads are doing, and
+ * say something to one — whether it is on this machine or another. Every session
+ * gets it. The name is about *other threads*, not about other machines, which is
+ * why the local `thread_create` and `project_*` toolkits check it too: they are
+ * all "may this session act on the thread graph at all", and there has never
+ * been a session that should hold one of them without the rest.
  *
- * `peers-operate` is the orchestrator's grant: create a thread on another
- * machine, and interrupt one. It is issued only to sessions of the thread named
- * by `workbenchMasterThreadId`, which is why gating lives at credential-mint
- * time rather than in the tool handlers alone — a session that is not the
- * master never holds a token that carries it.
+ * `peers-operate` is the orchestrator's grant, and it is the answer to a
+ * different question: may this session spend another machine's resources, or
+ * reach a machine outside the toolkit entirely. It covers creating a thread on a
+ * peer and reading the SSH login out of `peers_list`. It is issued only to
+ * sessions of a designated master thread, which is why the gating lives at
+ * credential-mint time rather than in the tool handlers alone — a session that
+ * is not a master never holds a token that carries it.
  */
 export type McpCapability = "preview" | "peers" | "peers-operate" | "features-operate";
 
