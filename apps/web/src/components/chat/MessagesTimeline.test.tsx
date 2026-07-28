@@ -223,20 +223,18 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("uses the larger leading inset only when the top fade is enabled", () => {
-    const timelineEntries = [buildUserTimelineEntry("Hello")];
-
-    const compactMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+  it("never fades its own first rows out", () => {
+    // The mask existed to hide rows sliding under a thread header. The fork
+    // deleted that header — the transcript owns the pane edge to edge — so all
+    // the mask did was grey out the top two lines of whatever you scrolled to,
+    // and the taller leading inset reserved space for chrome that is not there.
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Hello")]} />,
     );
-    const fadedMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} topFadeEnabled />,
-    );
 
-    expect(compactMarkup).toContain('class="h-3 sm:h-4"');
-    expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
-    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
-    expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+    expect(markup).toContain('class="h-3 sm:h-4"');
+    expect(markup).not.toContain("chat-timeline-scroll-fade");
+    expect(markup).not.toContain('class="h-10 sm:h-12"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {

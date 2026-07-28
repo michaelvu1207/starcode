@@ -23,10 +23,7 @@ const actions: SidebarThreadRowActions = {
   onRenameKeyDown: noop,
   onRenameBlur: noop,
   onStartRename: noop,
-  onSettle: noop,
-  onUnsettle: noop,
-  onUnsnooze: noop,
-  onSnooze: noop,
+  onArchive: noop,
 };
 
 function makeThread(overrides?: Partial<EnvironmentThreadShell>): EnvironmentThreadShell {
@@ -75,20 +72,11 @@ function render(
     timeLabel: "4h",
     snoozeWakeLabelText: null,
     rowAction: "settle",
-    settlementSupported: true,
-    snoozeSupported: true,
-    snoozeAllowed: true,
     driverKind: null,
     providerDisplayName: "Codex",
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
-    // Hidden by default: whether a split can hold this thread is a property of
-    // the window and of what is already on screen, and letting it default to
-    // ready would let every assertion about settlement and snooze pass for the
-    // wrong reason.
-    splitState: "hidden",
-    onOpenInSplit: noop,
     ...overrides,
   } as Parameters<typeof SidebarThreadRow>[0];
   return renderToStaticMarkup(<SidebarThreadRow {...props} />);
@@ -176,7 +164,7 @@ describe("SidebarThreadRow", () => {
     expect(render()).not.toContain('role="progressbar"');
   });
 
-  it("holds still under the pointer — only the time gives way to the menu", () => {
+  it("holds still under the pointer — only the time gives way to the archive button", () => {
     // The regression this guards: hover used to fade out the machine, the
     // agent and the status alongside the time and slide a strip of icon
     // buttons in over them. Four things moved every time the pointer crossed a
@@ -188,131 +176,56 @@ describe("SidebarThreadRow", () => {
     // …and the one that does fade is the time, so the icons keep their place.
     const timeSlot = markup.slice(markup.lastIndexOf("group-hover/v2-row:opacity-0"));
     expect(timeSlot).toContain("4h");
-    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
+    expect(markup).toContain('data-testid="sidebar-v2-row-archive"');
   });
 
-  it("puts the row's actions behind the menu rather than on the row", () => {
+  it("carries one verb, and it is archive", () => {
     const markup = render();
 
-    // The old hover strip's buttons are gone from the row itself; what they did
-    // now lives in the menu, which SSR does not open.
+    // The `···` is gone, and so is the hover strip that preceded it. Everything
+    // they held is on the row's context menu now.
+    expect(markup).not.toContain('data-testid="sidebar-v2-row-menu"');
+    expect(markup).not.toContain('aria-label="Thread actions"');
     expect(markup).not.toContain('aria-label="Settle thread"');
     expect(markup).not.toContain('aria-label="Snooze thread"');
-    expect(markup).toContain('aria-label="Thread actions"');
+    expect(markup).toContain('aria-label="Archive thread"');
   });
 
-  it("shows no menu button when the row has nothing to offer", () => {
-    // This used to be a real state: when every entry in the menu was
-    // capability-gated, a server that predated settlement left rows wearing an
-    // empty `···`. It cannot happen any more. Rename, move, fork and archive
-    // ask the server for nothing, so the menu always has entries and the guard
-    // that hid the button is gone — asserted here rather than deleted, because
-    // "the oldest server still gets a usable row menu" is the property that
-    // replaced it.
-    const markup = render({
-      settlementSupported: false,
-      snoozeAllowed: false,
-      snoozeSupported: false,
-    });
-
-    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
-    // And the time makes way for it, on every row, for the same reason.
-    expect(markup).toContain("group-hover/v2-row:opacity-0");
-  });
-
-  it("keeps the lifecycle entries capability-gated even though the menu is not", () => {
-    // The menu is unconditional now; its *contents* are not. Settle, un-settle
-    // and wake are still the entries a pre-settlement server has no verb for,
-    // and the separator above them still has to disappear with them or the menu
-    // grows a rule with nothing under it.
-    expect(rowSource).toContain(
-      'rowAction === "unsnooze" ? snoozeSupported : settlementSupported || snoozeAllowed',
-    );
-    expect(rowSource).toContain("{hasLifecycleEntries ? <MenuSeparator /> : null}");
-  });
-
-  it("mounts the thread verbs only while the popup is open", () => {
-    // They carry hooks — the project catalog, the thread commands, the router —
-    // and this component is rendered once per thread in a list that runs to
-    // hundreds. Gating on `open` is what keeps one row's menu from charging
-    // every other row for it. Source-level: SSR never opens a base-ui popup, so
-    // a render cannot tell the two apart.
-    //
-    // Asserted as "each mount sits inside an `open ?` guard" rather than as one
-    // exact line, because the formatter reflows these across lines the moment a
-    // prop is added — and a discriminator that breaks on reformatting is a
-    // discriminator that gets deleted rather than fixed.
-    for (const component of ["<ThreadRowFilingActions", "<ThreadRowArchiveAction"]) {
-      const at = rowSource.indexOf(component);
-      expect(at).toBeGreaterThan(-1);
-      const guard = rowSource.slice(Math.max(0, at - 60), at);
-      expect(guard).toContain("{open ? ");
+  it("shows the archive button on every row, whatever the server supports", () => {
+    // The row takes no capability props any more, and that is the point:
+    // archive asks the server nothing, so there is no server old enough — and
+    // no section — that leaves the hover slot empty. This used to be a real
+    // state, with a capability-gated menu wearing an empty `···`.
+    for (const rowAction of ["settle", "unsettle", "unsnooze"] as const) {
+      const markup = render({ rowAction, snoozeWakeLabelText: "2h" });
+      expect(markup).toContain('data-testid="sidebar-v2-row-archive"');
+      // And the time makes way for it, on every row, for the same reason.
+      expect(markup).toContain("group-hover/v2-row:opacity-0");
     }
   });
 
-  it("puts archive last, alone, below its own separator", () => {
-    // Ordering is the whole safety story for this entry: it is the only one
-    // that takes the thread off the list, and it sits directly under the snooze
-    // presets, which are what a fast hand is actually aiming for.
-    const archiveAt = rowSource.indexOf("<ThreadRowArchiveAction");
-    const filingAt = rowSource.indexOf("<ThreadRowFilingActions");
-    const snoozeAt = rowSource.indexOf("resolveSnoozePresets(new Date())");
-
-    expect(filingAt).toBeLessThan(archiveAt);
-    expect(snoozeAt).toBeLessThan(archiveAt);
-    expect(rowSource.slice(0, archiveAt).lastIndexOf("<MenuSeparator />")).toBeGreaterThan(
-      filingAt,
-    );
+  it("stops the archive click from reaching the row underneath it", () => {
+    // Without this the one click both archives the thread and navigates to it —
+    // opening the thread it just took off the list. The row is a click target
+    // all the way across, so every control on it has to stop its own event.
+    const at = rowSource.indexOf('data-testid="sidebar-v2-row-archive"');
+    expect(at).toBeGreaterThan(-1);
+    expect(rowSource.slice(at, at + 400)).toContain("event.stopPropagation()");
   });
 
-  it("greys the split entry out rather than letting it look clickable", () => {
-    // Checked against the source: a base-ui menu only mounts its items once it
-    // is open, and SSR never opens one, so the rendered markup of every case
-    // above is identical inside the popup. This is the one property of the
-    // entry that a render cannot see, and "disabled" is half of what makes an
-    // already-open thread explain itself instead of appearing to do nothing.
-    expect(rowSource).toContain('disabled={splitState !== "ready"}');
-    // Belt and braces, because the two say different things: the first makes it
-    // *look* inert, the second makes it *be* inert.
-    expect(rowSource).toContain('if (splitState === "ready") onOpenInSplit();');
+  it("keeps archive reachable from the keyboard, not hover alone", () => {
+    // The row is tabbable and this is the next stop after it. A hover-only
+    // control is a control a keyboard never reaches, and archive is now the
+    // row's only one.
+    expect(render()).toContain("focus-within:opacity-100");
   });
 
-  it("stops the split click from reaching the row underneath it", () => {
-    // Found in a browser, not here: the menu popup is portalled to the body,
-    // but a React portal's events bubble up the *component* tree, so a click on
-    // this item also fires the row's own handler — and the row navigates. The
-    // symptom was that opening a thread on the right dragged the left pane onto
-    // it too, which is precisely what this entry exists not to do.
-    //
-    // Source-level for the same reason as above: SSR never opens the popup, so
-    // there is no item to dispatch a click at.
-    const splitItem = rowSource.slice(
-      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]") - 900,
-      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]"),
-    );
-    expect(splitItem).toContain("event.stopPropagation()");
-  });
-
-  it("offers the menu on a snoozed row whether or not waking is supported", () => {
-    // A snoozed row on a server that cannot wake it still renames, moves, forks
-    // and archives — the wake entry is the only one that goes missing.
-    for (const snoozeSupported of [true, false]) {
-      expect(
-        render({
-          rowAction: "unsnooze",
-          snoozeWakeLabelText: "2h",
-          snoozeSupported,
-          snoozeAllowed: snoozeSupported,
-        }),
-      ).toContain('data-testid="sidebar-v2-row-menu"');
-    }
-  });
-
-  it("routes the menu's Rename at the same handler double-click uses", () => {
-    // Two ways in, one act: the rename input is row state, so the entry cannot
-    // own it and must call back out. Source-level — the entry lives inside the
-    // popup, which SSR never opens.
-    expect(rowSource).toContain("onRename={actions.onStartRename}");
+  it("hands the whole rest of the menu to right-click", () => {
+    // The row's context-menu handler is the single way in to rename, move,
+    // fork, settle, snooze, mark-unread, split, archive and delete. Asserted
+    // here because the row is where the gesture is bound; what the menu
+    // contains is SidebarV2's business.
+    expect(rowSource).toContain("onContextMenu={actions.onContextMenu}");
   });
 
   it("swaps the title for an input while renaming", () => {

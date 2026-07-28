@@ -54,7 +54,28 @@ export interface McpSessionRegistryOptions {
   readonly now?: () => number;
 }
 
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
+/**
+ * No idle timeout by default.
+ *
+ * There was a 30-minute one, and it was the wrong control for this workload. A
+ * coding agent's MCP calls are bursty: it opens a preview or messages a peer,
+ * then spends an hour editing and running tests without touching MCP at all.
+ * Under the old default that session silently lost its credential mid-flight
+ * and could not get another, because the bearer is minted once at process
+ * launch and injected into argv — there is no refresh path to take, and the
+ * agent only discovers the loss when a tool call fails.
+ *
+ * It also bought very little. The token sits in the process's argv for the
+ * whole session, readable by anyone who can run `ps` on this machine, and any
+ * such reader can use it immediately — which resets `lastUsedAt` and defeats
+ * the idle window anyway. The controls that actually bound exposure are the
+ * tailnet-scoped listener, the per-session capability scope, the absolute
+ * lifetime below, and explicit revocation on thread exit.
+ *
+ * Still an option, so a caller with a genuinely interactive, human-attended
+ * session can opt back in.
+ */
+const DEFAULT_IDLE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 const DEFAULT_MAXIMUM_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 
 const bytesToHex = (bytes: Uint8Array): string =>

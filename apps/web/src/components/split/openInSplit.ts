@@ -4,7 +4,8 @@
  * The split shipped with one way in — a row inside the composer's `···` popover
  * — and the first thing anyone asked was where it was. The entry belongs on the
  * sidebar row instead, because that is where you are standing when you know
- * which thread you want beside this one: you are looking at its name.
+ * which thread you want beside this one: you are looking at its name. It lives
+ * on the row's context menu, which is where every one of the row's verbs lives.
  *
  * The semantics are the ones the affordance's position implies. The thread you
  * are already reading does not move — it stays the left pane, and the row you
@@ -23,7 +24,6 @@
  *
  * @module openInSplit
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { splitFitsContainer } from "./Split.logic";
@@ -32,16 +32,13 @@ import { useSplitStore } from "./splitStore";
 /**
  * What a row's menu does about the split.
  *
- * - `hidden` — no entry, and no `···` earned on its own account. Either the
- *   window cannot hold two panes, or no thread is open for a second one to sit
- *   beside.
+ * - `hidden` — no entry at all. Either the window cannot hold two panes, or no
+ *   thread is open for a second one to sit beside.
  * - `ready` — an enabled "Open in split view".
  * - `already-primary` / `already-secondary` — the thread is already on screen,
  *   in one pane or the other. The entry stays, disabled, saying which. Shown
  *   rather than hidden because an item that vanishes on exactly one row
- *   explains itself worse than one that greys out — but deliberately not enough
- *   to summon a menu that would otherwise be empty, since a `···` holding one
- *   greyed line is the same lie as an empty one.
+ *   explains itself worse than one that greys out.
  */
 export type OpenInSplitState = "hidden" | "ready" | "already-primary" | "already-secondary";
 
@@ -64,24 +61,6 @@ export function resolveOpenInSplitState(input: {
   if (input.isSecondaryThread) return "already-secondary";
   if (input.isRouteThread) return "already-primary";
   return "ready";
-}
-
-/** The hook form, resolved once per row by `SidebarV2Row`. */
-export function useOpenInSplitState(input: {
-  readonly threadRef: ScopedThreadRef;
-  /** The row already knows this — it is what paints the row as active. */
-  readonly isRouteThread: boolean;
-  readonly hasRouteThread: boolean;
-}): OpenInSplitState {
-  const containerWidth = useSplitStore((state) => state.containerWidth);
-  const secondary = useSplitStore((state) => state.secondary);
-  return resolveOpenInSplitState({
-    containerWidth,
-    hasRouteThread: input.hasRouteThread,
-    isRouteThread: input.isRouteThread,
-    isSecondaryThread:
-      secondary !== null && scopedThreadKey(secondary) === scopedThreadKey(input.threadRef),
-  });
 }
 
 /**

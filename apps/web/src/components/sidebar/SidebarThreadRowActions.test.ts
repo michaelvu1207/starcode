@@ -75,16 +75,24 @@ describe("forkThreadTitle", () => {
 });
 
 describe("SidebarThreadRowActions source", () => {
-  // The popup is portalled to the body, but a React portal's events bubble up
-  // the *component* tree, so an unguarded click on any of these reaches the row
-  // and navigates — the row is a click target. Every handler here has to stop
-  // it, and this is the assertion that notices when the next one forgets.
-  it("stops every menu click from reaching the row underneath", () => {
-    const handlers = actionsSource.match(/onClick=\{/g) ?? [];
-    const stops = actionsSource.match(/event\.stopPropagation\(\)/g) ?? [];
+  it("holds no JSX: these are verbs the platform's own menu calls", () => {
+    // The `···` popup is gone and right-click is a native menu on desktop and a
+    // DOM fallback in a browser — neither renders React. If a menu item creeps
+    // back into this file, the two menus have started to disagree about what a
+    // row can do, which is the whole thing consolidating them was for.
+    expect(actionsSource).not.toContain("<MenuItem");
+    expect(actionsSource).not.toContain("<MenuSub");
+  });
 
-    expect(handlers.length).toBeGreaterThanOrEqual(4);
-    expect(stops.length).toBeGreaterThanOrEqual(handlers.length);
+  it("takes its environment from the thread, never from a hook", () => {
+    // The sidebar is one list merged from every connected machine, so which
+    // machine a verb talks to is only known at click time. A hook parameterised
+    // by environment id here would have to be called per row — the cost this
+    // file has always been shaped to avoid.
+    expect(actionsSource).not.toContain("useRefreshHistoryImports(");
+    expect(actionsSource).not.toContain("useHistoryImports(");
+    expect(actionsSource).toContain("refreshHistoryImports(thread.environmentId)");
+    expect(actionsSource).toContain("readHistoryImports(thread.environmentId)");
   });
 
   it("sends the two filing requests in order rather than at once", () => {
@@ -96,13 +104,7 @@ describe("SidebarThreadRowActions source", () => {
   });
 
   it("refuses to file into an archived project", () => {
-    expect(actionsSource).toContain("view.projects.filter((project) => !project.archived)");
-  });
-
-  it("hides the submenu when there is nothing to file into and nothing to unfile", () => {
-    expect(actionsSource).toContain(
-      "if (targets.length === 0 && state.currentSlug === null) return null;",
-    );
+    expect(actionsSource).toContain(".filter((project) => !project.archived)");
   });
 
   it("re-reads the machine it just wrote to, whether or not the write landed", () => {
@@ -110,9 +112,19 @@ describe("SidebarThreadRowActions source", () => {
     // overlay, so without this the row sits in its old group for up to a
     // minute. In a `finally`, because a refusal has to put the truth back on
     // screen too.
-    const move = actionsSource.slice(actionsSource.indexOf("const move = useCallback"));
-    expect(move.slice(0, move.indexOf("</MenuSub>"))).toContain(
-      "} finally {\n          refreshProjectCatalogs([thread.environmentId]);",
+    const move = actionsSource.slice(actionsSource.indexOf("const moveThreadToProject"));
+    expect(move.slice(0, move.indexOf("const canForkWithConversation"))).toContain(
+      "} finally {\n        refreshProjectCatalogs([thread.environmentId]);",
     );
+  });
+
+  it("offers an Undo on archive rather than a confirm before it", () => {
+    // Archive moved from the bottom of a menu you had to open to a button the
+    // pointer crosses, and unarchiving otherwise lives in settings. The undo is
+    // what pays for that; a confirm dialog on a reversible action you take
+    // dozens of times a session is a dialog you learn to dismiss unread.
+    const archive = actionsSource.slice(actionsSource.indexOf("const archiveThread = useCallback"));
+    expect(archive).toContain('children: "Undo"');
+    expect(archive).toContain("unarchiveThread(threadRef)");
   });
 });

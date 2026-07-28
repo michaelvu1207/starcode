@@ -100,3 +100,38 @@ it.effect("expires credentials after inactivity", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+/**
+ * The default must NOT expire an idle session. A coding agent can go an hour
+ * between MCP calls while it edits and runs tests, and its bearer is minted
+ * once at process launch — so an idle eviction is unrecoverable for the rest
+ * of that session. The idle window above is opt-in, and this pins the default.
+ */
+it.effect("keeps an idle credential alive under the default settings", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* McpSessionRegistry.__testing
+      .make({ now: () => timestamp })
+      .pipe(
+        Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+        Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+        Effect.provide(
+          Layer.mergeAll(
+            serverSettingsLayerTest(),
+            Layer.mock(ProjectCatalogRegistry)({ list: Effect.succeed([]) }),
+            NodeServices.layer,
+          ),
+        ),
+      );
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-idle"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    // Four hours untouched — well past the 30 minutes that used to evict it,
+    // and still inside the absolute lifetime.
+    timestamp += 4 * 60 * 60 * 1_000;
+    expect(yield* registry.resolve(token)).toBeDefined();
+  }),
+);

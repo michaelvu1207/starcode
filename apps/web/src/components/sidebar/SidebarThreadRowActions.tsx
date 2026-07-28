@@ -1,20 +1,25 @@
 /**
- * Fork-owned: the row menu's verbs that act on the thread itself.
+ * Fork-owned: the verbs the sidebar's thread context menu acts with.
  *
- * Split out of `SidebarThreadRow` rather than added to it, for one structural
- * reason: these need hooks, and the row is rendered once per thread in a list
- * that can run to hundreds. Filing needs the folded project catalog, archiving
- * needs the thread-action commands, forking needs the create command and the
- * router — subscribing every row to all of that so that one row's menu can open
- * would make scrolling the sidebar pay for a menu nobody opened.
+ * These used to be menu *components*, mounted inside an open `···` popup so
+ * that a list of hundreds of rows never paid for hooks it wasn't using. The
+ * `···` is gone — every one of these verbs is reached by right-clicking a row
+ * now, and that menu is the platform's own (native on desktop, the DOM
+ * fallback in a browser), which takes plain items and returns the id you
+ * clicked. So there is no component to hang a hook off any more.
  *
- * So the components here are rendered *inside the open popup* and nowhere else.
- * One row's menu is open at a time, so these hooks run once, on demand, and the
- * row above them stays the pure function of its props that it was.
+ * The laziness that shaped the old file still holds, by different means: this
+ * hook is called ONCE, by `SidebarV2`, not once per row. Filing needs the
+ * folded project catalog, archiving needs the thread-action commands, forking
+ * needs the create command and the router — one subscription for the whole
+ * sidebar rather than one per thread.
  *
- * Two exports rather than one because the menu is not one block: renaming,
- * filing and forking sit above the lifecycle entries, and archiving sits below
- * everything, which is where the entry that takes a thread off the list belongs.
+ * What the hook cannot do is take an environment id at hook time: the sidebar
+ * is a single list merged from every connected machine, so which machine a verb
+ * talks to is only known when the user clicks. Every verb here therefore reads
+ * its environment off the thread it was handed, and the two registry reads that
+ * used to be hooks (`useHistoryImports`, `useRefreshHistoryImports`) are their
+ * imperative twins.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -24,22 +29,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
-import {
-  ArchiveIcon,
-  CheckIcon,
-  FolderInputIcon,
-  GitBranchPlusIcon,
-  PencilIcon,
-} from "lucide-react";
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
-
-import { cn } from "~/lib/utils";
+import { useCallback, useMemo } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { newThreadId } from "../../lib/utils";
@@ -50,20 +40,16 @@ import {
   useProjectCatalogView,
 } from "../../state/projectCatalog";
 import {
+  readHistoryImports,
+  refreshHistoryImports,
   useForkThreadConversation,
-  useHistoryImports,
-  useRefreshHistoryImports,
 } from "../../state/terminalHistory";
 import { resolveThreadProvenance } from "../chat/ThreadHistory.logic";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { ProjectGlyph } from "../projects/ProjectGlyph";
-import { projectAccentHue } from "../projects/ProjectMark.model";
-import { MenuItem, MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { planThreadFiling, resolveThreadFilingState } from "./threadProjectFiling";
-import "../projects/Projects.css";
 
 /**
  * How long to let the websocket deliver a thread the server has already
@@ -93,285 +79,200 @@ export function forkThreadTitle(title: string): string {
   return `${base}${FORK_TITLE_SUFFIX}`;
 }
 
-/**
- * Whether this machine's server understands the project catalog at all. A
- * pre-catalog server has nowhere to file a thread, and an entry that always
- * failed would be worse than no entry.
- */
-function useProjectCatalogSupported(environmentId: EnvironmentId): boolean {
-  const serverConfigs = useServerConfigs();
-  return serverConfigs.get(environmentId)?.environment.capabilities.projectCatalog === true;
+/** Where a thread currently sits, and everywhere the menu could move it to. */
+export interface ThreadFilingOptions {
+  /** `null` when the thread is unfiled — the "Remove from project" entry hides. */
+  readonly currentSlug: ProjectCategorySlug | null;
+  readonly targets: ReadonlyArray<{
+    readonly slug: ProjectCategorySlug;
+    readonly title: string;
+  }>;
+  /** False on a server predating the catalog: the whole submenu hides. */
+  readonly supported: boolean;
 }
 
-/**
- * Rename, file, and fork — the three things you do to a thread that leave it on
- * the list.
- */
-export function ThreadRowFilingActions({
-  thread,
-  driverKind,
-  onRename,
-}: {
-  readonly thread: EnvironmentThreadShell;
-  /** Which agent drives the thread. Only some can fork a session — see below. */
-  readonly driverKind: string | null;
-  /** Puts the row into its inline rename input; owned by the sidebar. */
-  readonly onRename: () => void;
-}): ReactNode {
-  const catalogSupported = useProjectCatalogSupported(thread.environmentId);
-  const forkThread = useForkThread(thread.environmentId);
-  // Shared, cached, and already read by the thread view and the picker, so
-  // this costs the row nothing. It is here because a thread can carry a
-  // conversation it has never spoken a word of — see `canForkConversation`.
-  const provenance = useHistoryImports(thread.environmentId);
-  const carriesConversation = canForkConversation({
-    driverKind,
-    thread,
-    inheritedConversation:
-      resolveThreadProvenance({
-        imports: provenance.data?.imports ?? null,
-        forks: provenance.data?.forks ?? null,
-        threadId: thread.id,
-      }) !== null,
-  });
-
-  return (
-    <>
-      <MenuItem
-        closeOnClick
-        data-testid="sidebar-v2-row-rename"
-        // Every entry in this file stops propagation for the reason the split
-        // entry documents: the popup is portalled to the body, but a React
-        // portal's events bubble up the *component* tree, so an unguarded click
-        // reaches the row and navigates.
-        onClick={(event) => {
-          event.stopPropagation();
-          onRename();
-        }}
-        className="sm:text-xs"
-      >
-        <PencilIcon aria-hidden className="size-3.5" />
-        Rename
-      </MenuItem>
-      {catalogSupported ? <ThreadRowProjectSubmenu thread={thread} /> : null}
-      {/* One entry, two honest labels. Which one you get is a property of the
-          thread — its agent, and whether it has said anything yet — and saying
-          so on the entry is what stops the click being a surprise. Deliberately
-          NOT disabled in the setup-only case: a fork that carries the branch,
-          worktree and model is still worth having, and taking it away from
-          every Codex thread to make a point would be a worse trade. */}
-      <MenuItem
-        closeOnClick
-        data-testid="sidebar-v2-row-fork"
-        data-carries-conversation={carriesConversation ? "true" : "false"}
-        onClick={(event) => {
-          event.stopPropagation();
-          void forkThread(thread, carriesConversation);
-        }}
-        className="sm:text-xs"
-      >
-        <GitBranchPlusIcon aria-hidden className="size-3.5" />
-        <span className="flex-1">
-          {carriesConversation ? "Fork with conversation" : "Fork thread"}
-        </span>
-        {carriesConversation ? null : (
-          <span className="text-[10px] text-muted-foreground/60">setup only</span>
-        )}
-      </MenuItem>
-    </>
-  );
+export interface SidebarThreadVerbs {
+  /** Everything "Move to project" needs to render, resolved per thread. */
+  readonly filingOptions: (thread: EnvironmentThreadShell) => ThreadFilingOptions;
+  readonly moveThreadToProject: (
+    thread: EnvironmentThreadShell,
+    target: ProjectCategorySlug | null,
+  ) => Promise<void>;
+  /**
+   * Whether this thread's fork can carry the conversation — the answer that
+   * picks between the menu's two honest labels. See `canForkConversation`.
+   */
+  readonly canForkWithConversation: (
+    thread: EnvironmentThreadShell,
+    driverKind: string | null,
+  ) => boolean;
+  readonly forkThread: (
+    thread: EnvironmentThreadShell,
+    carriesConversation: boolean,
+  ) => Promise<void>;
+  readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<void>;
 }
 
-/**
- * "Move to project", as a submenu.
- *
- * A submenu rather than a dialog because the answer is a short list you already
- * know the shape of, and a dialog for a one-click decision is a dialog you
- * dismiss. The current project is listed and ticked rather than hidden — a list
- * that silently omits where you are is a list you check twice.
- *
- * "Remove from project" leads, above the projects, because it is the only entry
- * that is not a project name, and because a thread filed by mistake is the case
- * you reach for this menu in a hurry.
- */
-function ThreadRowProjectSubmenu({
-  thread,
-}: {
-  readonly thread: EnvironmentThreadShell;
-}): ReactNode {
+export function useSidebarThreadVerbs(): SidebarThreadVerbs {
   const view = useProjectCatalogView();
+  const serverConfigs = useServerConfigs();
   const fileThread = useFileThreadIntoProject();
-  const [busy, setBusy] = useState(false);
+  const forkThread = useForkThread();
+  const { archiveThread: runArchive, unarchiveThread } = useThreadActions();
 
-  const membershipThread = useMemo(
-    () => ({ environmentId: thread.environmentId, id: thread.id, projectId: thread.projectId }),
-    [thread.environmentId, thread.id, thread.projectId],
-  );
-  const state = useMemo(
-    () => resolveThreadFilingState({ projects: view.projects, thread: membershipThread }),
-    [membershipThread, view.projects],
-  );
   // Archived projects own their threads but are not somewhere you file into —
   // the sidebar keeps them behind a disclosure precisely because they are not
   // live work.
   const targets = useMemo(
-    () => view.projects.filter((project) => !project.archived),
+    () =>
+      view.projects
+        .filter((project) => !project.archived)
+        .map((project) => ({ slug: project.slug, title: project.display.title })),
     [view.projects],
   );
 
-  const move = useCallback(
-    (target: ProjectCategorySlug | null) => {
+  const filingOptions = useCallback(
+    (thread: EnvironmentThreadShell): ThreadFilingOptions => ({
+      currentSlug: resolveThreadFilingState({
+        projects: view.projects,
+        thread: {
+          environmentId: thread.environmentId,
+          id: thread.id,
+          projectId: thread.projectId,
+        },
+      }).currentSlug,
+      targets,
+      supported:
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.projectCatalog === true,
+    }),
+    [serverConfigs, targets, view.projects],
+  );
+
+  const moveThreadToProject = useCallback(
+    async (thread: EnvironmentThreadShell, target: ProjectCategorySlug | null) => {
+      const state = resolveThreadFilingState({
+        projects: view.projects,
+        thread: {
+          environmentId: thread.environmentId,
+          id: thread.id,
+          projectId: thread.projectId,
+        },
+      });
       const plan = planThreadFiling({ threadId: thread.id, state, target });
-      if (plan.length === 0 || busy) return;
-      setBusy(true);
-      void (async () => {
-        try {
-          // Sequential, not parallel: an unfile followed by an exclude is an
-          // ordered pair, and the registry serialises writes per machine
-          // anyway, so overlapping them only loses the ordering.
-          for (const request of plan) {
-            const outcome = await fileThread({
-              environmentId: thread.environmentId,
-              request,
-            });
-            if (outcome.kind !== "ok") {
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title:
-                    target === null ? "Failed to remove from project" : "Failed to move thread",
-                  description: outcome.message,
-                }),
-              );
-              return;
-            }
+      if (plan.length === 0) return;
+      try {
+        // Sequential, not parallel: an unfile followed by an exclude is an
+        // ordered pair, and the registry serialises writes per machine
+        // anyway, so overlapping them only loses the ordering.
+        for (const request of plan) {
+          const outcome = await fileThread({ environmentId: thread.environmentId, request });
+          if (outcome.kind !== "ok") {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: target === null ? "Failed to remove from project" : "Failed to move thread",
+                description: outcome.message,
+              }),
+            );
+            return;
           }
-        } finally {
-          refreshProjectCatalogs([thread.environmentId]);
-          setBusy(false);
         }
-      })();
+      } finally {
+        refreshProjectCatalogs([thread.environmentId]);
+      }
     },
-    [busy, fileThread, state, thread.environmentId, thread.id],
+    [fileThread, view.projects],
   );
 
-  // Nothing to file into and nothing to unfile from: the trigger would open a
-  // menu with one dead line in it.
-  if (targets.length === 0 && state.currentSlug === null) return null;
+  const canForkWithConversation = useCallback(
+    (thread: EnvironmentThreadShell, driverKind: string | null) => {
+      // A best-effort registry read, exactly as lazy as the old menu's
+      // `useHistoryImports` was: cold or in flight resolves to "cannot prove
+      // it", which understates and never overstates. See `canForkConversation`.
+      const imports = readHistoryImports(thread.environmentId);
+      return canForkConversation({
+        driverKind,
+        thread,
+        inheritedConversation:
+          resolveThreadProvenance({
+            imports: imports?.imports ?? null,
+            forks: imports?.forks ?? null,
+            threadId: thread.id,
+          }) !== null,
+      });
+    },
+    [],
+  );
 
-  return (
-    <MenuSub>
-      <MenuSubTrigger data-testid="sidebar-v2-row-move-to-project" className="sm:text-xs">
-        <FolderInputIcon aria-hidden className="size-3.5" />
-        Move to project
-      </MenuSubTrigger>
-      <MenuSubPopup className="min-w-44">
-        {state.currentSlug === null ? null : (
-          <>
-            <MenuItem
-              closeOnClick
-              data-testid="sidebar-v2-row-move-to-chats"
-              onClick={(event) => {
-                event.stopPropagation();
-                move(null);
-              }}
-              className="sm:text-xs"
-            >
-              Remove from project
-            </MenuItem>
-            <MenuSeparator />
-          </>
-        )}
-        {targets.map((project) => {
-          const isCurrent = project.slug === state.currentSlug;
-          return (
-            <MenuItem
-              key={project.slug}
-              closeOnClick
-              disabled={isCurrent}
-              data-testid="sidebar-v2-row-move-target"
-              data-slug={project.slug}
-              data-current={isCurrent ? "true" : undefined}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (!isCurrent) move(project.slug);
-              }}
-              className="sm:text-xs"
-            >
-              <span
-                className={cn("sc-project-mark size-3.5 shrink-0")}
-                style={
-                  {
-                    "--sc-project-hue": `${projectAccentHue(
-                      project.slug,
-                      project.display.accent,
-                    )}deg`,
-                  } as never
+  /**
+   * Archive, with an Undo.
+   *
+   * The undo is new, and it is what pays for the verb having moved onto the
+   * row as a one-click button: the entry used to sit at the bottom of a menu
+   * you had to open, and now it is a target the pointer crosses. Unarchiving
+   * otherwise lives in settings, which is too far away to be the escape hatch
+   * for a mis-click. Same shape as the snooze toast for the same reason —
+   * archiving takes the row off the list, so the toast is the only
+   * confirmation there is.
+   */
+  const archiveThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+      const result = await runArchive(threadRef);
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: `Archived "${thread.title}"`,
+          timeout: 5_000,
+          actionProps: {
+            children: "Undo",
+            onClick: () => {
+              void (async () => {
+                const undone = await unarchiveThread(threadRef);
+                if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
+                  const error = squashAtomCommandFailure(undone);
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Failed to unarchive thread",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                    }),
+                  );
                 }
-              >
-                <ProjectGlyph
-                  slug={project.slug}
-                  variant={project.display.glyph}
-                  icon={project.display.icon}
-                />
-              </span>
-              <span className="min-w-0 flex-1 truncate">{project.display.title}</span>
-              {isCurrent ? <CheckIcon aria-hidden className="size-3.5 shrink-0" /> : null}
-            </MenuItem>
-          );
-        })}
-      </MenuSubPopup>
-    </MenuSub>
-  );
-}
-
-/**
- * Archive, and only archive.
- *
- * Last in the menu and alone below the final separator, because it is the one
- * entry that takes the thread off the list. There is no "Unarchive" twin here:
- * the sidebar's partition excludes archived threads by construction, so this
- * menu is never rendered on one. Unarchiving lives where archived threads are
- * actually listed, in settings.
- */
-export function ThreadRowArchiveAction({
-  thread,
-}: {
-  readonly thread: EnvironmentThreadShell;
-}): ReactNode {
-  const { archiveThread } = useThreadActions();
-
-  const archive = useCallback(
-    (event: ReactMouseEvent) => {
-      event.stopPropagation();
-      void (async () => {
-        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-        const result = await archiveThread(threadRef);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to archive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-      })();
+              })();
+            },
+          },
+        }),
+      );
     },
-    [archiveThread, thread.environmentId, thread.id],
+    [runArchive, unarchiveThread],
   );
 
-  return (
-    <MenuItem
-      closeOnClick
-      data-testid="sidebar-v2-row-archive"
-      onClick={archive}
-      className="sm:text-xs"
-    >
-      <ArchiveIcon aria-hidden className="size-3.5" />
-      Archive
-    </MenuItem>
+  // Memoized, not rebuilt per render: the sidebar hangs its context-menu
+  // handler off this object, and a fresh identity every render would hand
+  // every row a new callback prop and defeat the row memoization that keeps
+  // the list cheap while turns stream.
+  return useMemo(
+    () => ({
+      filingOptions,
+      moveThreadToProject,
+      canForkWithConversation,
+      forkThread,
+      archiveThread,
+    }),
+    [archiveThread, canForkWithConversation, filingOptions, forkThread, moveThreadToProject],
   );
 }
 
@@ -438,14 +339,13 @@ export function canForkConversation(input: {
  * kind they got and why. The one thing that must never happen is a fork that
  * *claims* to carry the conversation and does not.
  */
-function useForkThread(
-  /** The machine whose provenance registry a successful fork invalidates. */
-  environmentId: EnvironmentId,
-): (thread: EnvironmentThreadShell, carriesConversation: boolean) => Promise<void> {
+function useForkThread(): (
+  thread: EnvironmentThreadShell,
+  carriesConversation: boolean,
+) => Promise<void> {
   const router = useRouter();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const forkConversation = useForkThreadConversation();
-  const refreshProvenance = useRefreshHistoryImports(environmentId);
 
   return useCallback(
     async (thread: EnvironmentThreadShell, carriesConversation: boolean) => {
@@ -469,7 +369,7 @@ function useForkThread(
           // it, the fork we are about to navigate to opens looking like an
           // ordinary empty thread — with the conversation it inherited hidden
           // behind a line that has not arrived yet.
-          refreshProvenance();
+          refreshHistoryImports(thread.environmentId);
           await goTo(attempt.result.threadId);
           toastManager.add({
             type: "success",

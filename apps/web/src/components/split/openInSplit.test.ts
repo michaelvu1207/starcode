@@ -109,7 +109,11 @@ describe("the row's split entry reaches every sidebar view", () => {
     // assertion that a fifth view would have to keep true.
     const rowUsages = sidebarSource.match(/<SidebarThreadRow/g) ?? [];
     expect(rowUsages).toHaveLength(1);
-    expect(sidebarSource).toContain("useOpenInSplitState({");
+    // Resolved at right-click time rather than per row: the entry lives on the
+    // row's context menu now, and its answer is a property of the window and of
+    // what is already on screen — so hooking every row to it would re-render
+    // the whole list on every drag of the split divider.
+    expect(sidebarSource).toContain("resolveOpenInSplitState({");
     for (const view of ["SidebarConnectionsView", "SidebarProjectsView"]) {
       const usage = sidebarSource.slice(sidebarSource.indexOf(`<${view}`));
       expect(usage.slice(0, 400)).toContain("renderThreadRow={renderThreadRow}");

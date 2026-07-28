@@ -7,7 +7,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  ProjectCategorySlug,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CircleAlertIcon,
@@ -124,8 +128,14 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
 import { SidebarThreadRow } from "./sidebar/SidebarThreadRow";
+import { useSidebarThreadVerbs } from "./sidebar/SidebarThreadRowActions";
 import { openThreadInFocusedPane } from "./split/openThreadInFocusedPane";
-import { openThreadInSplit, useOpenInSplitState } from "./split/openInSplit";
+import {
+  openThreadInSplit,
+  resolveOpenInSplitState,
+  type OpenInSplitState,
+} from "./split/openInSplit";
+import { useSplitStore } from "./split/splitStore";
 import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
 import { useAllProjectsScopeGuard } from "./sidebar/sidebarProjectScope";
@@ -136,6 +146,16 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+/**
+ * What the split entry reads as, per state. The two disabled labels name the
+ * pane the thread is already in rather than saying a flat "unavailable": on the
+ * row you right-clicked, "here" is the answer to why the entry is grey.
+ */
+const SPLIT_MENU_LABEL: Readonly<Record<Exclude<OpenInSplitState, "hidden">, string>> = {
+  ready: "Open in split view",
+  "already-primary": "Already open here",
+  "already-secondary": "Already in split view",
+};
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -270,23 +290,16 @@ function SidebarV2ThreadTooltip({
 
 const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
-  // One row shape for every section; this only picks what the hover button
-  // does. Settled rows un-settle, snoozed rows wake, everything else settles.
+  // One row shape for every section; this only picks which timestamp the row
+  // reads as. Settled rows read when the work ended, snoozed rows when they
+  // come back, everything else when the thread last spoke.
   variantAction: "settle" | "unsettle" | "unsnooze";
-  // False on environments whose server predates thread.settle/unsettle:
-  // the lifecycle affordances hide entirely rather than fail on click.
-  settlementSupported: boolean;
-  // Same contract for thread.snooze/unsnooze.
-  snoozeSupported: boolean;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
   isActive: boolean;
-  // Whether *any* thread is open. The split entry on the row menu needs a left
-  // pane to open beside, and there is none on /projects or a fresh draft.
-  hasRouteThread: boolean;
   jumpLabel: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
@@ -301,26 +314,20 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   isRenaming: boolean;
   renamingTitle: string;
   onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
-  onSettle: (threadRef: ScopedThreadRef) => void;
-  onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
-  onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onArchive: (threadRef: ScopedThreadRef) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
 }) {
   const {
     isRenaming,
+    onArchive,
     onChangeRequestState,
     onCancelRename,
     onCommitRename,
     onContextMenu,
     onRenameTitleChange,
-    onSettle,
-    onSnooze,
     onStartRename,
     onThreadActivate,
     onThreadClick,
-    onUnsettle,
-    onUnsnooze,
     renamingTitle,
     thread,
     variantAction,
@@ -473,56 +480,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       onCommitRename(threadRef, renamingTitle, thread.title);
     }
   }, [onCommitRename, renamingTitle, thread.title, threadRef]);
-  const handleSettleClick = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onSettle(threadRef);
-    },
-    [onSettle, threadRef],
-  );
-  const handleUnsettleClick = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onUnsettle(threadRef);
-    },
-    [onUnsettle, threadRef],
-  );
-  const handleUnsnoozeClick = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onUnsnooze(threadRef);
-    },
-    [onUnsnooze, threadRef],
-  );
-  const handleSnoozePreset = useCallback(
-    (preset: SnoozePreset) => {
-      onSnooze(threadRef, preset);
-    },
-    [onSnooze, threadRef],
-  );
-  // Snooze is offered only where it can succeed: capability-gated and never
-  // on blocked-on-you work or queued turns (the server rejects both). Whether
-  // the row's menu is open is the row's own business.
-  const snoozeAllowed =
-    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
-  // Whether this thread can go to the right of the one you are reading, and if
-  // not, why. Resolved here rather than in the row for the same reason as
-  // everything else on it: the row stays a function of its props.
-  const splitState = useOpenInSplitState({
-    threadRef,
-    isRouteThread: props.isActive,
-    hasRouteThread: props.hasRouteThread,
-  });
-  const handleOpenInSplit = useCallback(() => openThreadInSplit(threadRef), [threadRef]);
+  const handleArchive = useCallback(() => onArchive(threadRef), [onArchive, threadRef]);
   return (
     <SidebarThreadRow
       thread={thread}
       status={status}
-      splitState={splitState}
-      onOpenInSplit={handleOpenInSplit}
       flags={{
         isActive: props.isActive,
         isSelected,
@@ -540,19 +502,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         onRenameKeyDown: handleRenameKeyDown,
         onRenameBlur: handleRenameBlur,
         onStartRename: handleStartRename,
-        onSettle: handleSettleClick,
-        onUnsettle: handleUnsettleClick,
-        onUnsnooze: handleUnsnoozeClick,
-        onSnooze: handleSnoozePreset,
+        onArchive: handleArchive,
       }}
       // Settled rows read "how long ago did this wrap up", matching their sort
       // key; every other row reads when the thread last spoke.
       timeLabel={variantAction === "unsettle" ? settledTimeLabel(thread) : threadTimeLabel(thread)}
       snoozeWakeLabelText={props.snoozeWakeLabelText}
       rowAction={variantAction}
-      settlementSupported={props.settlementSupported}
-      snoozeSupported={props.snoozeSupported}
-      snoozeAllowed={snoozeAllowed}
       driverKind={driverKind}
       providerDisplayName={thread.session?.providerName ?? modelInstanceId}
       jumpLabel={props.jumpLabel}
@@ -578,6 +534,9 @@ export default function SidebarV2() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
+  // The row's verbs, hooked once for the whole sidebar rather than once per
+  // row. Archive is the hover button; the rest are the context menu's.
+  const threadVerbs = useSidebarThreadVerbs();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -686,6 +645,11 @@ export default function SidebarV2() {
       ),
     [serverProviders],
   );
+  // Read through a ref by the context menu for the same reason every other
+  // map here is: the handler must not take a new identity on each provider
+  // refresh and hand every row a fresh callback prop.
+  const providerEntryByInstanceIdRef = useRef(providerEntryByInstanceId);
+  providerEntryByInstanceIdRef.current = providerEntryByInstanceId;
   const projectCwdByKey = useMemo(
     () =>
       new Map(
@@ -1294,6 +1258,17 @@ export default function SidebarV2() {
     },
     [unsnoozeThread],
   );
+  // The row's hover button, and the context menu's Archive entry: one verb,
+  // one path in. Takes a ref rather than a shell so the row can hand it the
+  // same thing every other row handler takes.
+  const attemptArchive = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
+      if (!thread) return;
+      void threadVerbs.archiveThread(thread);
+    },
+    [threadVerbs],
+  );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const attemptSnooze = useCallback(
@@ -1518,9 +1493,46 @@ export default function SidebarV2() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date());
+        // Whether this thread can go to the right of the one you are reading,
+        // and if not, why. Resolved at click time rather than per row: the
+        // answer is a property of the window and of what is already on screen,
+        // and hooking every row to it would re-render the list on every drag of
+        // the split divider.
+        const splitState = resolveOpenInSplitState({
+          containerWidth: useSplitStore.getState().containerWidth,
+          hasRouteThread: routeThreadKeyRef.current !== null,
+          isRouteThread: routeThreadKeyRef.current === threadKey,
+          isSecondaryThread: (() => {
+            const secondary = useSplitStore.getState().secondary;
+            return secondary !== null && scopedThreadKey(secondary) === threadKey;
+          })(),
+        });
+        // Which agent drives it, and so whether its fork can carry the
+        // conversation. Two honest labels, one entry — see canForkConversation.
+        const driverKind =
+          providerEntryByInstanceIdRef.current.get(
+            thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
+          )?.driverKind ?? null;
+        const carriesConversation = threadVerbs.canForkWithConversation(thread, driverKind);
+        const filing = threadVerbs.filingOptions(thread);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
+              // First: the only entry that opens something rather than filing
+              // it away, and the only way the split is reached at all. The
+              // thread you are reading keeps the left pane and this one fills
+              // the right. Shown disabled rather than hidden when the thread is
+              // already on screen — an item that vanishes on exactly one row
+              // explains itself worse than one that greys out.
+              ...(splitState === "hidden"
+                ? []
+                : [
+                    {
+                      id: "open-in-split",
+                      label: SPLIT_MENU_LABEL[splitState],
+                      disabled: splitState !== "ready",
+                    },
+                  ]),
               ...(thread.branch
                 ? [
                     {
@@ -1529,6 +1541,37 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
+              // "Move to project" is a submenu because the answer is a short
+              // list you already know the shape of. The current project is
+              // listed and disabled rather than hidden — a list that silently
+              // omits where you are is a list you check twice. "Remove from
+              // project" leads, above the projects, because it is the only
+              // entry that is not a project name.
+              ...(filing.supported && (filing.targets.length > 0 || filing.currentSlug !== null)
+                ? [
+                    {
+                      id: "move-to-project",
+                      label: "Move to project",
+                      children: [
+                        ...(filing.currentSlug === null
+                          ? []
+                          : [{ id: "file:none", label: "Remove from project" }]),
+                        ...filing.targets.map((target) => ({
+                          id: `file:${target.slug}`,
+                          label: target.title,
+                          disabled: target.slug === filing.currentSlug,
+                        })),
+                      ],
+                    },
+                  ]
+                : []),
+              // Deliberately offered even when it can only be a setup fork: a
+              // fork that carries the branch, worktree and model is still worth
+              // having. The label is what must never overstate.
+              {
+                id: "fork",
+                label: carriesConversation ? "Fork with conversation" : "Fork thread (setup only)",
+              },
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -1553,6 +1596,10 @@ export default function SidebarV2() {
                 : []),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
+              // Last, below the two that take the thread off the list. Archive
+              // is also the row's hover button; it is here so that right-click
+              // is the whole list of what a row can do and not most of it.
+              { id: "archive", label: "Archive thread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
             ],
             position,
@@ -1566,7 +1613,24 @@ export default function SidebarV2() {
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
+        if (clicked.value?.startsWith("file:")) {
+          const slug = clicked.value.slice("file:".length);
+          await threadVerbs.moveThreadToProject(
+            thread,
+            slug === "none" ? null : (slug as ProjectCategorySlug),
+          );
+          return;
+        }
         switch (clicked.value) {
+          case "open-in-split":
+            openThreadInSplit(threadRef);
+            return;
+          case "fork":
+            await threadVerbs.forkThread(thread, carriesConversation);
+            return;
+          case "archive":
+            await threadVerbs.archiveThread(thread);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -1647,6 +1711,7 @@ export default function SidebarV2() {
       markThreadUnread,
       serverConfigs,
       startThreadRename,
+      threadVerbs,
     ],
   );
 
@@ -1796,14 +1861,6 @@ export default function SidebarV2() {
                             ? "unsettle"
                             : "settle"
                       }
-                      settlementSupported={
-                        serverConfigs.get(thread.environmentId)?.environment.capabilities
-                          .threadSettlement === true
-                      }
-                      snoozeSupported={
-                        serverConfigs.get(thread.environmentId)?.environment.capabilities
-                          .threadSnooze === true
-                      }
                       snoozeWakeLabelText={
                         section === "snoozed" && thread.snoozedUntil != null
                           ? snoozeWakeLabel(thread.snoozedUntil, new Date())
@@ -1815,7 +1872,6 @@ export default function SidebarV2() {
                       // rows resolve to null on their own.
                       wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                       isActive={routeThreadKey === threadKey}
-                      hasRouteThread={routeThreadKey !== null}
                       jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                       environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                       projectCwd={
@@ -1836,10 +1892,7 @@ export default function SidebarV2() {
                       isRenaming={renamingThreadKey === threadKey}
                       renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                       onContextMenu={handleThreadContextMenu}
-                      onSettle={attemptSettle}
-                      onUnsettle={attemptUnsettle}
-                      onSnooze={attemptSnooze}
-                      onUnsnooze={attemptUnsnooze}
+                      onArchive={attemptArchive}
                       onChangeRequestState={handleChangeRequestState}
                     />
                   );
