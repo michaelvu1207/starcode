@@ -39,6 +39,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "./query";
 import { useAtomCommand } from "./use-atom-command";
@@ -142,6 +143,30 @@ export function useRefreshHistoryImports(environmentId: EnvironmentId | null): (
     environmentTerminalHistory.importsAtom(environmentId ?? PLACEHOLDER_ENVIRONMENT_ID),
   );
   return environmentId === null ? NOOP : refresh;
+}
+
+/**
+ * The imperative twins of the two hooks above, for callers that only learn
+ * which machine they are asking about when the user clicks.
+ *
+ * The sidebar's context menu is the case: it acts on any row in a list merged
+ * from every connected machine, so it cannot hold a hook per environment, and
+ * hooking every row to answer a question nobody asked is what the row menu was
+ * built to avoid in the first place.
+ */
+export function refreshHistoryImports(environmentId: EnvironmentId): void {
+  appAtomRegistry.refresh(environmentTerminalHistory.importsAtom(environmentId));
+}
+
+/**
+ * Best-effort: `null` while the registry is cold or still in flight, which the
+ * one caller treats the same way the menu already treated a pending read —
+ * as "cannot prove this thread carries a conversation", never as a promise
+ * that it does.
+ */
+export function readHistoryImports(environmentId: EnvironmentId): HistoryImportsPage | null {
+  const result = appAtomRegistry.get(importsViewAtom(environmentId));
+  return AsyncResult.isSuccess(result) ? result.value : null;
 }
 
 const NOOP = () => {};

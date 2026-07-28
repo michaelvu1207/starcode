@@ -64,6 +64,12 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Resume the sessions that were alive at last shutdown when this service
+   * starts. Defaults to true; tests set it false so building the layer does
+   * not try to launch real provider processes.
+   */
+  readonly restoreSessionsOnStart?: boolean;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -1067,6 +1073,87 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ),
   );
+
+  /**
+   * Bring back the sessions that were alive when this process last stopped.
+   *
+   * Recovery itself is not new — `recoverSessionForThread` resumes from the
+   * persisted cursor and mints a fresh MCP credential. What was missing is a
+   * trigger: the only caller was `routeThread`, which runs when a command
+   * arrives, so after a server restart every thread sat dead until somebody
+   * hand-poked it. The provider processes are driven over this server's stdio,
+   * so a restart kills all of them at once and there is nobody left to do the
+   * poking.
+   *
+   * Only `running` and `starting` rows are eligible: `stopped` was a
+   * deliberate stop and must stay stopped, and `error` failed for a reason a
+   * blind retry at boot will not fix. A row with no resume cursor is skipped
+   * rather than failed — recovery would reject it anyway, and a thread that
+   * never got far enough to persist a cursor has nothing to come back to.
+   *
+   * Every thread is recovered independently and its failure is logged, never
+   * propagated: one dead session must not take down the boot of the service
+   * that owns all the others. Forked, so a slow provider launch delays no
+   * other startup work.
+   */
+  const restoreRunningSessions = Effect.gen(function* () {
+    const bindings = yield* directory.listBindings();
+    const eligible = bindings.filter(
+      (binding) =>
+        (binding.status === "running" || binding.status === "starting") &&
+        binding.resumeCursor !== null &&
+        binding.resumeCursor !== undefined,
+    );
+    const skipped = bindings.length - eligible.length;
+    if (eligible.length === 0) {
+      yield* Effect.logInfo("no provider sessions to restore", {
+        bindings: bindings.length,
+        skipped,
+      });
+      return;
+    }
+    yield* Effect.logInfo("restoring provider sessions after restart", {
+      eligible: eligible.length,
+      skipped,
+    });
+    const outcomes = yield* Effect.forEach(
+      eligible,
+      (binding) =>
+        recoverSessionForThread({
+          binding,
+          operation: "ProviderService.restoreRunningSessions",
+        }).pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not restore provider session", {
+              threadId: binding.threadId,
+              provider: binding.provider,
+              errorTag: causeErrorTag(cause),
+            }).pipe(Effect.as(false)),
+          ),
+        ),
+      // Bounded: each recovery spawns a provider process, and launching a
+      // dozen agents at once on one machine is how a restart turns into a
+      // thundering herd.
+      { concurrency: 4 },
+    );
+    const restored = outcomes.filter(Boolean).length;
+    yield* Effect.logInfo("provider session restore complete", {
+      restored,
+      failed: outcomes.length - restored,
+      skipped,
+    });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("provider session restore did not run", {
+        errorTag: causeErrorTag(cause),
+      }),
+    ),
+  );
+
+  if (options?.restoreSessionsOnStart !== false) {
+    yield* restoreRunningSessions.pipe(Effect.forkScoped);
+  }
 
   return {
     startSession,

@@ -332,8 +332,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
-     visible even when the header and timeline share the same background. */
-  .chat-timeline-scroll-fade,
+     visible even when the header and timeline share the same background.
+
+     Settings only. The chat timeline used to carry this too, back when a thread
+     header sat above it — the fork deleted that header, so the mask had nothing
+     left to hide behind and simply dimmed the top two lines of every
+     transcript. */
   .settings-page-scroll-fade {
     --topbar-scroll-fade-height: 2.5rem;
     -webkit-mask-image:
@@ -768,7 +772,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 40rem) {
-    .chat-timeline-scroll-fade,
     .settings-page-scroll-fade {
       --topbar-scroll-fade-height: 3rem;
     }

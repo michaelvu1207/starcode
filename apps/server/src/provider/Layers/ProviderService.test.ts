@@ -710,6 +710,86 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+/**
+ * The restart story this exists for: the provider processes are driven over
+ * this server's stdio, so restarting it kills every agent at once. Recovery
+ * itself already worked, but its only trigger was an incoming command, so the
+ * threads stayed dead until a human poked each one. Boot now does the poking.
+ */
+it.effect("ProviderServiceLive resumes running sessions on startup", () =>
+  Effect.gen(function* () {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-restore-"));
+    const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
+
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+
+    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(persistenceLayer),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+
+    yield* Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      // Alive when the server died: must come back.
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: ThreadId.make("thread-running"),
+        status: "running",
+        resumeCursor: { opaque: "resume-thread-running" },
+      });
+      // Deliberately stopped: must stay stopped.
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: ThreadId.make("thread-stopped"),
+        status: "stopped",
+        resumeCursor: { opaque: "resume-thread-stopped" },
+      });
+      // Never got far enough to persist a cursor: skipped, not failed.
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: ThreadId.make("thread-no-cursor"),
+        status: "running",
+      });
+    }).pipe(Effect.provide(directoryLayer));
+
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      yield* ProviderService.ProviderService;
+      // The restore is forked so it never blocks boot. Every step it takes here
+      // is synchronous (the fake adapter and the sqlite directory), so yielding
+      // lets it run to completion — deterministically, rather than sleeping
+      // against a clock `it.effect` does not advance.
+      for (let tick = 0; tick < 100; tick += 1) {
+        yield* Effect.yieldNow;
+      }
+    }).pipe(Effect.provide(providerLayer));
+
+    const resumed = codex.startSession.mock.calls.map(([input]) => String(input.threadId));
+    assert.deepEqual(resumed, ["thread-running"]);
+
+    NodeFS.rmSync(tempDir, { recursive: true, force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect(
   "ProviderServiceLive restores rollback routing after restart using persisted thread mapping",
   () =>
