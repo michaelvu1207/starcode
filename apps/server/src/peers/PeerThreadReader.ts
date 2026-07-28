@@ -21,6 +21,7 @@ import {
   type PeerThreadSummary,
   type PeerThreadsListResult,
   type PeerThreadsOrder,
+  type ProjectCategorySlug,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -30,12 +31,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient } from "effect/unstable/http";
 
-import { fetchPeerShellSnapshot, fetchPeerThreadSnapshot } from "./PeerEnvironmentClient.ts";
+import {
+  fetchPeerProjectCatalog,
+  fetchPeerShellSnapshot,
+  fetchPeerThreadSnapshot,
+} from "./PeerEnvironmentClient.ts";
 import { PeerRegistry, type ResolvedPeer } from "./PeerRegistry.ts";
 import {
   applyPeerThreadCursor,
   comparePeerThreadsByActivity,
   comparePeerThreadsByCreation,
+  peerProjectByThread,
   renderPeerTranscript,
   resolvePeerThreadStatus,
   summarizePeerThread,
@@ -47,6 +53,13 @@ export interface PeerThreadReaderShape {
     readonly limit?: number | undefined;
     readonly order?: PeerThreadsOrder | undefined;
     readonly cursor?: PeerThreadCursor | undefined;
+    /**
+     * Already resolved to a concrete slug by the caller, or absent for every
+     * project. The "default to the caller's own project" rule lives in the MCP
+     * handler, which is the only layer that knows who is calling — this one
+     * just filters.
+     */
+    readonly project?: ProjectCategorySlug | undefined;
   }) => Effect.Effect<PeerThreadsListResult, PeerFederationError>;
   readonly readThread: (options: {
     readonly peer: PeerName;
@@ -153,14 +166,47 @@ export const make = Effect.gen(function* () {
       (peer) =>
         resolvePeer("list", peer.name).pipe(
           Effect.flatMap((resolved) =>
-            fetchPeerShellSnapshot({
-              baseUrl: resolved.peer.baseUrl,
-              credential: resolved.credential,
-            }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+            Effect.all(
+              {
+                snapshot: fetchPeerShellSnapshot({
+                  baseUrl: resolved.peer.baseUrl,
+                  credential: resolved.credential,
+                }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+                /**
+                 * Only the peer can say which of its folders is which project,
+                 * so the slug has to come from the peer's own catalog. Failing
+                 * to read it must not cost us the thread list — the threads are
+                 * still worth returning, just without a project — so this
+                 * degrades to `undefined` and the summary omits the key rather
+                 * than claiming the threads are unfiled.
+                 */
+                categories: fetchPeerProjectCatalog({
+                  baseUrl: resolved.peer.baseUrl,
+                  credential: resolved.credential,
+                }).pipe(
+                  Effect.provideService(HttpClient.HttpClient, httpClient),
+                  Effect.map((catalog) => catalog.categories),
+                  Effect.orElseSucceed(() => undefined),
+                ),
+              },
+              { concurrency: "unbounded" },
+            ),
           ),
-          Effect.map((snapshot) =>
-            snapshot.threads.map((thread) => summarizePeerThread(peer.name, thread)),
-          ),
+          Effect.map(({ snapshot, categories }) => {
+            const projectByThread =
+              categories === undefined
+                ? undefined
+                : peerProjectByThread({ categories, threads: snapshot.threads });
+            return snapshot.threads.map((thread) =>
+              summarizePeerThread(
+                peer.name,
+                thread,
+                projectByThread === undefined
+                  ? undefined
+                  : (projectByThread.get(thread.id) ?? null),
+              ),
+            );
+          }),
           // One dead machine must not sink the listing: degrade to a reported
           // failure so the agent still sees every reachable peer's threads.
           Effect.matchCause({
@@ -182,9 +228,25 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
 
-    const merged = results
-      .flatMap((result) => result.threads)
-      .toSorted(order === "created" ? comparePeerThreadsByCreation : comparePeerThreadsByActivity);
+    /**
+     * Scoped before sorting and paging, so `totalAvailable` and the cursor both
+     * describe the filtered set. Filtering after the slice would page through
+     * the fleet and hand back a near-empty page for a busy project.
+     *
+     * A thread whose project we could not learn is kept out of a scoped listing
+     * rather than let in: including unknowns would answer "who is on my
+     * project" with threads that may well be on another.
+     */
+    const scoped =
+      options.project === undefined
+        ? results.flatMap((result) => result.threads)
+        : results
+            .flatMap((result) => result.threads)
+            .filter((thread) => thread.project === options.project);
+
+    const merged = scoped.toSorted(
+      order === "created" ? comparePeerThreadsByCreation : comparePeerThreadsByActivity,
+    );
     const eligible =
       options.cursor === undefined ? merged : applyPeerThreadCursor(merged, options.cursor);
     const page = eligible.slice(0, limit);

@@ -10,6 +10,8 @@ import {
   PeerThreadSendResult,
   PeerThreadsListInput,
   PeerThreadsListResult,
+  PeersListInput,
+  PeersListResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
@@ -17,9 +19,24 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PeerThreadReader from "../../../peers/PeerThreadReader.ts";
 import * as PeerThreadWriter from "../../../peers/PeerThreadWriter.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import { PeerRegistry } from "../../../peers/PeerRegistry.ts";
+import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, PeerThreadReader.PeerThreadReader];
+/**
+ * `peer_threads_list` defaults to the caller's own project, and resolving that
+ * means reading this machine's catalog and its thread projection — so the
+ * listing tool depends on both even though neither is a parameter.
+ */
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  PeerThreadReader.PeerThreadReader,
+  ProjectCatalogRegistry,
+  ProjectionSnapshotQuery,
+];
+
+/** `peers_list` reads the registry and nothing else. */
+const connectionDependencies = [McpInvocationContext.McpInvocationContext, PeerRegistry];
 // `send` stamps provenance from server state rather than from the tool call,
 // so the environment descriptor and the thread projection are dependencies of
 // the toolkit even though no tool takes them as parameters.
@@ -111,7 +128,25 @@ export const PeerThreadDispatchTool = peerWriteTool(
   true,
 );
 
+/**
+ * The one tool here that answers a question about this machine rather than a
+ * peer, and it exists because every other tool takes a peer name it had no way
+ * to discover. Registry-only: it never touches the network, so an unreachable
+ * machine still lists, which is precisely when an agent wants the SSH login.
+ */
+export const PeersListTool = peerReadTool(
+  Tool.make("peers_list", {
+    description:
+      "List the machines this environment is paired with. Returns each connection's name — the name every other peer_* tool takes — plus its label, base URL, credential class, and the SSH login when one has been recorded. Combine sshUser with sshHost to reach a machine directly (ssh user@host) when you need to inspect it rather than talk to a thread on it. Reads the local registry only, so a machine that is down still appears.",
+    parameters: PeersListInput,
+    success: PeersListResult,
+    failure: PeerFederationError,
+    dependencies: connectionDependencies,
+  }).annotate(Tool.Title, "List connections"),
+);
+
 export const PeerThreadsToolkit = Toolkit.make(
+  PeersListTool,
   PeerThreadsListTool,
   PeerThreadReadTool,
   PeerThreadSendTool,

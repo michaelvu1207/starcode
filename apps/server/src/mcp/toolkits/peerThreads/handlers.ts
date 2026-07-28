@@ -1,8 +1,11 @@
 import {
   PeerFederationError,
+  resolveLocalProjectMembership,
   type PeerFederationOperation,
+  type ThreadId,
   type ThreadMailboxOrigin,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -10,6 +13,8 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PeerThreadReader from "../../../peers/PeerThreadReader.ts";
 import * as PeerThreadWriter from "../../../peers/PeerThreadWriter.ts";
+import { PeerRegistry } from "../../../peers/PeerRegistry.ts";
+import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PeerThreadsToolkit } from "./tools.ts";
 
@@ -52,6 +57,70 @@ const requireOperateCapability = (operation: PeerFederationOperation) =>
   );
 
 /**
+ * The host an agent would SSH to, taken from the peer's own base URL so the two
+ * can never drift. `URL` handles IPv6 brackets and ports for us; anything it
+ * cannot parse yields null rather than a guess, because a wrong host in an
+ * `ssh` command is worse than an absent one.
+ */
+const sshHostFromBaseUrl = (baseUrl: string): string | null => {
+  try {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname.length === 0 ? null : hostname;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Which project the calling thread sits under, for the default scope.
+ *
+ * Refuses rather than widening. If the caller is unfiled we cannot answer "who
+ * else is on my project", and quietly returning every thread on every machine
+ * would be the firehose this default exists to prevent — an agent would read it
+ * as its project being far busier than it is. An unreadable catalog is treated
+ * the same way, because "I could not tell" and "you have no project" both mean
+ * the scope is unknown.
+ */
+const callerProject = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const registry = yield* ProjectCatalogRegistry;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const [categories, shell] = yield* Effect.all(
+      [
+        registry.list.pipe(Effect.orElseSucceed(() => [])),
+        projectionSnapshotQuery.getShellSnapshot().pipe(Effect.orElseSucceed(() => undefined)),
+      ],
+      { concurrency: 2 },
+    );
+
+    const membership =
+      shell === undefined
+        ? undefined
+        : resolveLocalProjectMembership({
+            categories,
+            threads: shell.threads.map((thread) => ({
+              id: thread.id,
+              projectId: thread.projectId,
+            })),
+          });
+
+    const slug =
+      membership === undefined
+        ? undefined
+        : Array.from(membership).find(([, threadIds]) => threadIds.includes(threadId))?.[0];
+
+    if (slug === undefined) {
+      return yield* new PeerFederationError({
+        operation: "list",
+        reason: "caller_project_unknown",
+        detail:
+          "This thread is not filed under a project, so there is no default scope. Pass project to name one, or allProjects to list every project.",
+      });
+    }
+    return slug;
+  });
+
+/**
  * Builds the provenance stamped onto an outgoing message. Every field is
  * resolved from server state rather than accepted from the tool call, so a
  * sending agent cannot claim to be a thread it is not.
@@ -82,18 +151,67 @@ const resolveOrigin = (invocation: McpInvocationContext.McpInvocationScope) =>
   });
 
 const handlers = {
+  peers_list: () =>
+    Effect.gen(function* () {
+      yield* requirePeerCapability("list");
+      const registry = yield* PeerRegistry;
+      const peers = yield* registry.list.pipe(
+        Effect.catchCause(
+          (cause) =>
+            new PeerFederationError({
+              operation: "list",
+              reason: "registry_unavailable",
+              detail: Cause.pretty(cause),
+            }),
+        ),
+      );
+      return {
+        connections: peers
+          .map((peer) => ({
+            name: peer.name,
+            label: peer.label,
+            baseUrl: peer.baseUrl,
+            sshHost: sshHostFromBaseUrl(peer.baseUrl),
+            sshUser: peer.sshUser,
+            credentialClass: peer.credentialClass,
+            environmentId: peer.environmentId,
+          }))
+          .toSorted((left, right) => left.name.localeCompare(right.name)),
+      };
+    }),
+
   peer_threads_list: (input) =>
-    requirePeerCapability("list").pipe(
-      Effect.andThen(() => PeerThreadReader.PeerThreadReader),
-      Effect.flatMap((reader) =>
-        reader.listThreads({
-          ...(input.peer === undefined ? {} : { peer: input.peer }),
-          ...(input.limit === undefined ? {} : { limit: input.limit }),
-          ...(input.order === undefined ? {} : { order: input.order }),
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-        }),
-      ),
-    ),
+    Effect.gen(function* () {
+      const invocation = yield* requirePeerCapability("list");
+      if (input.project !== undefined && input.allProjects === true) {
+        return yield* new PeerFederationError({
+          operation: "list",
+          reason: "project_scope_ambiguous",
+          detail:
+            "Pass project to scope to one project, or allProjects to see them all — not both.",
+        });
+      }
+
+      /**
+       * Resolved here rather than in the reader because this is the only layer
+       * that knows who is calling. `allProjects` skips the lookup entirely, so
+       * asking for the fleet-wide view never fails on a caller that happens to
+       * be unfiled.
+       */
+      const project =
+        input.allProjects === true
+          ? undefined
+          : (input.project ?? (yield* callerProject(invocation.threadId)));
+
+      const reader = yield* PeerThreadReader.PeerThreadReader;
+      return yield* reader.listThreads({
+        ...(input.peer === undefined ? {} : { peer: input.peer }),
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(input.order === undefined ? {} : { order: input.order }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        ...(project === undefined ? {} : { project }),
+      });
+    }),
   peer_thread_read: (input) =>
     requirePeerCapability("read").pipe(
       Effect.andThen(() => PeerThreadReader.PeerThreadReader),
