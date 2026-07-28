@@ -2,21 +2,27 @@ import { expect, it } from "@effect/vitest";
 import {
   EventId,
   MessageId,
+  PeerName,
+  ProjectCategorySlug,
+  ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationMessage,
   type OrchestrationThreadActivity,
   type PeerThreadCursor,
   type PeerThreadSummary,
+  type ProjectCategoryRecord,
 } from "@t3tools/contracts";
 
 import {
   applyPeerThreadCursor,
   comparePeerThreadsByActivity,
   comparePeerThreadsByCreation,
+  peerProjectByThread,
   peerThreadLastActivityAt,
   renderPeerTranscript,
   resolvePeerThreadStatus,
+  summarizePeerThread,
 } from "./transcript.ts";
 
 const message = (
@@ -214,4 +220,84 @@ it("a cursor at the last row yields an empty next page", () => {
       threadId: ThreadId.make("a"),
     }),
   ).toEqual([]);
+});
+
+const category = (
+  slug: string,
+  local: Partial<ProjectCategoryRecord["local"]> = {},
+): ProjectCategoryRecord => ({
+  slug: ProjectCategorySlug.make(slug),
+  createdAt: "2026-07-24T00:00:00.000Z",
+  display: {
+    title: slug,
+    summary: "",
+    accent: "",
+    glyph: "",
+    icon: "",
+    parentSlug: null,
+    links: [],
+    notes: "",
+    archivedAt: null,
+    updatedAt: "2026-07-24T00:00:00.000Z",
+  },
+  local: {
+    bindings: [],
+    threadIds: [],
+    excludedThreadIds: [],
+    masterThreadId: "",
+    masterDefaults: { runtimeMode: "full-access", interactionMode: "default" },
+    defaults: {},
+    updatedAt: "2026-07-24T00:00:00.000Z",
+    ...local,
+  },
+});
+
+it("maps a peer's threads to project slugs through its own bindings", () => {
+  const byThread = peerProjectByThread({
+    categories: [
+      category("starcode", {
+        bindings: [{ projectId: ProjectId.make("folder-a"), boundAt: "2026-07-24T00:00:00.000Z" }],
+      }),
+      category("simcloud", {
+        bindings: [{ projectId: ProjectId.make("folder-b"), boundAt: "2026-07-24T00:00:00.000Z" }],
+      }),
+    ],
+    threads: [
+      { id: ThreadId.make("thread-a"), projectId: ProjectId.make("folder-a") },
+      { id: ThreadId.make("thread-b"), projectId: ProjectId.make("folder-b") },
+      // A folder no category binds — the thread exists but sits under no project.
+      { id: ThreadId.make("thread-c"), projectId: ProjectId.make("folder-z") },
+    ],
+  });
+
+  expect(byThread.get(ThreadId.make("thread-a"))).toBe("starcode");
+  expect(byThread.get(ThreadId.make("thread-b"))).toBe("simcloud");
+  expect(byThread.has(ThreadId.make("thread-c"))).toBe(false);
+});
+
+/**
+ * The distinction the whole filter rests on: a peer that could not tell us must
+ * not look identical to a thread that genuinely has no project, or a scoped
+ * listing silently drops every thread on an un-upgraded machine.
+ */
+it("omits project entirely when unknown, but carries null when unfiled", () => {
+  const base = {
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("folder-a"),
+    title: "Some thread",
+    createdAt: "2026-07-24T00:00:00.000Z",
+    updatedAt: "2026-07-24T00:00:00.000Z",
+    latestUserMessageAt: null,
+    branch: null,
+    modelSelection: { instanceId: "claude", model: "opus" },
+    planSummary: undefined,
+    ...shell,
+  } as unknown as Parameters<typeof summarizePeerThread>[1];
+
+  expect("project" in summarizePeerThread(PeerName.make("peer-1"), base)).toBe(false);
+  expect(summarizePeerThread(PeerName.make("peer-1"), base, null).project).toBeNull();
+  expect(
+    summarizePeerThread(PeerName.make("peer-1"), base, ProjectCategorySlug.make("starcode"))
+      .project,
+  ).toBe("starcode");
 });

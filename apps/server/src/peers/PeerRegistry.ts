@@ -115,6 +115,11 @@ export interface PeerRegistryShape {
     input: PeerRegisterInput,
   ) => Effect.Effect<PeerEnvironment, PeerRegistryStateError | PeerRegistrationError>;
   readonly remove: (name: PeerName) => Effect.Effect<boolean, PeerRegistryStateError>;
+  /** Record (or clear, with null) how to log into an already-registered peer. False when it is unknown. */
+  readonly setSshUser: (
+    name: PeerName,
+    sshUser: string | null,
+  ) => Effect.Effect<boolean, PeerRegistryStateError>;
   /** Peer plus its bearer credential. `None` when the peer or secret is gone. */
   readonly resolve: (
     name: PeerName,
@@ -339,6 +344,7 @@ export const make = Effect.gen(function* () {
           onNone: () => null,
           onSome: (value) => value.label,
         }),
+        sshUser: input.sshUser ?? null,
         scopes: resolved.grantedScopes,
         registeredAt,
         credentialExpiresAt: resolved.credentialExpiresAt,
@@ -372,7 +378,30 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return PeerRegistry.of({ list, register, remove, resolve });
+  /**
+   * Its own operation rather than a re-register, because registering redeems a
+   * credential: pairing tokens are single-use, and making an operator mint one
+   * just to record a login name would be a worse trade than an extra method.
+   * Returns false for an unknown peer instead of creating one — this only edits
+   * a peer that already exists.
+   */
+  const setSshUser: PeerRegistryShape["setSshUser"] = Effect.fn("PeerRegistry.setSshUser")(
+    function* (name, sshUser) {
+      return yield* writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const file = yield* readFile;
+          if (!file.peers.some((peer) => peer.name === name)) return false;
+          yield* writeFile({
+            version: 1,
+            peers: file.peers.map((peer) => (peer.name === name ? { ...peer, sshUser } : peer)),
+          });
+          return true;
+        }),
+      );
+    },
+  );
+
+  return PeerRegistry.of({ list, register, remove, resolve, setSshUser });
 });
 
 export const layer: Layer.Layer<

@@ -11,6 +11,7 @@
 import {
   PEER_TRANSCRIPT_ENTRY_MAX_CHARS,
   PEER_TRANSCRIPT_MAX_TOOL_CALLS,
+  resolveLocalProjectMembership,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
@@ -19,6 +20,9 @@ import {
   type PeerThreadStatus,
   type PeerThreadSummary,
   type PeerTranscriptEntry,
+  type ProjectCategoryRecord,
+  type ProjectCategorySlug,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 const TOOL_CALL_NAME_MAX_CHARS = 80;
@@ -86,9 +90,21 @@ export const resolvePeerThreadStatus = (
   return "idle";
 };
 
+/**
+ * Which project a peer's thread sits under, once its catalog has been read.
+ *
+ * `undefined` is not the same as `null` here and the distinction is the whole
+ * point: `undefined` means the peer never told us — its catalog was unreachable,
+ * or it runs a server from before projects — and the key is omitted so a filter
+ * can tell "unknown" from "unfiled". `null` means we read the catalog and the
+ * thread is genuinely under no project.
+ */
+export type PeerThreadProject = ProjectCategorySlug | null | undefined;
+
 export const summarizePeerThread = (
   peer: PeerName,
   thread: OrchestrationThreadShell,
+  project: PeerThreadProject = undefined,
 ): PeerThreadSummary => ({
   peer,
   threadId: thread.id,
@@ -103,7 +119,33 @@ export const summarizePeerThread = (
   // meaning "this server does not compute plan summaries" rather than "this
   // thread has no plan".
   ...(thread.planSummary === undefined ? {} : { planSummary: thread.planSummary }),
+  ...(project === undefined ? {} : { project }),
 });
+
+/**
+ * Fold a peer's own catalog into a thread-to-slug lookup.
+ *
+ * Reuses `resolveLocalProjectMembership` rather than re-deriving membership
+ * here: that function already encodes explicit thread filing, folder bindings,
+ * exclusions and the slug ordering that keeps a thread bound to two categories
+ * from flipping between them. A second implementation would be a second set of
+ * rules to keep in step, and the one on the peer is the one that decides what
+ * the peer's own sidebar shows.
+ */
+export const peerProjectByThread = (input: {
+  readonly categories: ReadonlyArray<ProjectCategoryRecord>;
+  readonly threads: ReadonlyArray<Pick<OrchestrationThreadShell, "id" | "projectId">>;
+}): ReadonlyMap<ThreadId, ProjectCategorySlug> => {
+  const bySlug = resolveLocalProjectMembership({
+    categories: input.categories,
+    threads: input.threads.map((thread) => ({ id: thread.id, projectId: thread.projectId })),
+  });
+  const byThread = new Map<ThreadId, ProjectCategorySlug>();
+  for (const [slug, threadIds] of bySlug) {
+    for (const threadId of threadIds) if (!byThread.has(threadId)) byThread.set(threadId, slug);
+  }
+  return byThread;
+};
 
 const descendingBy = (
   timestampOf: (summary: PeerThreadSummary) => string,

@@ -140,3 +140,14 @@ describe("peer credential classes", () => {
     assert.deepStrictEqual([...peerCredentialScopes("read")], ["orchestration:read"]);
   });
 });
+
+it.effect("recording an ssh login for an unknown peer reports no change", () =>
+  Effect.gen(function* () {
+    const registry = yield* PeerRegistry.PeerRegistry;
+
+    // Its own operation rather than a re-register precisely so it cannot create
+    // a peer as a side effect — an unknown name is a no-op, not an insert.
+    assert.isFalse(yield* registry.setSshUser(PeerName.make("absent"), "someone"));
+    assert.deepEqual([...(yield* registry.list)], []);
+  }).pipe(Effect.provide(makePeerRegistryLayer())),
+);

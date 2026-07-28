@@ -83,6 +83,21 @@ export const PeerEnvironment = Schema.Struct({
   credentialClass: PeerCredentialClass.pipe(
     Schema.withDecodingDefault(Effect.succeed("read" as const satisfies PeerCredentialClass)),
   ),
+  /**
+   * Login name for reaching this machine over SSH, or null when nobody has
+   * recorded one. Only the user: the host is already in `baseUrl`, and the key
+   * is assumed to be installed, so a username is the whole of what an agent is
+   * missing to run `ssh <user>@<host>`.
+   *
+   * A decoding default of null on purpose — every `peers.json` written before
+   * this field existed omits it, and those files must keep loading rather than
+   * failing the whole registry over an absent key. This is deliberately not a
+   * credential: no secret is stored here and nothing reads it but a human or an
+   * agent deciding how to reach a box.
+   */
+  sshUser: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scopes: AuthEnvironmentScopes,
   registeredAt: IsoDateTime,
   credentialExpiresAt: IsoDateTime,
@@ -121,8 +136,43 @@ export const PeerRegisterInput = Schema.Struct({
    * scope for the registration to succeed.
    */
   credentialClass: Schema.optional(PeerCredentialClass),
+  /** Login name for `ssh <user>@<host>`. Absent leaves the peer's login unknown. */
+  sshUser: Schema.optional(TrimmedNonEmptyString),
 });
 export type PeerRegisterInput = typeof PeerRegisterInput.Type;
+
+/**
+ * How to reach one registered connection, as an agent sees it.
+ *
+ * This exists because every other federation tool takes a peer *name* as input
+ * and none of them would tell you what names there are — the fleet layout was
+ * only discoverable by reading `peers.json` off disk, which an agent on another
+ * machine cannot do.
+ *
+ * `sshHost` is split out of `baseUrl` rather than left for the caller to parse:
+ * the whole point is that `sshUser` + `sshHost` compose into a command without
+ * the agent writing a URL parser, and a peer registered with a hostname rather
+ * than an address should still yield the right thing.
+ */
+export const PeerConnectionSummary = Schema.Struct({
+  name: PeerName,
+  label: Schema.NullOr(TrimmedNonEmptyString),
+  baseUrl: PeerBaseUrl,
+  /** Host from `baseUrl`, ready to pair with `sshUser`. Null if it cannot be parsed. */
+  sshHost: Schema.NullOr(TrimmedNonEmptyString),
+  sshUser: Schema.NullOr(TrimmedNonEmptyString),
+  credentialClass: PeerCredentialClass,
+  environmentId: Schema.NullOr(EnvironmentId),
+});
+export type PeerConnectionSummary = typeof PeerConnectionSummary.Type;
+
+export const PeersListInput = Schema.Struct({});
+export type PeersListInput = typeof PeersListInput.Type;
+
+export const PeersListResult = Schema.Struct({
+  connections: Schema.Array(PeerConnectionSummary),
+});
+export type PeersListResult = typeof PeersListResult.Type;
 
 export const PeerRemoveInput = Schema.Struct({
   name: PeerName,
@@ -169,6 +219,20 @@ export const PeerThreadSummary = Schema.Struct({
    * me" must stay distinguishable from "the thread has no plan".
    */
   planSummary: Schema.optionalKey(Schema.NullOr(OrchestrationThreadPlanSummary)),
+  /**
+   * Which project the thread belongs to, by slug — the name that is the same
+   * word on every machine. The peer's own `projectId` is deliberately not
+   * carried: it names a folder on that machine and means nothing here.
+   *
+   * `optionalKey` over a nullable for the same reason `planSummary` is. An
+   * absent key means the peer could not tell us — either it runs a server from
+   * before this field, or its project catalog was unreachable while its threads
+   * were not. `null` means the thread genuinely sits under no project. Collapse
+   * those two and a project filter silently drops every thread on a machine
+   * that has not been upgraded yet, which reads as "nobody else is working on
+   * this" — the most dangerous wrong answer this tool can give.
+   */
+  project: Schema.optionalKey(Schema.NullOr(ProjectCategorySlug)),
 });
 export type PeerThreadSummary = typeof PeerThreadSummary.Type;
 
@@ -270,6 +334,24 @@ export const PeerThreadsListInput = Schema.Struct({
     PeerThreadCursor.annotate({
       description:
         "Pass the previous response's nextCursor to fetch the next page. Requires order=created.",
+    }),
+  ),
+  /**
+   * Scoping is opt-out rather than opt-in, deliberately. The question an agent
+   * actually has is "who else is working on my project", and answering it with
+   * every thread on every machine in every project buries it. So the default is
+   * the caller's own project, and the whole fleet is the thing you ask for.
+   */
+  project: Schema.optional(
+    ProjectCategorySlug.annotate({
+      description:
+        "Only threads filed under this project slug, on any machine. Defaults to the calling thread's own project. Pass allProjects instead to see every project.",
+    }),
+  ),
+  allProjects: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Set true to list threads across every project rather than just the calling thread's own. Cannot be combined with project.",
     }),
   ),
 });
@@ -441,6 +523,19 @@ export const PeerFederationReason = Schema.Literals([
   "mailbox_full",
   "project_not_found",
   "message_rejected",
+  /**
+   * `project` and `allProjects` were both given. Refused rather than resolved by
+   * precedence: either answer silently ignores half of what the caller asked
+   * for, and a listing that quietly changed scope is one an agent would act on.
+   */
+  "project_scope_ambiguous",
+  /**
+   * The default scope is the caller's own project and the caller has none — it
+   * sits under no project, or it is not a thread on this machine at all. Refused
+   * rather than falling back to every project, because the fallback is the
+   * fleet-wide firehose this default exists to avoid.
+   */
+  "caller_project_unknown",
 ]);
 export type PeerFederationReason = typeof PeerFederationReason.Type;
 
