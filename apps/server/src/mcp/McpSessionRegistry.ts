@@ -54,7 +54,26 @@ export interface McpSessionRegistryOptions {
   readonly now?: () => number;
 }
 
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
+/**
+ * Idle eviction is off by default, because a session cannot recover from it.
+ * The bearer is minted once and injected into the agent process at launch —
+ * there is no re-mint path and nothing for the agent to refresh. So an idle
+ * eviction is not "re-authenticate", it is permanent loss of every MCP tool
+ * for the rest of that session, discovered only when a call fails. A coding
+ * agent routinely goes half an hour writing code without touching MCP, which
+ * made 30 minutes a near-certainty rather than an edge case.
+ *
+ * It also bought very little. The token sits in the process's argv, readable
+ * by anything that can run `ps`; anyone reading it there can use it at once,
+ * which refreshes `lastUsedAt` and defeats the idle window anyway. What
+ * actually bounds exposure is the absolute lifetime below, the per-session
+ * capability scope, the tailnet-scoped listener, and `revokeThread` on exit —
+ * none of which the idle timer contributes to. Records live in an in-memory
+ * Map, so they die with the process regardless.
+ *
+ * `idleTimeoutMs` stays an option for a caller that genuinely wants it.
+ */
+const DEFAULT_IDLE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 const DEFAULT_MAXIMUM_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 
 const bytesToHex = (bytes: Uint8Array): string =>

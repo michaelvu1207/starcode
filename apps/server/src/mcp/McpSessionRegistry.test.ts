@@ -44,6 +44,22 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       ),
     );
 
+/** Same wiring, but leaves the lifetime knobs at their shipped defaults. */
+const makeDefaultRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+  McpSessionRegistry.__testing
+    .make({ now })
+    .pipe(
+      Effect.provideService(HttpServer.HttpServer, httpServer),
+      Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+      Effect.provide(
+        Layer.mergeAll(
+          serverSettingsLayerTest(),
+          Layer.mock(ProjectCatalogRegistry)({ list: Effect.succeed([]) }),
+          NodeServices.layer,
+        ),
+      ),
+    );
+
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
@@ -87,7 +103,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
-it.effect("expires credentials after inactivity", () =>
+it.effect("expires credentials after inactivity when a caller opts in", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
     const registry = yield* makeRegistry(() => timestamp);
@@ -97,6 +113,34 @@ it.effect("expires credentials after inactivity", () =>
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+/**
+ * The default must NOT evict on idleness. A coding agent writes code for long
+ * stretches without touching MCP, and there is no re-mint path — so an idle
+ * eviction costs it every MCP tool for the rest of the session. Note this uses
+ * the real defaults rather than `makeRegistry`, which pins a 100ms idle window.
+ */
+it.effect("keeps a credential alive across a long idle gap by default", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeDefaultRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-idle-default");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    // Four hours without a single MCP call — well past the old 30-minute window,
+    // still inside the 8-hour absolute lifetime.
+    timestamp += 4 * 60 * 60 * 1_000;
+    expect(yield* registry.resolve(token)).toBeDefined();
+
+    // The absolute lifetime is the control still doing the work.
+    timestamp += 5 * 60 * 60 * 1_000;
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
