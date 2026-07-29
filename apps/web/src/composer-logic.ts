@@ -274,6 +274,26 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
+/**
+ * Commands that branch this thread rather than reconfigure it.
+ *
+ * Deliberately a second parser rather than a widening of the one above.
+ * `parseStandaloneComposerSlashCommand` returns a `ProviderInteractionMode` —
+ * its return type *is* the answer, and its one caller feeds that straight into
+ * `handleInteractionModeChange`. `/side` and `/fork` are not modes: they each
+ * cost a round trip, create a thread, and land somewhere different. Folding
+ * them into that union would give the caller a value it has to re-narrow before
+ * it can do anything with, which is how a `/side` ends up silently switching
+ * the thread into plan mode.
+ */
+export type ComposerThreadCommand = "side" | "fork";
+
+export function parseStandaloneComposerThreadCommand(text: string): ComposerThreadCommand | null {
+  const match = /^\/(side|fork)\s*$/i.exec(text.trim());
+  const command = match?.[1]?.toLowerCase();
+  return command === "side" || command === "fork" ? command : null;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

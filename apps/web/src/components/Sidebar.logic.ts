@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { type ContextMenuItem, isListableThread } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -33,6 +33,7 @@ type ScopedSidebarThread = ThreadSortInput & {
   environmentId: string;
   projectId: string;
   archivedAt: string | null;
+  sideOfThreadId?: string | null | undefined;
 };
 
 type LogicalSidebarProject = SidebarProject & {
@@ -775,7 +776,7 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (!isListableThread(thread)) continue;
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -812,7 +813,7 @@ export function sortScopedProjectsForSidebar<
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
+    if (!isListableThread(thread)) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);

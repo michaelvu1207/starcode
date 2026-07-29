@@ -36,16 +36,33 @@ describe("canForkConversation", () => {
     ).toBe(false);
   });
 
-  it("never carries a conversation on a driver that cannot fork a session", () => {
-    // Codex resumes into the same rollout, so a "fork" there would be two
-    // threads appending to one transcript. Inherited or not, the answer is no.
+  it("carries a conversation on Codex, which now has thread/fork", () => {
+    // This used to be false, and the reason it was — "Codex resumes into the
+    // same rollout" — stopped being true when the app server grew
+    // `thread/fork`. That verb reads the source and opens a new rollout, which
+    // is the same property `forkSession` gives Claude.
     expect(
       canForkConversation({
         driverKind: "codex",
         thread: shell({}),
         inheritedConversation: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("never carries a conversation on a driver with no fork primitive", () => {
+    // The list is a client-side mirror of the server's. A driver missing from
+    // both is refused here so the row does not offer a fork the server will
+    // turn down.
+    for (const driverKind of ["opencode", "gemini", "claude", null]) {
+      expect(
+        canForkConversation({
+          driverKind,
+          thread: shell({}),
+          inheritedConversation: true,
+        }),
+      ).toBe(false);
+    }
   });
 });
 

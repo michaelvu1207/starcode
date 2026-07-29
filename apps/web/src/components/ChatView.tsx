@@ -12,7 +12,7 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
-  type ThreadId,
+  ThreadId,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
@@ -70,9 +70,13 @@ import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
+  type ComposerThreadCommand,
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
+  parseStandaloneComposerThreadCommand,
 } from "../composer-logic";
+import { useForkThreadConversation, useRefreshHistoryImports } from "../state/terminalHistory";
+import { forkThreadTitle, waitForForkedThreadShell } from "./sidebar/SidebarThreadRowActions";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -139,6 +143,7 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import SubagentsSidebar from "./SubagentsSidebar";
+import { SidePanelThread } from "./chat/SidePanelThread";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
@@ -455,25 +460,34 @@ function formatOutgoingPrompt(params: {
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
+/**
+ * Suppresses this view's own right panel.
+ *
+ * Set by the side-conversation surface, which mounts a whole `ChatView` inside
+ * a right panel. Without it the nested view can open a right panel of its own —
+ * including another side conversation — and the panel would then be rendering
+ * itself, at a width that halves on every level. Nothing else about the nested
+ * view is special: `ChatView` takes its identity from props, which is what
+ * makes this embedding cheap in the first place.
+ */
+type ChatViewEmbeddingProps = {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  onDiffPanelOpen?: () => void;
+  reserveTitleBarControlInset?: boolean;
+  forceExpandedMobileComposer?: boolean;
+  suppressRightPanel?: boolean;
+};
+
 type ChatViewProps =
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      forceExpandedMobileComposer?: boolean;
+  | (ChatViewEmbeddingProps & {
       routeKind: "server";
       draftId?: never;
-    }
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      forceExpandedMobileComposer?: boolean;
+    })
+  | (ChatViewEmbeddingProps & {
       routeKind: "draft";
       draftId: DraftId;
-    };
+    });
 
 interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -1504,7 +1518,9 @@ function ChatViewContent(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
+  // Gated here rather than at each render site so that every derived flag below
+  // — maximize, title-bar ownership, the sheet — agrees that there is no panel.
+  const rightPanelOpen = rightPanelState.isOpen && props.suppressRightPanel !== true;
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
@@ -2984,6 +3000,83 @@ function ChatViewContent(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+
+  /**
+   * `/side` and `/fork`: the same server call, two destinations.
+   *
+   * One handler because the difference really is one flag and where the result
+   * lands. A side fork opens in this thread's right panel and is deleted when
+   * that tab closes; an ordinary fork is filed under the project and navigated
+   * to. Everything before that — which thread, which refusals, which toast — is
+   * identical, and splitting it in two is how the two drift.
+   *
+   * Refusals are surfaced rather than swallowed. "This thread has not started a
+   * session yet" is the common one on a thread nobody has typed into, and it
+   * clears the moment they do — a `/side` that silently did nothing would read
+   * as a broken command rather than as "not yet".
+   */
+  const forkConversation = useForkThreadConversation();
+  const refreshForkProvenance = useRefreshHistoryImports(environmentId);
+  const runThreadForkCommand = useCallback(
+    async (mode: ComposerThreadCommand) => {
+      if (!activeThreadRef || !isServerThread || activeThread === undefined) return;
+      const attempt = await forkConversation({
+        environmentId: activeThreadRef.environmentId,
+        threadId: activeThreadRef.threadId,
+        request: mode === "side" ? { side: true } : { title: forkThreadTitle(activeThread.title) },
+      });
+
+      if (attempt.kind !== "forked") {
+        // The refusal's own sentence, not a generic one. "This thread has no
+        // provider session recorded yet — send it a message first" tells the
+        // reader what to do; "the fork failed" sends them looking for a bug.
+        const why = attempt.kind === "refused" ? attempt.detail : attempt.message;
+        toastManager.add(
+          stackedThreadToast({
+            type: attempt.kind === "refused" ? "warning" : "error",
+            title:
+              mode === "side" ? "Could not open a side conversation" : "Could not fork this thread",
+            ...(why === null ? {} : { description: why }),
+          }),
+        );
+        return;
+      }
+
+      // The server just wrote a provenance row, and this registry is cached per
+      // machine with no refresh of its own. Without re-reading it, the fork
+      // opens looking like an ordinary empty thread — with the conversation it
+      // inherited hidden behind a line that has not arrived yet.
+      refreshForkProvenance();
+
+      if (mode === "side") {
+        // No arrival wait: the surface renders its own "opening…" state while
+        // the shell catches up, which is a better frame than a composer that
+        // stays frozen for the round trip.
+        useRightPanelStore.getState().openSide(activeThreadRef, attempt.result.threadId);
+        return;
+      }
+      // Navigation does wait, for the reason `waitForForkedThreadShell`
+      // documents: landing on the route before the shell has the thread renders
+      // "not available from here" for a beat.
+      await waitForForkedThreadShell(activeThreadRef.environmentId, attempt.result.threadId);
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: activeThreadRef.environmentId,
+          threadId: attempt.result.threadId,
+        },
+      });
+    },
+    [
+      activeThread,
+      activeThreadRef,
+      environmentId,
+      forkConversation,
+      isServerThread,
+      navigate,
+      refreshForkProvenance,
+    ],
+  );
   const dismissPlanSidebarForCurrentTurn = useCallback(() => {
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -3220,6 +3313,29 @@ function ChatViewContent(props: ChatViewProps) {
             });
           }
         }
+        if (surface.kind === "side") {
+          // Closing the tab *is* how a side conversation ends — the whole
+          // premise is a conversation you do not have to file. Deleting it here
+          // rather than behind a confirmation is the decision the panel already
+          // made by calling this; a scratch thread that asked "are you sure?"
+          // would cost more attention than it saves.
+          //
+          // Fire-and-forget, and deliberately not awaited: the surface is gone
+          // from the store either way, and a failed delete leaves a thread that
+          // is invisible (it carries `sideOfThreadId`) rather than one that is
+          // in the way. Logged so it is not silent.
+          void deleteThread({
+            environmentId: activeThreadRef.environmentId,
+            input: { threadId: ThreadId.make(surface.threadId) },
+          }).then((result) => {
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              console.warn(
+                "Failed to delete a side conversation after closing it.",
+                squashAtomCommandFailure(result),
+              );
+            }
+          });
+        }
       }
     },
     [
@@ -3227,6 +3343,7 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
       closePreview,
       closeTerminalMutation,
+      deleteThread,
       dismissPlanSidebarForCurrentTurn,
       storeCloseTerminal,
     ],
@@ -4537,6 +4654,27 @@ function ChatViewContent(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       return;
     }
+    // Typed rather than picked from the menu. Same guard as above — a `/side`
+    // carrying images or terminal context is a message that happens to begin
+    // with a slash, not a command.
+    const standaloneThreadCommand =
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0
+        ? parseStandaloneComposerThreadCommand(trimmed)
+        : null;
+    if (standaloneThreadCommand) {
+      // Cleared before the round trip, not after: the command has been accepted
+      // at this point, and leaving "/side" sitting in the composer while the
+      // fork is in flight invites a second Enter.
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      void runThreadForkCommand(standaloneThreadCommand);
+      return;
+    }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -5712,6 +5850,14 @@ function ChatViewContent(props: ChatViewProps) {
         threadModel={activeThread?.modelSelection.model ?? null}
         mode="embedded"
       />
+    ) : activeRightPanelSurface?.kind === "side" ? (
+      <SidePanelThread
+        // Keyed by the side thread so switching between two side tabs remounts
+        // rather than reusing one view's transcript state under another's id.
+        key={activeRightPanelSurface.id}
+        environmentId={activeThreadRef.environmentId}
+        threadId={ThreadId.make(activeRightPanelSurface.threadId)}
+      />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -5973,6 +6119,13 @@ function ChatViewContent(props: ChatViewProps) {
                             toggleInteractionMode={toggleInteractionMode}
                             handleRuntimeModeChange={handleRuntimeModeChange}
                             handleInteractionModeChange={handleInteractionModeChange}
+                            onThreadForkCommand={
+                              isServerThread
+                                ? (mode) => {
+                                    void runThreadForkCommand(mode);
+                                  }
+                                : undefined
+                            }
                             togglePlanSidebar={togglePlanSidebar}
                             focusComposer={focusComposer}
                             scheduleComposerFocus={scheduleComposerFocus}

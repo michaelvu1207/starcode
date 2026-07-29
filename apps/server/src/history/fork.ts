@@ -12,9 +12,14 @@
  * turn is not a conflict anybody detects — the adapter's session map is keyed
  * by `ThreadId`, so each thread gets its own process, and both then append to
  * one transcript file. The fork marker (`forkFacts.forkResumeCursor`) is what
- * turns the first turn into `forkSession: true`, which resumes the source's
- * history and writes to a **new** session id. The source is read and never
- * written.
+ * each driver turns into its own fork verb — `forkSession: true` for Claude's
+ * SDK, `thread/fork` for Codex's app server — both of which resume the source's
+ * history and write to a **new** session. The source is read and never written.
+ *
+ * A `side` fork is the same three moves with two fields set: the new thread
+ * carries `sideOfThreadId`, which keeps it out of every list a person reads,
+ * and the cursor carries `ephemeral` where the driver understands one. See
+ * `HistoryForkInput`.
  *
  * Every precondition is a refusal, never a fallback, for the reason import
  * documents: a fork that quietly degraded to an empty thread would look

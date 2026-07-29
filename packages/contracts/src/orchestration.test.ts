@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -10,6 +10,7 @@ import {
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
+  isListableThread,
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
@@ -875,3 +876,25 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
     assert.strictEqual(result._tag, "Failure");
   }),
 );
+
+describe("isListableThread", () => {
+  it("hides archived threads, as every list already did", () => {
+    expect(isListableThread({ archivedAt: "2026-07-28T00:00:00.000Z" })).toBe(false);
+    expect(isListableThread({ archivedAt: null })).toBe(true);
+  });
+
+  it("hides side threads", () => {
+    // The whole point of /side is a conversation you do not have to file. One
+    // that showed up in the sidebar would read as a stray thread to clean up.
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: "thread-parent" })).toBe(false);
+  });
+
+  it("treats an absent marker as an ordinary thread", () => {
+    // Absent means "this server predates side threads", and a reader that
+    // distinguished that from "not a side thread" would show the thread either
+    // way — so collapsing them loses nothing and a stricter reading would hide
+    // every thread served by an older machine.
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: undefined })).toBe(true);
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: null })).toBe(true);
+  });
+});

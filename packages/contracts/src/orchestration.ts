@@ -473,7 +473,7 @@ export const SideOfThreadIdEvent = Schema.NullOr(ThreadId).pipe(
  */
 export function isListableThread(thread: {
   readonly archivedAt: string | null;
-  readonly sideOfThreadId?: ThreadId | null;
+  readonly sideOfThreadId?: string | null | undefined;
 }): boolean {
   return thread.archivedAt === null && (thread.sideOfThreadId ?? null) === null;
 }

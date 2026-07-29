@@ -22,6 +22,7 @@ import type {
   ExecutionEnvironmentCapabilities,
   SidebarV2ThreadSortOrder,
 } from "@t3tools/contracts";
+import { isListableThread } from "@t3tools/contracts";
 
 import {
   firstValidTimestampMs,
@@ -66,7 +67,7 @@ export function partitionSidebarV2Threads(input: SidebarV2PartitionInput): Sideb
   const preciseNow = new Date().toISOString();
   const visible = input.threads.filter(
     (thread) =>
-      thread.archivedAt === null &&
+      isListableThread(thread) &&
       (input.scopedProjectKeys === null ||
         input.scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
