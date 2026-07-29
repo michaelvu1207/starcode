@@ -345,11 +345,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     />
   );
 
+  // Child rows appear only while agents are actually running, which is the
+  // whole point: a thread that spawns none looks exactly as it did before, and
+  // a list of mostly-quiet threads is not turned into a tree.
+  //
+  // Declared above the row handlers because they close over it: a `useCallback`
+  // dependency array is evaluated during render, so a later `const` would be a
+  // temporal-dead-zone crash rather than a lint nit.
+  const subagents = thread.subagents ?? [];
+  const selectedAgentTaskId = useSelectedAgentTaskId(threadRef);
+  const selectAgent = useAgentViewStore((store) => store.select);
+  const clearSelectedAgent = useAgentViewStore((store) => store.clear);
+
   const handleClick = useCallback(
     (event: ReactMouseEvent) => {
+      // The parent row is the way back to the thread's own transcript. Without
+      // this, selecting an agent and then clicking its thread would leave the
+      // agent's view up — the row would look selected while the pane showed
+      // something else.
+      clearSelectedAgent(threadRef);
       onThreadClick(event, threadRef);
     },
-    [onThreadClick, threadRef],
+    [clearSelectedAgent, onThreadClick, threadRef],
   );
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent) => {
@@ -425,20 +442,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   });
   const handleOpenInSplit = useCallback(() => openThreadInSplit(threadRef), [threadRef]);
 
-  // Child rows appear only while agents are actually running, which is the
-  // whole point: a thread that spawns none looks exactly as it did before, and
-  // a list of mostly-quiet threads is not turned into a tree.
-  const subagents = thread.subagents ?? [];
-  const selectedAgentTaskId = useSelectedAgentTaskId(threadRef);
-  const selectAgent = useAgentViewStore((store) => store.select);
   const handleSelectAgent = useCallback(
     (taskId: string) => {
+      // Clicking the agent you are already reading takes you back to the
+      // thread — the row is a toggle, which is what a selected row that is
+      // also the only way out has to be.
+      if (props.isActive && selectedAgentTaskId === taskId) {
+        clearSelectedAgent(threadRef);
+        return;
+      }
       // Selecting an agent also activates its thread. Reading an agent while
       // the center pane shows a different thread would be incoherent.
       onThreadActivate(threadRef);
       selectAgent(threadRef, taskId);
     },
-    [onThreadActivate, selectAgent, threadRef],
+    [
+      clearSelectedAgent,
+      onThreadActivate,
+      props.isActive,
+      selectAgent,
+      selectedAgentTaskId,
+      threadRef,
+    ],
   );
 
   const row = (

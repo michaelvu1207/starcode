@@ -13,6 +13,9 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveSubagentTasks,
+  mainThreadActivities,
+  agentActivities,
+  activityParentToolUseId,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -1918,5 +1921,66 @@ describe("deriveSubagentTasks", () => {
         makeActivity({ kind: "turn.plan.updated", payload: { plan: [] } }),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("subagent activity partitioning", () => {
+  it("leaves a thread that never spawned an agent completely alone", () => {
+    // The fast path, and the guarantee that turning subagent forwarding on
+    // changes nothing for threads that use no agents. Identity, not a copy.
+    const activities = [
+      makeActivity({ kind: "tool.started", sequence: 1 }),
+      makeActivity({ kind: "tool.completed", sequence: 2 }),
+    ];
+
+    expect(mainThreadActivities(activities)).toBe(activities);
+  });
+
+  it("keeps subagent rows out of the thread's own transcript", () => {
+    const own = makeActivity({ id: "own", kind: "tool.started", sequence: 1 });
+    const borrowed = makeActivity({
+      id: "borrowed",
+      kind: "tool.started",
+      sequence: 2,
+      payload: { parentToolUseId: "toolu_01" },
+    });
+
+    expect(mainThreadActivities([own, borrowed]).map((a) => a.id)).toEqual(["own"]);
+  });
+
+  it("gives each agent only its own rows", () => {
+    const first = makeActivity({
+      id: "a1",
+      kind: "agent.message",
+      payload: { parentToolUseId: "toolu_01", detail: "one" },
+    });
+    const second = makeActivity({
+      id: "b1",
+      kind: "agent.message",
+      payload: { parentToolUseId: "toolu_02", detail: "two" },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.started" });
+
+    expect(agentActivities([first, second, own], "toolu_01").map((a) => a.id)).toEqual(["a1"]);
+    expect(agentActivities([first, second, own], "toolu_02").map((a) => a.id)).toEqual(["b1"]);
+  });
+
+  it("returns nothing for an agent whose tool-use id was never reported", () => {
+    // An honest empty view beats showing someone else's rows under this
+    // agent's name — which is what a null key matching null payloads would do.
+    const orphan = makeActivity({ id: "own", kind: "tool.started" });
+
+    expect(agentActivities([orphan], null)).toEqual([]);
+  });
+
+  it("treats a blank parentToolUseId as main-thread work", () => {
+    const blank = makeActivity({
+      id: "blank",
+      kind: "tool.started",
+      payload: { parentToolUseId: "   " },
+    });
+
+    expect(mainThreadActivities([blank]).map((a) => a.id)).toEqual(["blank"]);
+    expect(activityParentToolUseId(blank)).toBeNull();
   });
 });

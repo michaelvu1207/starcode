@@ -599,6 +599,58 @@ describe("resolveSidebarV2Status", () => {
 
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
 
+  const runningAgent = {
+    taskId: "task-1",
+    toolUseId: "toolu_01",
+    description: "Review the auth module",
+    subagentType: null,
+    status: "running" as const,
+    isBackgrounded: true,
+    lastToolName: null,
+    totalTokens: null,
+    startedAt: "2026-03-09T10:00:00.000Z",
+  };
+
+  it("reports agents when the session is idle but subagents are still running", () => {
+    // The case the tone exists for: a backgrounded subagent outlives the turn
+    // that spawned it, so the session reads ready while work continues.
+    expect(resolveSidebarV2Status({ ...idle, session: null, subagents: [runningAgent] })).toBe(
+      "agents",
+    );
+  });
+
+  it("keeps working ahead of agents when the main agent is running too", () => {
+    // "Working" already says the thread is busy; the child rows say who.
+    expect(resolveSidebarV2Status({ ...idle, session, subagents: [runningAgent] })).toBe("working");
+  });
+
+  it("keeps approval and input ahead of agents", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingApprovals: true,
+        session: null,
+        subagents: [runningAgent],
+      }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingUserInput: true,
+        session: null,
+        subagents: [runningAgent],
+      }),
+    ).toBe("input");
+  });
+
+  it("stays ready when the subagent list is absent or empty", () => {
+    // Absent is what every server without the rollup sends, and an empty array
+    // is what a thread whose agents have all finished sends. Neither is a
+    // reason to claim work is happening.
+    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+    expect(resolveSidebarV2Status({ ...idle, session: null, subagents: [] })).toBe("ready");
+  });
+
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
       "approval",
