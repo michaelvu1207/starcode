@@ -1923,7 +1923,15 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const allThreadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  // Every derivation below reads the thread's *own* activities. Subagent rows
+  // live in the same stream but belong to the agent views, not here — see
+  // `mainThreadActivities`. `deriveSubagentTasks` is the exception: it reads
+  // `task.*` rows, which the main thread emits about its agents.
+  const threadActivities = useMemo(
+    () => mainThreadActivities(allThreadActivities),
+    [allThreadActivities],
+  );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const reasoningEntries = useMemo(
     () => deriveReasoningEntries(threadActivities),
@@ -1994,6 +2002,27 @@ function ChatViewContent(props: ChatViewProps) {
     [activeLatestTurn?.turnId, threadActivities],
   );
   const subagentTasks = useMemo(() => deriveSubagentTasks(threadActivities), [threadActivities]);
+
+  // The agent being read, if any. Resolved from the full task list rather than
+  // the shell's live-only rollup so a selection survives the agent finishing —
+  // having the view close itself out from under you mid-read is worse than
+  // showing a completed agent's transcript until you leave it.
+  const selectedAgentTaskId = useSelectedAgentTaskId(activeThreadRef);
+  const clearSelectedAgent = useAgentViewStore((store) => store.clear);
+  const selectedAgentTask = useMemo(
+    () =>
+      selectedAgentTaskId === null
+        ? null
+        : (subagentTasks.find((task) => task.taskId === selectedAgentTaskId) ?? null),
+    [selectedAgentTaskId, subagentTasks],
+  );
+  const selectedAgentActivities = useMemo(
+    () => agentActivities(allThreadActivities, selectedAgentTask?.toolUseId ?? null),
+    [allThreadActivities, selectedAgentTask?.toolUseId],
+  );
+  const handleLeaveAgentView = useCallback(() => {
+    if (activeThreadRef) clearSelectedAgent(activeThreadRef);
+  }, [activeThreadRef, clearSelectedAgent]);
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&

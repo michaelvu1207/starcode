@@ -27,6 +27,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
+import { useAgentViewStore, useSelectedAgentTaskId } from "~/agentViewStore";
+import { SidebarAgentRow } from "./sidebar/SidebarAgentRow";
 
 import {
   isAtomCommandInterrupted,
@@ -295,7 +297,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // its machine's hue, so waiting rows stay findable. In-flight rows recede
   // the same as read-ready ones (inbox-zero: working threads aren't your
   // problem yet).
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  const isInFlight =
+    status === "working" ||
+    status === "approval" ||
+    status === "input" ||
+    // Agents still running is in-flight for the same reason working is: the
+    // work is not yours yet. Its child rows carry the detail.
+    status === "agents";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !props.isActive && !isSelected;
 
@@ -416,7 +424,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     hasRouteThread: props.hasRouteThread,
   });
   const handleOpenInSplit = useCallback(() => openThreadInSplit(threadRef), [threadRef]);
-  return (
+
+  // Child rows appear only while agents are actually running, which is the
+  // whole point: a thread that spawns none looks exactly as it did before, and
+  // a list of mostly-quiet threads is not turned into a tree.
+  const subagents = thread.subagents ?? [];
+  const selectedAgentTaskId = useSelectedAgentTaskId(threadRef);
+  const selectAgent = useAgentViewStore((store) => store.select);
+  const handleSelectAgent = useCallback(
+    (taskId: string) => {
+      // Selecting an agent also activates its thread. Reading an agent while
+      // the center pane shows a different thread would be incoherent.
+      onThreadActivate(threadRef);
+      selectAgent(threadRef, taskId);
+    },
+    [onThreadActivate, selectAgent, threadRef],
+  );
+
+  const row = (
     <SidebarThreadRow
       thread={thread}
       status={status}
@@ -446,6 +471,26 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       renamingTitle={renamingTitle}
       tooltip={detailsTooltip}
     />
+  );
+
+  if (subagents.length === 0) {
+    return row;
+  }
+
+  return (
+    <>
+      {row}
+      {subagents.map((agent) => (
+        <SidebarAgentRow
+          key={agent.taskId}
+          agent={agent}
+          // An agent is only "current" when its own thread is, so a selection
+          // left behind on another thread cannot light up a row here.
+          isActive={props.isActive && selectedAgentTaskId === agent.taskId}
+          onSelect={handleSelectAgent}
+        />
+      ))}
+    </>
   );
 });
 

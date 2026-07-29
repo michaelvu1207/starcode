@@ -287,6 +287,74 @@ describe("buildAccountsUsageView", () => {
   });
 });
 
+describe("the trailing-hour fleet rate", () => {
+  const hourly = (label: string, totalsLastHour: UsageTotals | undefined, instanceHour = 0) => ({
+    environmentId: environmentId(label),
+    label,
+    config: config([provider()]),
+    usage: usage({
+      ...(totalsLastHour === undefined ? {} : { totalsLastHour }),
+      instances: [
+        {
+          providerInstanceId: "claude-personal" as never,
+          driver: "claudeAgent" as never,
+          rateLimits: null,
+          today: EMPTY_USAGE_TOTALS,
+          week: EMPTY_USAGE_TOTALS,
+          ...(totalsLastHour === undefined
+            ? {}
+            : { lastHour: totals({ turns: instanceHour, costUsd: instanceHour }) }),
+          days: [],
+          lastTurnAt: null,
+        },
+      ],
+    }),
+  });
+
+  it("sums the window across machines", () => {
+    const view = buildAccountsUsageView([
+      hourly("mac", totals({ turns: 4, costUsd: 2.5, inputTokens: 100 }), 4),
+      hourly("linux", totals({ turns: 2, costUsd: 1, outputTokens: 20 }), 2),
+    ]);
+
+    expect(view.lastHourReported).toBe(true);
+    expect(view.lastHour.costUsd).toBe(3.5);
+    expect(view.lastHour.turns).toBe(6);
+    expect(view.lastHour.inputTokens).toBe(100);
+    expect(view.lastHourMachines).toBe(2);
+    expect(view.lastHourActiveAccounts).toBe(2);
+  });
+
+  it("leaves a machine that cannot report the window out of the rate", () => {
+    const view = buildAccountsUsageView([
+      hourly("mac", totals({ turns: 4, costUsd: 2.5 }), 4),
+      hourly("old-server", undefined),
+    ]);
+
+    expect(view.lastHourMachines).toBe(1);
+    expect(view.lastHour.costUsd).toBe(2.5);
+    expect(view.groups.find((group) => group.label === "old-server")?.lastHourReported).toBe(false);
+  });
+
+  it("stays unreported when no machine knows about the window", () => {
+    const view = buildAccountsUsageView([hourly("mac", undefined), hourly("linux", undefined)]);
+
+    expect(view.lastHourReported).toBe(false);
+    expect(view.lastHour).toEqual(EMPTY_USAGE_TOTALS);
+    expect(view.lastHourActiveAccounts).toBe(0);
+  });
+
+  it("counts only accounts that ran a turn inside the window as active", () => {
+    const view = buildAccountsUsageView([
+      hourly("mac", totals({ turns: 3, costUsd: 1 }), 3),
+      hourly("idle-box", totals(), 0),
+    ]);
+
+    expect(view.lastHourMachines).toBe(2);
+    expect(view.lastHourActiveAccounts).toBe(1);
+  });
+});
+
 describe("buildCliHistoryView", () => {
   it("treats an old server's missing key and an explicit null the same way", () => {
     for (const history of [undefined, null]) {

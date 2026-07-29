@@ -401,11 +401,11 @@ export function resolveThreadRowClassName(input: {
 // whether it finished, asked a question, or proposed a plan.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
-export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type SidebarV2Status = "approval" | "input" | "working" | "agents" | "failed" | "ready";
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "subagents"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -420,6 +420,18 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  // The main agent has stopped but work is still happening: a backgrounded
+  // subagent outlives the turn that spawned it, so the session goes ready
+  // while the agent keeps running. Without this the row reads "done" — the
+  // single most misleading thing the sidebar can say, because it is idle-
+  // looking and busy at the same time.
+  //
+  // Ranked below `working` rather than above it: when the main agent is also
+  // running, "working" already says the thread is busy, and the child rows say
+  // who. It only wins over `ready`.
+  if ((thread.subagents?.length ?? 0) > 0) {
+    return "agents";
   }
   return "ready";
 }

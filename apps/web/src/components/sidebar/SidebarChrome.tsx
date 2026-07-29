@@ -9,6 +9,7 @@ import { resolveSidebarStageBadgeLabel } from "../Sidebar.logic";
 import { SidebarStageBackdrop, resolveSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { SidebarFooter, SidebarHeader } from "../ui/sidebar";
 import { StarcodeWordmark } from "../brand/StarcodeWordmark";
+import { SidebarBurnRate } from "./SidebarBurnRate";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -49,6 +50,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           where no OS chrome can crowd it and it can be as large as it likes. */}
       <div className="h-[var(--workspace-topbar-height)] shrink-0" aria-hidden="true" />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <SidebarBurnRate onBackdrop={backdropVariant !== null} />
       {actions}
     </SidebarHeader>
   );

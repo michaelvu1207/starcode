@@ -19,6 +19,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderInstanceUsage,
+  USAGE_RATE_WINDOW_MINUTES,
   USAGE_RETENTION_DAYS,
   USAGE_SNAPSHOT_DAYS,
   USAGE_WEEK_DAYS,
@@ -66,16 +67,20 @@ export class UsageStore extends Context.Service<UsageStore, UsageStoreShape>()(
   "t3/usage/UsageStore",
 ) {}
 
-interface DayBucketRow {
+/** The aggregate columns every rollup query selects, whatever it groups by. */
+interface TotalsRow {
   readonly provider_instance_id: string;
   readonly driver: string;
-  readonly day: string;
   readonly turns: number;
   readonly cost_usd: number;
   readonly input_tokens: number;
   readonly cached_input_tokens: number;
   readonly output_tokens: number;
   readonly reasoning_output_tokens: number;
+}
+
+interface DayBucketRow extends TotalsRow {
+  readonly day: string;
   readonly last_turn_at: string;
 }
 
@@ -96,7 +101,7 @@ function addTotals(left: UsageTotals, right: UsageTotals): UsageTotals {
   };
 }
 
-function rowTotals(row: DayBucketRow): UsageTotals {
+function rowTotals(row: TotalsRow): UsageTotals {
   return {
     turns: Math.round(row.turns),
     costUsd: row.cost_usd,
@@ -122,6 +127,11 @@ function localDay(instant: DateTime.DateTime): string {
 /** UTC ISO instant `days` before `instant`. */
 function isoDaysBefore(instant: DateTime.DateTime, days: number): string {
   return DateTime.formatIso(DateTime.subtract(instant, { days }));
+}
+
+/** UTC ISO instant `minutes` before `instant`. */
+function isoMinutesBefore(instant: DateTime.DateTime, minutes: number): string {
+  return DateTime.formatIso(DateTime.subtract(instant, { minutes }));
 }
 
 const decodeRateLimitSnapshot = Schema.decodeUnknownEffect(
@@ -226,6 +236,24 @@ const make = Effect.gen(function* () {
         ORDER BY day DESC
       `.pipe(Effect.mapError(toPersistenceSqlError("usage.readDayBuckets")));
 
+      // Its own query rather than a fold over the day buckets: the window is
+      // cut on the instant, and the day rows have already thrown away the
+      // within-day timestamps this needs.
+      const hourRows = yield* sql<TotalsRow>`
+        SELECT
+          provider_instance_id,
+          driver,
+          COUNT(*) AS turns,
+          SUM(cost_usd) AS cost_usd,
+          SUM(input_tokens) AS input_tokens,
+          SUM(cached_input_tokens) AS cached_input_tokens,
+          SUM(output_tokens) AS output_tokens,
+          SUM(reasoning_output_tokens) AS reasoning_output_tokens
+        FROM fork_usage_turns
+        WHERE completed_at >= ${isoMinutesBefore(now, USAGE_RATE_WINDOW_MINUTES)}
+        GROUP BY provider_instance_id, driver
+      `.pipe(Effect.mapError(toPersistenceSqlError("usage.readRateWindow")));
+
       const rateLimitRows = yield* sql<RateLimitRow>`
         SELECT provider_instance_id, driver, snapshot_json
         FROM fork_usage_rate_limits
@@ -266,6 +294,23 @@ const make = Effect.gen(function* () {
         byInstance.set(row.provider_instance_id, entry);
       }
 
+      const lastHourByInstance = new Map<string, UsageTotals>();
+      for (const row of hourRows) {
+        lastHourByInstance.set(row.provider_instance_id, rowTotals(row));
+        // Belt and braces: an instance whose day bucket was filtered out must
+        // still appear, or the fleet rate would count spend that no row below
+        // it accounts for.
+        if (!byInstance.has(row.provider_instance_id)) {
+          byInstance.set(row.provider_instance_id, {
+            driver: row.driver,
+            days: [],
+            today: EMPTY_USAGE_TOTALS,
+            week: EMPTY_USAGE_TOTALS,
+            lastTurnAt: null,
+          });
+        }
+      }
+
       const rateLimitsByInstance = new Map<string, UsageRateLimitSnapshot>();
       for (const row of rateLimitRows) {
         // A row written by an older fork build (or hand-edited) that no longer
@@ -297,6 +342,7 @@ const make = Effect.gen(function* () {
           rateLimits: rateLimitsByInstance.get(providerInstanceId) ?? null,
           today: entry.today,
           week: entry.week,
+          lastHour: lastHourByInstance.get(providerInstanceId) ?? EMPTY_USAGE_TOTALS,
           days: entry.days,
           lastTurnAt: entry.lastTurnAt,
         }))
@@ -315,6 +361,7 @@ const make = Effect.gen(function* () {
           (totals, instance) => addTotals(totals, instance.week),
           EMPTY_USAGE_TOTALS,
         ),
+        totalsLastHour: [...lastHourByInstance.values()].reduce(addTotals, EMPTY_USAGE_TOTALS),
       } satisfies EnvironmentUsageSnapshot;
     });
 

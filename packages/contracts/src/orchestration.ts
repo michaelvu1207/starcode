@@ -479,6 +479,32 @@ export const OrchestrationThreadPlanSummary = Schema.Struct({
 });
 export type OrchestrationThreadPlanSummary = typeof OrchestrationThreadPlanSummary.Type;
 
+// Row-level rollup of the subagents a thread has in flight, so a sidebar can
+// show them as child rows without opening the thread and reading its
+// activities. Only *live* agents appear: a finished one would otherwise
+// accumulate on the shell for the life of the thread, and the place to read
+// finished work is the thread's own activity stream.
+export const OrchestrationThreadSubagent = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  // The Task `tool_use` id, which is how this agent's transcript rows are
+  // attributed (`parentToolUseId` on activity payloads). Null when the task
+  // events never reported one, in which case the agent is listable but its
+  // transcript cannot be isolated.
+  toolUseId: Schema.NullOr(TrimmedNonEmptyString),
+  // Nullable rather than defaulted: an agent that never reported a description
+  // still deserves a row, and the client picks a label from `subagentType`.
+  description: Schema.NullOr(TrimmedNonEmptyString),
+  subagentType: Schema.NullOr(TrimmedNonEmptyString),
+  status: Schema.Literals(["running", "paused"]),
+  isBackgrounded: Schema.Boolean,
+  // What it is doing this second — the difference between "three agents are
+  // running" and knowing whether any of them is stuck.
+  lastToolName: Schema.NullOr(TrimmedNonEmptyString),
+  totalTokens: Schema.NullOr(NonNegativeInt),
+  startedAt: IsoDateTime,
+});
+export type OrchestrationThreadSubagent = typeof OrchestrationThreadSubagent.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -508,6 +534,11 @@ export const OrchestrationThreadShell = Schema.Struct({
   // Optional so payloads from servers that predate the summary still decode;
   // clients render the row's task-progress bar only when it is present.
   planSummary: Schema.optional(Schema.NullOr(OrchestrationThreadPlanSummary)),
+  // Same reasoning as planSummary: omitted, not empty-arrayed, when the thread
+  // has no live subagents, so shells stay byte-identical to what a server
+  // without this rollup sends. Clients render child rows only when present and
+  // non-empty.
+  subagents: Schema.optional(Schema.Array(OrchestrationThreadSubagent)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

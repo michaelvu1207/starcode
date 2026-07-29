@@ -21,6 +21,15 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /** Days of history the usage snapshot carries, including today. */
 export const USAGE_SNAPSHOT_DAYS = 14;
+/**
+ * Width of the trailing window behind the "per hour" figure, in minutes.
+ *
+ * Sixty, so the window's total *is* the hourly rate — no extrapolation, no
+ * division. A burn rate derived from a shorter window would have to multiply
+ * up, and one turn landing in a five-minute window would then read as a rate
+ * twelve times the truth.
+ */
+export const USAGE_RATE_WINDOW_MINUTES = 60;
 /** Days folded into the "this week" rollup, including today. */
 export const USAGE_WEEK_DAYS = 7;
 /** Turn rows older than this are pruned; nothing reads them. */
@@ -108,6 +117,15 @@ export const ProviderInstanceUsage = Schema.Struct({
   rateLimits: Schema.NullOr(UsageRateLimitSnapshot),
   today: UsageTotals,
   week: UsageTotals,
+  /**
+   * The trailing `USAGE_RATE_WINDOW_MINUTES`, which is what "per hour" means
+   * here. Absent — not zero — from a server that predates the window, so a
+   * client can tell "this machine reports no rate" from "this machine is idle".
+   *
+   * Unlike the day buckets this is cut on the instant, not on a local midnight,
+   * so machines in different zones can be summed without qualification.
+   */
+  lastHour: Schema.optionalKey(UsageTotals),
   days: Schema.Array(UsageDayTotals),
   lastTurnAt: Schema.NullOr(IsoDateTime),
 });
@@ -216,6 +234,13 @@ export const EnvironmentUsageSnapshot = Schema.Struct({
   instances: Schema.Array(ProviderInstanceUsage),
   totalsToday: UsageTotals,
   totalsWeek: UsageTotals,
+  /**
+   * Every instance's `lastHour` summed. Present exactly when this server knows
+   * about the window at all, which is what a client keys "does this machine
+   * contribute to the fleet rate" off — an absent key must never be read as a
+   * machine that spent nothing.
+   */
+  totalsLastHour: Schema.optionalKey(UsageTotals),
   /**
    * What the machine's CLIs spent before, or outside, this fork.
    *

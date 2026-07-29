@@ -52,6 +52,7 @@ import { ProjectionThreadSession } from "../../persistence/Services/ProjectionTh
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { derivePlanSummary } from "../threadPlanSummary.ts";
+import { deriveLiveSubagents, type SubagentActivityRow } from "../threadSubagentSummary.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -95,6 +96,12 @@ const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
 // thread view renders.
 const ProjectionThreadPlanActivityDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
+  payload: Schema.fromJsonString(Schema.Unknown),
+});
+const ProjectionThreadSubagentActivityDbRowSchema = Schema.Struct({
+  threadId: ProjectionThread.fields.threadId,
+  kind: Schema.String,
+  createdAt: Schema.String,
   payload: Schema.fromJsonString(Schema.Unknown),
 });
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
@@ -879,6 +886,145 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  /**
+   * The first and last `task.*` activity for every subagent, across threads.
+   *
+   * Two rows per task, never more. A running subagent emits a `task.progress`
+   * every ~30s, so selecting every task row would make this query grow without
+   * bound in the length of a session — and the fold needs only two points: the
+   * opening `task.started`, which is where `toolUseId` and `subagentType` are
+   * reported, and the newest row, which is where the current status,
+   * `lastToolName` and token total live. Everything in between is superseded.
+   *
+   * `taskId` lives inside the payload rather than in a column, so it is read
+   * with `json_extract`; rows without one cannot be attributed and are dropped
+   * here instead of being carried to the fold.
+   */
+  const listSubagentActivityRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadSubagentActivityDbRowSchema,
+    execute: () =>
+      sql`
+        WITH task_rows AS (
+          SELECT
+            thread_id,
+            json_extract(payload_json, '$.taskId') AS task_id,
+            kind,
+            created_at,
+            activity_id,
+            sequence,
+            payload_json
+          FROM projection_thread_activities
+          WHERE kind LIKE 'task.%'
+            AND json_extract(payload_json, '$.taskId') IS NOT NULL
+        ),
+        ranked AS (
+          SELECT
+            thread_id,
+            task_id,
+            kind,
+            created_at,
+            activity_id,
+            sequence,
+            payload_json,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id, task_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+                sequence DESC,
+                created_at DESC,
+                activity_id DESC
+            ) AS newest_rank,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id, task_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 1 ELSE 0 END ASC,
+                sequence ASC,
+                created_at ASC,
+                activity_id ASC
+            ) AS oldest_rank
+          FROM task_rows
+        )
+        SELECT
+          thread_id AS "threadId",
+          kind,
+          created_at AS "createdAt",
+          payload_json AS "payload"
+        FROM ranked
+        WHERE newest_rank = 1 OR oldest_rank = 1
+        ORDER BY
+          thread_id ASC,
+          task_id ASC,
+          CASE WHEN sequence IS NULL THEN 1 ELSE 0 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
+  /** Single-thread counterpart of listSubagentActivityRows. */
+  const listSubagentActivityRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadSubagentActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        WITH task_rows AS (
+          SELECT
+            thread_id,
+            json_extract(payload_json, '$.taskId') AS task_id,
+            kind,
+            created_at,
+            activity_id,
+            sequence,
+            payload_json
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind LIKE 'task.%'
+            AND json_extract(payload_json, '$.taskId') IS NOT NULL
+        ),
+        ranked AS (
+          SELECT
+            thread_id,
+            task_id,
+            kind,
+            created_at,
+            activity_id,
+            sequence,
+            payload_json,
+            ROW_NUMBER() OVER (
+              PARTITION BY task_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+                sequence DESC,
+                created_at DESC,
+                activity_id DESC
+            ) AS newest_rank,
+            ROW_NUMBER() OVER (
+              PARTITION BY task_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 1 ELSE 0 END ASC,
+                sequence ASC,
+                created_at ASC,
+                activity_id ASC
+            ) AS oldest_rank
+          FROM task_rows
+        )
+        SELECT
+          thread_id AS "threadId",
+          kind,
+          created_at AS "createdAt",
+          payload_json AS "payload"
+        FROM ranked
+        WHERE newest_rank = 1 OR oldest_rank = 1
+        ORDER BY
+          task_id ASC,
+          CASE WHEN sequence IS NULL THEN 1 ELSE 0 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
   // Single-thread counterpart of listLatestPlanActivityRows, used by the shell
   // stream's per-thread refetch. Walks the (thread_id, sequence, created_at,
   // activity_id) index backwards and stops at the first plan row.
@@ -1579,6 +1725,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }),
             );
 
+            // Same read-after-the-transaction reasoning as the plan rollup: the
+            // list is derived and read-only, so an agent that started in
+            // between only makes the sidebar fresher than the rest of the
+            // snapshot.
+            const subagentRows = yield* listSubagentActivityRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getShellSnapshot:listSubagentActivities:query",
+                  "ProjectionSnapshotQuery.getShellSnapshot:listSubagentActivities:decodeRows",
+                ),
+              ),
+            );
+            const subagentRowsByThread = new Map<string, Array<SubagentActivityRow>>();
+            for (const row of subagentRows) {
+              const bucket = subagentRowsByThread.get(row.threadId);
+              if (bucket) {
+                bucket.push(row);
+              } else {
+                subagentRowsByThread.set(row.threadId, [row]);
+              }
+            }
+            const subagentsByThread = new Map(
+              Arr.filterMap([...subagentRowsByThread], ([threadId, rows]) => {
+                const live = deriveLiveSubagents(rows);
+                return live.length === 0
+                  ? Result.failVoid
+                  : Result.succeed([threadId, live] as const);
+              }),
+            );
+
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
@@ -1613,6 +1789,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       // without this rollup send.
                       ...(planSummaryByThread.has(row.threadId)
                         ? { planSummary: planSummaryByThread.get(row.threadId) }
+                        : {}),
+                      // Omitted, not empty-arrayed, when nothing is running —
+                      // same contract as planSummary above.
+                      ...(subagentsByThread.has(row.threadId)
+                        ? { subagents: subagentsByThread.get(row.threadId) }
                         : {}),
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
@@ -1939,7 +2120,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow, planRow] = yield* Effect.all([
+      const [threadRow, latestTurnRow, sessionRow, planRow, subagentRows] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -1972,11 +2153,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
+        listSubagentActivityRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadShellById:listSubagentActivities:query",
+              "ProjectionSnapshotQuery.getThreadShellById:listSubagentActivities:decodeRows",
+            ),
+          ),
+        ),
       ]);
 
       if (Option.isNone(threadRow)) {
         return Option.none<OrchestrationThreadShell>();
       }
+
+      const liveSubagents = deriveLiveSubagents(subagentRows);
 
       return Option.some({
         id: threadRow.value.threadId,
@@ -1997,6 +2188,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
         ...(Option.isSome(planRow) ? maybePlanSummary(planRow.value.payload) : {}),
+        ...(liveSubagents.length > 0 ? { subagents: liveSubagents } : {}),
       } satisfies OrchestrationThreadShell);
     });
 

@@ -112,6 +112,68 @@ describe("UsageStore", () => {
     ),
   );
 
+  it.effect("cuts the hourly window on the instant, not on the day", () =>
+    withStore((store, now) =>
+      Effect.gen(function* () {
+        const minutesAgo = (minutes: number) =>
+          DateTime.formatIso(DateTime.subtract(now, { minutes }));
+        yield* store.recordTurn(
+          turn({ eventId: "just-now", completedAt: minutesAgo(1), costUsd: 2, inputTokens: 30 }),
+        );
+        yield* store.recordTurn(
+          turn({ eventId: "in-window", completedAt: minutesAgo(59), costUsd: 1, outputTokens: 5 }),
+        );
+        // Ninety minutes back is still today — the day totals keep it, the
+        // hourly window must not.
+        yield* store.recordTurn(
+          turn({ eventId: "too-old", completedAt: minutesAgo(90), costUsd: 8 }),
+        );
+        yield* store.recordTurn(
+          turn({
+            eventId: "other-instance",
+            completedAt: minutesAgo(5),
+            providerInstanceId: work,
+            costUsd: 0.5,
+          }),
+        );
+
+        const snapshot = yield* store.getSnapshot();
+        assert.strictEqual(snapshot.totalsLastHour?.costUsd, 3.5);
+        assert.strictEqual(snapshot.totalsLastHour?.turns, 3);
+        assert.strictEqual(snapshot.totalsLastHour?.inputTokens, 30);
+        assert.strictEqual(snapshot.totalsLastHour?.outputTokens, 5);
+        assert.strictEqual(snapshot.totalsToday.costUsd, 11.5);
+
+        const personalUsage = snapshot.instances.find(
+          (instance) => instance.providerInstanceId === personal,
+        );
+        assert.strictEqual(personalUsage?.lastHour?.costUsd, 3);
+        assert.strictEqual(personalUsage?.lastHour?.turns, 2);
+      }),
+    ),
+  );
+
+  it.effect("reports a zeroed hourly window when nothing ran in it", () =>
+    withStore((store, now) =>
+      Effect.gen(function* () {
+        yield* store.recordTurn(
+          turn({
+            eventId: "hours-ago",
+            completedAt: DateTime.formatIso(DateTime.subtract(now, { minutes: 200 })),
+            costUsd: 4,
+          }),
+        );
+
+        const snapshot = yield* store.getSnapshot();
+        // Present and zero, never absent: absence is how a client detects a
+        // server that predates the window at all.
+        assert.isDefined(snapshot.totalsLastHour);
+        assert.strictEqual(snapshot.totalsLastHour?.turns, 0);
+        assert.strictEqual(snapshot.instances[0]?.lastHour?.costUsd, 0);
+      }),
+    ),
+  );
+
   it.effect("keeps only the latest rate-limit snapshot per instance", () =>
     withStore((store) =>
       Effect.gen(function* () {

@@ -764,6 +764,60 @@ export function deriveSubagentTasks(
   });
 }
 
+/**
+ * The Task call that produced an activity, or null when the main thread did.
+ *
+ * Set by the ingestion layer on every item a subagent produced. Its absence is
+ * meaningful and load-bearing: it is what keeps a thread's own transcript
+ * exactly as it was before subagents were forwarded at all.
+ */
+export function activityParentToolUseId(activity: OrchestrationThreadActivity): string | null {
+  const payload = asPayloadRecord(activity);
+  const parent = payload?.parentToolUseId;
+  if (typeof parent !== "string") return null;
+  const trimmed = parent.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * A thread's own activities, with everything its subagents produced removed.
+ *
+ * Every main-transcript derivation runs through this. Before subagent text was
+ * forwarded, subagent work never reached the transcript at all — an agent's
+ * tool calls arrived as complete assistant messages the adapter filed away
+ * without rendering. Forwarding changes that, so the exclusion has to become
+ * explicit or turning the feature on would silently interleave three agents'
+ * tool rows into one unreadable log.
+ */
+export function mainThreadActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  // Fast path: threads that never spawned an agent are the common case and
+  // must not pay a copy for a feature they are not using.
+  if (!activities.some((activity) => activityParentToolUseId(activity) !== null)) {
+    return activities;
+  }
+  return activities.filter((activity) => activityParentToolUseId(activity) === null);
+}
+
+/**
+ * One subagent's activities, in the order it produced them.
+ *
+ * `toolUseId` comes from the shell's subagent rollup (or `deriveSubagentTasks`)
+ * rather than being the task id: the task id names the task, while
+ * `parentToolUseId` is what the agent's own rows are stamped with.
+ *
+ * Returns empty for an agent whose tool-use id was never reported — an honest
+ * empty view is better than someone else's rows under this agent's name.
+ */
+export function agentActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  toolUseId: string | null,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  if (toolUseId === null) return [];
+  return activities.filter((activity) => activityParentToolUseId(activity) === toolUseId);
+}
+
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,

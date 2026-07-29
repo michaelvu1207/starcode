@@ -408,6 +408,17 @@ export const ItemLifecyclePayload = Schema.Struct({
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
+   * The `tool_use` id of the Task call that owns this item, when the item was
+   * produced by a subagent rather than the main thread.
+   *
+   * This is the join key for the whole per-agent view: `task.started` reports
+   * the same id as `toolUseId`, so an item can be attributed to a task without
+   * the adapter having to thread task ids through the streaming layer. Absent
+   * means "the main thread produced this", which is the overwhelming majority
+   * of items and the only case that existed before subagent forwarding.
+   */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
    * Short, single-line preview used as a row label. Adapters put the command
    * here for `command_execution`, the path for `file_change`, and so on.
    * Truncated aggressively downstream — never the place to put output.

@@ -260,6 +260,70 @@ function itemJoinKeyFields(event: ProviderRuntimeEvent): Record<string, unknown>
   return itemId.length > 0 ? { itemId } : {};
 }
 
+/**
+ * The Task call an item belongs to, when a subagent produced it.
+ *
+ * Carried onto every activity so a client can partition one thread's activity
+ * stream into per-agent transcripts without a second query. Absent on
+ * main-thread items, which is what keeps their payloads byte-identical to what
+ * a server without subagent forwarding produced.
+ */
+function subagentJoinKeyFields(payload: {
+  readonly parentToolUseId?: string | undefined;
+}): Record<string, unknown> {
+  const parent = payload.parentToolUseId?.trim() ?? "";
+  return parent.length > 0 ? { parentToolUseId: parent } : {};
+}
+
+/**
+ * True when an item event came from a subagent.
+ *
+ * Item events are normally filtered down to tool lifecycle types, because
+ * assistant text and reasoning reach the transcript through the message and
+ * reasoning paths instead. Subagent items have no such path — the agent's
+ * transcript *is* its activity stream — so for those the filter is skipped and
+ * every item type becomes an activity.
+ */
+function isSubagentItemEvent(payload: { readonly parentToolUseId?: string | undefined }): boolean {
+  return (payload.parentToolUseId?.trim().length ?? 0) > 0;
+}
+
+/**
+ * Activity kind for a subagent item, mirroring the main thread's vocabulary
+ * where one exists so clients can reuse their row renderers.
+ */
+function subagentActivityKind(itemType: string, lifecycle: "started" | "updated" | "completed") {
+  if (itemType === "assistant_message") return "agent.message";
+  if (itemType === "reasoning") return "agent.reasoning";
+  return `tool.${lifecycle}`;
+}
+
+/** An agent's prose is narration, not tool work, so it takes the info tone. */
+function subagentActivityTone(kind: string): "info" | "tool" {
+  return kind.startsWith("agent.") ? "info" : "tool";
+}
+
+/**
+ * Row label for an item activity.
+ *
+ * Tool rows are titled by the adapter ("Command run"), but an agent's message
+ * has no title and its text *is* the label — so for those the detail is
+ * promoted rather than falling through to a generic "Tool".
+ */
+function itemActivitySummary(
+  payload: { readonly title?: string | undefined; readonly detail?: string | undefined },
+  kind: string,
+  fallback: string,
+): string {
+  if (payload.title) {
+    return payload.title;
+  }
+  if (kind.startsWith("agent.") && payload.detail) {
+    return truncateDetail(payload.detail);
+  }
+  return kind === "agent.reasoning" ? "Thinking" : kind === "agent.message" ? "Agent" : fallback;
+}
+
 /** Payload fragment carrying captured output, for spreading into an activity. */
 function outputPayloadFields(payload: {
   readonly output?: string | undefined;
@@ -741,19 +805,24 @@ export function runtimeEventToActivities(
     }
 
     case "item.updated": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
+          tone: subagentActivityTone(subagentActivityKind(event.payload.itemType, "updated")),
+          kind: subagentActivityKind(event.payload.itemType, "updated"),
+          summary: itemActivitySummary(
+            event.payload,
+            subagentActivityKind(event.payload.itemType, "updated"),
+            "Tool updated",
+          ),
           payload: {
             itemType: event.payload.itemType,
             ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...outputPayloadFields(event.payload),
@@ -766,19 +835,21 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
+      const completedKind = subagentActivityKind(event.payload.itemType, "completed");
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.completed",
-          summary: event.payload.title ?? "Tool",
+          tone: subagentActivityTone(completedKind),
+          kind: completedKind,
+          summary: itemActivitySummary(event.payload, completedKind, "Tool"),
           payload: {
             itemType: event.payload.itemType,
             ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...outputPayloadFields(event.payload),
@@ -791,22 +862,24 @@ export function runtimeEventToActivities(
     }
 
     case "item.started": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
+      const startedKind = subagentActivityKind(event.payload.itemType, "started");
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.started",
+          tone: subagentActivityTone(startedKind),
+          kind: startedKind,
           // No "started" suffix: the client renders the verb from lifecycle
           // status ("Running …" vs "Ran …"), so baking tense into the summary
           // here would fight the phrasing layer and double up.
-          summary: event.payload.title ?? "Tool",
+          summary: itemActivitySummary(event.payload, startedKind, "Tool"),
           payload: {
             itemType: event.payload.itemType,
             ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
             status: event.payload.status ?? "inProgress",
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },

@@ -43,6 +43,7 @@ import {
   CircleDotIcon,
   Columns2Icon,
   EllipsisIcon,
+  BotIcon,
 } from "lucide-react";
 import {
   useState,
@@ -73,6 +74,11 @@ function StatusGlyph({ tone }: { readonly tone: ThreadRowStatusTone }): ReactNod
       return <CircleDotIcon aria-hidden className={className} />;
     case "failed":
       return <CircleAlertIcon aria-hidden className={className} />;
+    // The only glyph in the set that is not a circle, deliberately: every
+    // other tone describes the thread's own turn, and this one describes work
+    // running beside it. A circle variant would read as another turn state.
+    case "agents":
+      return <BotIcon aria-hidden className={className} />;
     case "done":
       return <CircleCheckIcon aria-hidden className={className} />;
   }
@@ -378,7 +384,11 @@ export function SidebarThreadRow({
                 }
                 className={cn(
                   "sc-machine-mark inline-flex shrink-0 items-center",
-                  chip.tone === "working" && "animate-status-pulse motion-reduce:animate-none",
+                  // Both tones mean "something is happening right now", and the
+                  // pulse is what distinguishes live work from a resting state
+                  // at a glance.
+                  (chip.tone === "working" || chip.tone === "agents") &&
+                    "animate-status-pulse motion-reduce:animate-none",
                 )}
               >
                 <StatusGlyph tone={chip.tone} />

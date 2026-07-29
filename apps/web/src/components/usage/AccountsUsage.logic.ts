@@ -58,6 +58,8 @@ export interface AccountUsageRow {
   readonly rateLimits: ProviderInstanceUsage["rateLimits"];
   readonly today: UsageTotals;
   readonly week: UsageTotals;
+  /** The trailing hour, or zeros when this machine's server does not report it. */
+  readonly lastHour: UsageTotals;
   readonly lastTurnAt: string | null;
 }
 
@@ -170,6 +172,14 @@ export interface AccountsUsageEnvironmentGroup {
   readonly today: UsageTotals;
   readonly week: UsageTotals;
   /**
+   * What this machine spent in the trailing hour, and whether it is in a
+   * position to say. A server predating the window omits it; that machine is
+   * excluded from the fleet rate rather than counted as an idle one, because a
+   * busy machine reporting nothing would otherwise drag the rate down.
+   */
+  readonly lastHour: UsageTotals;
+  readonly lastHourReported: boolean;
+  /**
    * What this machine's CLIs spent outside the fork. Deliberately kept beside
    * `today`/`week` rather than folded into them: those count turns the fork
    * ran, this counts messages found in the CLIs' own stores, and any turn the
@@ -182,6 +192,14 @@ export interface AccountsUsageView {
   readonly groups: ReadonlyArray<AccountsUsageEnvironmentGroup>;
   readonly today: UsageTotals;
   readonly week: UsageTotals;
+  /** Every reporting machine's trailing hour, summed — the fleet burn rate. */
+  readonly lastHour: UsageTotals;
+  /** True once at least one connected machine reports the window at all. */
+  readonly lastHourReported: boolean;
+  /** How many machines that rate is drawn from; never more than `groups`. */
+  readonly lastHourMachines: number;
+  /** Accounts that ran at least one turn inside the window. */
+  readonly lastHourActiveAccounts: number;
   readonly accountCount: number;
   /** Set when the machines disagree about which local day "today" is. */
   readonly mixedDays: boolean;
@@ -435,6 +453,7 @@ function buildEnvironmentGroup(
       rateLimits: usage?.rateLimits ?? null,
       today: usage?.today ?? EMPTY_USAGE_TOTALS,
       week: usage?.week ?? EMPTY_USAGE_TOTALS,
+      lastHour: usage?.lastHour ?? EMPTY_USAGE_TOTALS,
       lastTurnAt: usage?.lastTurnAt ?? null,
     });
   }
@@ -458,6 +477,7 @@ function buildEnvironmentGroup(
       rateLimits: usage.rateLimits,
       today: usage.today,
       week: usage.week,
+      lastHour: usage.lastHour ?? EMPTY_USAGE_TOTALS,
       lastTurnAt: usage.lastTurnAt,
     });
   }
@@ -477,6 +497,12 @@ function buildEnvironmentGroup(
     accounts,
     today: sumTotals(accounts.map((account) => account.today)),
     week: sumTotals(accounts.map((account) => account.week)),
+    // Read off the snapshot rather than summed from the accounts, so the key's
+    // absence stays visible: summing rows that all defaulted to zero would
+    // manufacture a confident "$0.00 an hour" out of a server that never said
+    // anything of the kind.
+    lastHour: input.usage?.totalsLastHour ?? EMPTY_USAGE_TOTALS,
+    lastHourReported: input.usage?.totalsLastHour !== undefined,
     cliHistory: buildCliHistoryView(input.usage?.cliHistory),
   };
 }
@@ -494,10 +520,20 @@ export function buildAccountsUsageView(
     ),
   );
 
+  const reportingHour = groups.filter((group) => group.lastHourReported);
+
   return {
     groups,
     today: sumTotals(groups.map((group) => group.today)),
     week: sumTotals(groups.map((group) => group.week)),
+    lastHour: sumTotals(reportingHour.map((group) => group.lastHour)),
+    lastHourReported: reportingHour.length > 0,
+    lastHourMachines: reportingHour.length,
+    lastHourActiveAccounts: reportingHour.reduce(
+      (count, group) =>
+        count + group.accounts.filter((account) => account.lastHour.turns > 0).length,
+      0,
+    ),
     accountCount: groups.reduce((count, group) => count + group.accounts.length, 0),
     mixedDays: days.size > 1,
     cliHistory: buildCliHistoryFleetView(groups),

@@ -18,7 +18,7 @@
  */
 import type { SidebarV2Status } from "../Sidebar.logic";
 
-export type ThreadRowStatusTone = "working" | "approval" | "input" | "failed" | "done";
+export type ThreadRowStatusTone = "working" | "approval" | "input" | "agents" | "failed" | "done";
 
 export interface ThreadRowStatusChip {
   readonly tone: ThreadRowStatusTone;
@@ -39,6 +39,11 @@ export function resolveThreadRowStatusChip(input: {
       return { tone: "input", label: "Waiting for input" };
     case "failed":
       return { tone: "failed", label: "Failed" };
+    // Its own tone rather than a variant of "working", because it answers a
+    // different question: the thread is not working, but it is not finished
+    // either. The child rows below it say which agents are still going.
+    case "agents":
+      return { tone: "agents", label: "Background agents running" };
     case "ready":
       break;
   }
