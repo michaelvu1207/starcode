@@ -63,7 +63,11 @@ import {
   ThreadMailboxSendInput,
   ThreadMailboxSendResult,
 } from "./mailbox.ts";
-import { EnvironmentUsageSnapshot } from "./usage.ts";
+import {
+  CliUsageModelAliasCatalog,
+  CliUsageModelAliasUpdate,
+  EnvironmentUsageSnapshot,
+} from "./usage.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
@@ -121,6 +125,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
   "usage_snapshot_failed",
+  "usage_model_aliases_failed",
+  "usage_model_aliases_save_failed",
   "peers_load_failed",
   "peer_registration_failed",
   "peer_remove_failed",
@@ -655,13 +661,47 @@ export class EnvironmentFeatureFlowHttpApi extends HttpApiGroup.make("featureFlo
  * one it was bootstrapped on. The cost is that an F2 peer credential can read
  * spend as well as transcripts.
  */
-export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage").add(
-  HttpApiEndpoint.get("snapshot", "/api/usage/snapshot", {
-    headers: OptionalBearerHeaders,
-    success: EnvironmentUsageSnapshot,
-    error: EnvironmentScopedOperationErrors,
-  }).middleware(EnvironmentAuthenticatedAuth),
-) {}
+export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage")
+  .add(
+    HttpApiEndpoint.get("snapshot", "/api/usage/snapshot", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentUsageSnapshot,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * The machine's model-alias registry: which unpriced models the operator has
+   * declared bill like a known one, and the set of ids an alias may point at.
+   *
+   * Read-scoped alongside the snapshot it annotates. The catalog half is a
+   * build-time constant, so this is a small response a picker can fetch once.
+   */
+  .add(
+    HttpApiEndpoint.get("modelAliases", "/api/usage/model-aliases", {
+      headers: OptionalBearerHeaders,
+      success: CliUsageModelAliasCatalog,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  /**
+   * Replace the registry.
+   *
+   * `orchestration:operate` rather than `orchestration:read`, because this
+   * changes what every reader of the snapshot is told a month of history cost.
+   * It is deliberately *not* administrative: the registry is derived, local to
+   * one machine, and reverting it is one more PUT.
+   *
+   * The response is the stored registry rather than an acknowledgement, so a
+   * client sees exactly which rows survived validation without a second read.
+   */
+  .add(
+    HttpApiEndpoint.put("setModelAliases", "/api/usage/model-aliases", {
+      headers: OptionalBearerHeaders,
+      payload: CliUsageModelAliasUpdate,
+      success: CliUsageModelAliasCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
 
 /**
  * Terminal history: the CLI session logs sitting on this machine's disk,

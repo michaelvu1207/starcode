@@ -23,14 +23,23 @@
  * accounts and machines rather than enumerating them, and folding every model
  * past the third into one row.
  *
+ * `UsageDailyChart` is the one element given real height, because it is the
+ * only one that answers *when* — and one stacked chart says what a sparkline
+ * per provider card would have said, in less room.
+ *
  * @module AccountsUsagePanel
  */
 import { CircleAlertIcon, InfoIcon, LoaderIcon, RefreshCwIcon } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
-import type { CliUsageTotals } from "@t3tools/contracts";
+import type { CliUsageProvider, CliUsageTotals, EnvironmentId } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
-import { useAccountsUsage } from "../../state/usage";
+import {
+  useAccountsUsage,
+  useUsageModelAliases,
+  useUsageModelAliasWriter,
+} from "../../state/usage";
 import {
   SettingsPageContainer,
   SettingsSection,
@@ -42,8 +51,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   type AccountLimitRow,
   type CliHistoryProviderRollup,
-  type CliSparkBar,
-  buildCliSparkSeries,
   cliTotalTokens,
   foldCliModelRows,
   formatCount,
@@ -52,9 +59,35 @@ import {
   formatUsd,
   unpricedShare,
 } from "./AccountsUsage.logic";
+import { ModelPriceAssignment } from "./ModelPriceAssignment";
+import { UsageDailyChart } from "./UsageDailyChart";
+import {
+  buildUsageDailyChartView,
+  DEFAULT_USAGE_CHART_RANGE,
+  type UsageChartRange,
+} from "./UsageDailyChart.logic";
 
 /** Models past this many fold into one tail row, which keeps a card 3 rows tall. */
 const MODEL_ROWS = 3;
+
+/** What a model row needs to offer "price this one as that one", or nothing. */
+interface PricingHandles {
+  readonly priceableByProvider: ReadonlyMap<CliUsageProvider, ReadonlyArray<string>>;
+  readonly pendingModel: string | null;
+  readonly onAssign:
+    | ((input: {
+        readonly provider: CliUsageProvider;
+        readonly model: string;
+        readonly pricedAs: string | null;
+      }) => void)
+    | null;
+}
+
+const NO_PRICING: PricingHandles = {
+  priceableByProvider: new Map(),
+  pendingModel: null,
+  onAssign: null,
+};
 
 /**
  * The CLI each figure was read out of, and where its store lives. Naming the
@@ -64,7 +97,7 @@ const CLI_PROVIDER_META = {
   claude: { label: "Claude Code", driver: "claudeAgent", home: "~/.claude" },
   codex: { label: "Codex", driver: "codex", home: "~/.codex" },
 } as const satisfies Record<
-  CliHistoryProviderRollup["provider"],
+  CliUsageProvider,
   { readonly label: string; readonly driver: string; readonly home: string }
 >;
 
@@ -88,33 +121,18 @@ function usageBarTone(usedPercent: number): string {
 const UNKNOWN_TRACK =
   "bg-[repeating-linear-gradient(45deg,var(--color-muted)_0px,var(--color-muted)_3px,transparent_3px,transparent_6px)]";
 
-/** Daily spend as 30 bars. Empty days are drawn as stubs, never closed up. */
-function SparkBars({ bars }: { bars: ReadonlyArray<CliSparkBar> }) {
-  if (bars.length === 0) return null;
-  return (
-    <div
-      className="flex h-8 items-end gap-px"
-      role="img"
-      aria-label="Daily spend over the last 30 days"
-    >
-      {bars.map((bar) => (
-        <div
-          key={bar.day}
-          title={`${bar.day} · ${formatUsd(bar.costUsd)}`}
-          className={cn(
-            "min-w-0 flex-1 rounded-[1px]",
-            bar.costUsd > 0 ? "bg-primary/70" : "bg-muted",
-          )}
-          style={{ height: bar.costUsd > 0 ? `${Math.max(bar.share * 100, 6)}%` : "2px" }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ModelRows({ models }: { models: CliHistoryProviderRollup["models"] }) {
+function ModelRows({
+  provider,
+  models,
+  pricing,
+}: {
+  provider: CliUsageProvider;
+  models: CliHistoryProviderRollup["models"];
+  pricing: PricingHandles;
+}) {
   const { rows, shareBasis } = foldCliModelRows(models, MODEL_ROWS);
   if (rows.length === 0) return null;
+  const priceable = pricing.priceableByProvider.get(provider) ?? [];
 
   return (
     <div className="grid gap-1">
@@ -122,7 +140,7 @@ function ModelRows({ models }: { models: CliHistoryProviderRollup["models"] }) {
         const percent = Math.round(row.share * 100);
         return (
           <div key={row.model} className="flex items-center gap-2 text-[11px]">
-            <span className="w-28 shrink-0 truncate text-muted-foreground" title={row.model}>
+            <span className="w-24 shrink-0 truncate text-muted-foreground" title={row.model}>
               {row.model}
             </span>
             {row.priced ? (
@@ -149,6 +167,18 @@ function ModelRows({ models }: { models: CliHistoryProviderRollup["models"] }) {
                 <span className="text-muted-foreground/60">no price</span>
               )}
             </span>
+            {pricing.onAssign !== null &&
+            row.assignable &&
+            (!row.priced || row.pricedAs !== null) ? (
+              <ModelPriceAssignment
+                model={row.model}
+                onAssign={pricing.onAssign}
+                pending={pricing.pendingModel === row.model}
+                priceable={priceable}
+                pricedAs={row.pricedAs}
+                provider={provider}
+              />
+            ) : null}
           </div>
         );
       })}
@@ -159,18 +189,17 @@ function ModelRows({ models }: { models: CliHistoryProviderRollup["models"] }) {
 function ProviderCard({
   rollup,
   shareOfCost,
-  latestDay,
   pending,
+  pricing,
 }: {
   rollup: CliHistoryProviderRollup;
   /** 0-1 of the fleet's 30-day cost, or null when nothing is priced. */
   shareOfCost: number | null;
-  latestDay: string | null;
   pending: boolean;
+  pricing: PricingHandles;
 }) {
   const meta = CLI_PROVIDER_META[rollup.provider];
   const totals = rollup.windows.last30Days;
-  const bars = buildCliSparkSeries(rollup.days, latestDay);
 
   return (
     <div className="rounded-xl border border-border/60 px-4 py-3">
@@ -200,13 +229,97 @@ function ProviderCard({
       </p>
 
       <div className="pt-2.5">
-        <SparkBars bars={bars} />
-      </div>
-
-      <div className="pt-2.5">
-        <ModelRows models={rollup.models} />
+        <ModelRows models={rollup.models} pricing={pricing} provider={rollup.provider} />
       </div>
     </div>
+  );
+}
+
+function ProviderGrid({
+  providers,
+  totalCostUsd,
+  pending,
+  pricing,
+}: {
+  providers: ReadonlyArray<CliHistoryProviderRollup>;
+  totalCostUsd: number;
+  pending: boolean;
+  pricing: PricingHandles;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid gap-3 px-3 pt-1 sm:px-4",
+        providers.length > 1 ? "sm:grid-cols-2" : "sm:grid-cols-1",
+      )}
+    >
+      {providers.map((rollup) => (
+        <ProviderCard
+          key={rollup.provider}
+          pending={pending}
+          pricing={pricing}
+          rollup={rollup}
+          shareOfCost={totalCostUsd === 0 ? null : rollup.windows.last30Days.costUsd / totalCostUsd}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The grid, wired to one machine's alias registry.
+ *
+ * Aliases are machine-local — each server prices its own store — while this
+ * page aggregates every machine into one figure. Rather than invent a fleet
+ * write that would have to fan out and could half-fail, the affordance is
+ * offered only when there is exactly one machine to write to, which is the
+ * case where "price this model as that one" has an unambiguous target.
+ */
+function ProviderGridWithPricing({
+  environmentId,
+  ...rest
+}: {
+  environmentId: EnvironmentId;
+  providers: ReadonlyArray<CliHistoryProviderRollup>;
+  totalCostUsd: number;
+  pending: boolean;
+}) {
+  const catalog = useUsageModelAliases(environmentId);
+  const writer = useUsageModelAliasWriter(environmentId);
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
+
+  const priceableByProvider = useMemo(() => {
+    const map = new Map<CliUsageProvider, ReadonlyArray<string>>();
+    for (const entry of catalog?.priceable ?? []) map.set(entry.provider, entry.models);
+    return map;
+  }, [catalog]);
+
+  const onAssign = useCallback(
+    (input: {
+      readonly provider: CliUsageProvider;
+      readonly model: string;
+      readonly pricedAs: string | null;
+    }) => {
+      setPendingModel(input.model);
+      void writer.assign(input).finally(() => {
+        setPendingModel(null);
+      });
+    },
+    [writer],
+  );
+
+  return (
+    <ProviderGrid
+      {...rest}
+      pricing={{
+        priceableByProvider,
+        pendingModel,
+        // No catalog means the machine never answered the alias route — an
+        // older server. The affordance is withheld rather than offered and
+        // then refused.
+        onAssign: catalog === null ? null : onAssign,
+      }}
+    />
   );
 }
 
@@ -300,6 +413,8 @@ export function AccountsUsagePanel() {
   // Reset countdowns are minute-resolution; a per-minute tick is enough and
   // keeps this panel off the per-second render path.
   const nowMs = useRelativeTimeTick(60_000);
+  const [range, setRange] = useState<UsageChartRange>(DEFAULT_USAGE_CHART_RANGE);
+  const chart = useMemo(() => buildUsageDailyChartView(view.groups, range), [view.groups, range]);
 
   const history = view.cliHistory;
   const fleetWindow = history.windows.last30Days;
@@ -311,7 +426,15 @@ export function AccountsUsagePanel() {
       right.windows.last30Days.messages - left.windows.last30Days.messages ||
       left.provider.localeCompare(right.provider),
   );
+  const reportingMachines = view.groups.filter((group) => group.cliHistory.reported);
+  const soleMachine = reportingMachines.length === 1 ? reportingMachines[0] : undefined;
   const showMachine = view.groups.length > 1;
+
+  const gridProps = {
+    providers,
+    totalCostUsd: fleetWindow.costUsd,
+    pending: history.pending,
+  };
 
   return (
     <SettingsPageContainer className="gap-8">
@@ -351,6 +474,10 @@ export function AccountsUsagePanel() {
           </p>
         </div>
 
+        {chart.reported ? (
+          <UsageDailyChart onRangeChange={setRange} range={range} view={chart} />
+        ) : null}
+
         {view.groups.length === 0 ? (
           <p className="px-3 pt-1 text-[13px] text-muted-foreground/80 sm:px-4">
             No machines are connected yet.
@@ -363,27 +490,10 @@ export function AccountsUsagePanel() {
           <p className="px-3 pt-1 text-[13px] text-muted-foreground/80 sm:px-4">
             No Claude Code or Codex history found on any connected machine.
           </p>
+        ) : soleMachine === undefined ? (
+          <ProviderGrid {...gridProps} pricing={NO_PRICING} />
         ) : (
-          <div
-            className={cn(
-              "grid gap-3 px-3 pt-1 sm:px-4",
-              providers.length > 1 ? "sm:grid-cols-2" : "sm:grid-cols-1",
-            )}
-          >
-            {providers.map((rollup) => (
-              <ProviderCard
-                key={rollup.provider}
-                rollup={rollup}
-                shareOfCost={
-                  fleetWindow.costUsd === 0
-                    ? null
-                    : rollup.windows.last30Days.costUsd / fleetWindow.costUsd
-                }
-                latestDay={view.latestDay}
-                pending={history.pending}
-              />
-            ))}
-          </div>
+          <ProviderGridWithPricing {...gridProps} environmentId={soleMachine.environmentId} />
         )}
 
         {history.failed ? (

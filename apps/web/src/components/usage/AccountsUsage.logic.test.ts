@@ -16,11 +16,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type AccountUsageRow,
   buildAccountsUsageView,
   buildCliHistoryView,
-  buildCliSparkSeries,
   cliTotalTokens,
   foldCliModelRows,
+  isDormantAccount,
   formatCount,
   formatDayRange,
   formatResetCountdown,
@@ -621,45 +622,6 @@ describe("fleet CLI history, scoped to the window the panel shows", () => {
     usage: usage({ cliHistory: cliHistory({ providers }) }),
   });
 
-  it("merges every machine's daily series by local day, ascending", () => {
-    const view = buildAccountsUsageView([
-      environment("mac", [
-        cliProvider({
-          provider: "claude",
-          days: [
-            { day: "2026-07-20", costUsd: 4, messages: 2 },
-            { day: "2026-07-22", costUsd: 6, messages: 3 },
-          ],
-        }),
-      ]),
-      environment("box", [
-        cliProvider({
-          provider: "claude",
-          days: [
-            { day: "2026-07-22", costUsd: 1.5, messages: 1 },
-            { day: "2026-07-19", costUsd: 2, messages: 1 },
-          ],
-        }),
-      ]),
-    ]);
-
-    expect(view.cliHistory.providers[0]?.days).toEqual([
-      { day: "2026-07-19", costUsd: 2, messages: 1 },
-      { day: "2026-07-20", costUsd: 4, messages: 2 },
-      { day: "2026-07-22", costUsd: 7.5, messages: 4 },
-    ]);
-  });
-
-  it("has no series at all when the machines' servers predate one", () => {
-    // `days` is an optional key: an older server omits it entirely, and a
-    // series of zeros would claim a month of no spend it cannot vouch for.
-    const view = buildAccountsUsageView([
-      environment("mac", [flatProvider("claude", { costUsd: 40, messages: 9 })]),
-    ]);
-    expect(view.cliHistory.providers[0]?.days).toEqual([]);
-    expect(view.cliHistory.providers[0]?.windows.last30Days.costUsd).toBe(40);
-  });
-
   it("scopes the model breakdown to the window and re-sorts it by that cost", () => {
     const view = buildAccountsUsageView([
       environment("mac", [
@@ -714,59 +676,6 @@ describe("fleet CLI history, scoped to the window the panel shows", () => {
       ]),
     ]);
     expect(current.cliHistory.costIsFloor).toBe(true);
-  });
-
-  it("pins the daily series' right edge to the latest day any machine reports", () => {
-    const view = buildAccountsUsageView([
-      { ...environment("mac", []), usage: usage({ today: "2026-07-24" }) },
-      { ...environment("box", []), usage: usage({ today: "2026-07-25" }) },
-    ]);
-    expect(view.latestDay).toBe("2026-07-25");
-    expect(view.mixedDays).toBe(true);
-  });
-});
-
-describe("buildCliSparkSeries", () => {
-  const day = (value: string, costUsd: number) => ({ day: value, costUsd, messages: 1 });
-
-  it("fills the days with no usage back in rather than closing the gap", () => {
-    const bars = buildCliSparkSeries(
-      [day("2026-07-21", 10), day("2026-07-25", 5)],
-      "2026-07-25",
-      5,
-    );
-    expect(bars.map((bar) => bar.day)).toEqual([
-      "2026-07-21",
-      "2026-07-22",
-      "2026-07-23",
-      "2026-07-24",
-      "2026-07-25",
-    ]);
-    expect(bars.map((bar) => bar.costUsd)).toEqual([10, 0, 0, 0, 5]);
-  });
-
-  it("scales every bar against the tallest one", () => {
-    const bars = buildCliSparkSeries([day("2026-07-24", 4), day("2026-07-25", 8)], "2026-07-25", 2);
-    expect(bars.map((bar) => bar.share)).toEqual([0.5, 1]);
-  });
-
-  it("keeps a run of idle days at the right edge visible", () => {
-    // The last spend was three days ago; the series must still end today, or
-    // "nothing since Tuesday" reads as "spending right up to now".
-    const bars = buildCliSparkSeries([day("2026-07-22", 9)], "2026-07-25", 4);
-    expect(bars.at(-1)).toEqual({ day: "2026-07-25", costUsd: 0, messages: 0, share: 0 });
-  });
-
-  it("crosses a month boundary without inventing a day", () => {
-    const bars = buildCliSparkSeries([day("2026-03-01", 3)], "2026-03-01", 3);
-    expect(bars.map((bar) => bar.day)).toEqual(["2026-02-27", "2026-02-28", "2026-03-01"]);
-  });
-
-  it("draws nothing when there is no series or no edge to anchor it to", () => {
-    expect(buildCliSparkSeries([], "2026-07-25")).toEqual([]);
-    expect(buildCliSparkSeries([day("2026-07-25", 1)], null, 1)).toEqual([
-      { day: "2026-07-25", costUsd: 1, messages: 1, share: 1 },
-    ]);
   });
 });
 
@@ -1016,5 +925,178 @@ describe("formatting", () => {
     expect(formatResetCountdown("2026-07-24T11:00:00.000Z", now)).toBeNull();
     expect(formatResetCountdown(null, now)).toBeNull();
     expect(formatResetCountdown("not-a-date", now)).toBeNull();
+  });
+});
+
+describe("foldCliModelRows provenance", () => {
+  it("carries an assigned price onto the row and marks it assignable", () => {
+    const { rows } = foldCliModelRows([{ ...model("gpt-5.6-sol", 4_120), pricedAs: "gpt-5.5" }]);
+    expect(rows[0]?.pricedAs).toBe("gpt-5.5");
+    expect(rows[0]?.priced).toBe(true);
+    expect(rows[0]?.assignable).toBe(true);
+  });
+
+  it("leaves an unassigned row's provenance null", () => {
+    const { rows } = foldCliModelRows([model("gpt-5.5", 10)]);
+    expect(rows[0]?.pricedAs).toBe(null);
+  });
+
+  it("refuses to make the folded tail assignable — it names no single model", () => {
+    const models = Array.from({ length: 11 }, (_unused, index) =>
+      model(`model-${index}`, 11 - index),
+    );
+    const { rows } = foldCliModelRows(models, 8);
+    expect(rows[8]?.model).toBe("3 more models");
+    expect(rows[8]?.assignable).toBe(false);
+    expect(rows[8]?.pricedAs).toBe(null);
+  });
+
+  it("shows every model when the limit is raised to the list's length", () => {
+    const models = Array.from({ length: 14 }, (_unused, index) =>
+      model(`model-${index}`, 14 - index),
+    );
+    const { rows } = foldCliModelRows(models, models.length);
+    expect(rows).toHaveLength(14);
+    // No tail row means every row can be assigned a price.
+    expect(rows.every((row) => row.assignable)).toBe(true);
+  });
+});
+
+describe("isDormantAccount", () => {
+  const account = (overrides: Partial<AccountUsageRow> = {}): AccountUsageRow => ({
+    lastHour: EMPTY_USAGE_TOTALS,
+    instanceId: "grok",
+    displayName: "Grok",
+    driver: "grok",
+    accentColor: null,
+    authStatus: "unauthenticated",
+    email: null,
+    planLabel: null,
+    enabled: true,
+    installed: false,
+    orphanedUsage: false,
+    rateLimits: null,
+    today: EMPTY_USAGE_TOTALS,
+    week: EMPTY_USAGE_TOTALS,
+    lastTurnAt: null,
+    ...overrides,
+  });
+
+  it("hides a default instance for a driver this machine does not have", () => {
+    expect(isDormantAccount(account())).toBe(true);
+  });
+
+  it("hides a driver that is installed but switched off and never used", () => {
+    expect(isDormantAccount(account({ installed: true, enabled: false }))).toBe(true);
+  });
+
+  it("keeps an installed, enabled instance even with nothing spent yet", () => {
+    expect(isDormantAccount(account({ installed: true, enabled: true }))).toBe(false);
+  });
+
+  it("keeps an uninstalled instance that has spend recorded against it", () => {
+    expect(isDormantAccount(account({ week: totals({ turns: 3, costUsd: 1.2 }) }))).toBe(false);
+  });
+
+  it("keeps an uninstalled instance that ran a turn, even at zero cost", () => {
+    // Subscription providers report no dollars; the turn count is the signal.
+    expect(isDormantAccount(account({ today: totals({ turns: 1 }) }))).toBe(false);
+  });
+
+  it("keeps an instance the provider has reported rate limits for", () => {
+    const rateLimits = {
+      status: "allowed",
+      planLabel: null,
+      windows: [],
+      observedAt: "2026-07-24T00:00:00.000Z",
+    } as unknown as AccountUsageRow["rateLimits"];
+    expect(isDormantAccount(account({ rateLimits }))).toBe(false);
+  });
+
+  it("keeps an instance that has ever run a turn", () => {
+    expect(isDormantAccount(account({ lastTurnAt: "2026-05-01T00:00:00.000Z" }))).toBe(false);
+  });
+
+  it("keeps a signed-in account whose binary has gone missing", () => {
+    expect(isDormantAccount(account({ authStatus: "authenticated" }))).toBe(false);
+  });
+
+  it("never hides orphaned usage — spent money must not disappear", () => {
+    expect(isDormantAccount(account({ orphanedUsage: true }))).toBe(false);
+  });
+});
+
+describe("buildAccountsUsageView provider visibility", () => {
+  it("splits the dormant defaults out of the rendered account list", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([
+          provider({ instanceId: "claude-personal" as never }),
+          provider({
+            instanceId: "grok",
+            driver: "grok",
+            displayName: "Grok",
+            installed: false,
+            auth: { status: "unauthenticated" },
+          } as Partial<ServerProvider>),
+        ]),
+        usage: usage(),
+      },
+    ]);
+    const group = view.groups[0];
+    expect(group?.accounts.map((entry) => entry.instanceId)).toEqual(["claude-personal"]);
+    expect(group?.dormantAccounts.map((entry) => entry.instanceId)).toEqual(["grok"]);
+    // The headline account count follows what is shown.
+    expect(view.accountCount).toBe(1);
+  });
+
+  it("keeps the machine totals over every account, hidden or not", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([
+          provider({
+            instanceId: "grok",
+            driver: "grok",
+            installed: false,
+            auth: { status: "unauthenticated" },
+          } as Partial<ServerProvider>),
+        ]),
+        usage: usage({
+          instances: [
+            {
+              providerInstanceId: "grok",
+              driver: "grok",
+              rateLimits: null,
+              today: totals({ turns: 2, costUsd: 5 }),
+              week: totals({ turns: 2, costUsd: 5 }),
+              days: [],
+              lastTurnAt: null,
+            },
+          ] as unknown as EnvironmentUsageSnapshot["instances"],
+        }),
+      },
+    ]);
+    const group = view.groups[0];
+    // It had spend, so it is not dormant and it is rendered.
+    expect(group?.dormantAccounts).toHaveLength(0);
+    expect(group?.today.costUsd).toBe(5);
+  });
+
+  it("carries each machine's own local day for the chart's right edge", () => {
+    const view = buildAccountsUsageView([
+      {
+        environmentId: environmentId("mac"),
+        label: "mac",
+        config: config([]),
+        usage: usage({ today: "2026-07-24" }),
+      },
+      { environmentId: environmentId("box"), label: "box", config: config([]), usage: null },
+    ]);
+    expect(view.groups.find((group) => group.label === "mac")?.localDay).toBe("2026-07-24");
+    expect(view.groups.find((group) => group.label === "box")?.localDay).toBe(null);
   });
 });
