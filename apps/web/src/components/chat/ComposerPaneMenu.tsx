@@ -1,66 +1,42 @@
 /**
- * Fork-owned: the pane's workspace actions and panel toggles, behind one glyph
- * in the composer footer.
+ * Fork-owned: the pane's run context and panel toggles, behind one glyph in the
+ * composer footer.
  *
  * These used to sit in the thread header, which the fork removed so the chat
  * pane is transcript and composer edge to edge. None of them is touched
- * mid-thread — you open an editor or run a project script between turns, and
- * both panel toggles have keybindings that stay the fast path — so a
- * persistent bar was a poor trade for four controls. They keep their own
- * components, so upstream fixes to the editor list or the script dialogs still
- * land here.
+ * mid-thread — you pick a workspace and a branch before the first turn, and
+ * both panel toggles have keybindings that stay the fast path — so a persistent
+ * bar was a poor trade for a handful of controls.
+ *
+ * Workspace and Branch moved in here from the footer's inline row, which is why
+ * that row now carries only the machine indicator: those two are the *pre-flight*
+ * decisions, read far more often than they are changed, and a strip that showed
+ * them permanently spent a line of chrome on state a tooltip can answer.
+ *
+ * "Open in" and "Actions" (project scripts) used to live here and are gone —
+ * along with their plumbing. See `ChatView` for what went with them.
  *
  * @module ComposerPaneMenu
  */
-import {
-  type EditorId,
-  type EnvironmentId,
-  type ProjectScript,
-  type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { EllipsisIcon } from "lucide-react";
 import { memo } from "react";
 
-import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
+import type { DraftId } from "~/composerDraftStore";
 import { cn } from "~/lib/utils";
-import ProjectScriptsControl, {
-  type NewProjectScriptInput,
-  type ProjectScriptActionResult,
-} from "../ProjectScriptsControl";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { BranchToolbar } from "../BranchToolbar";
+import type { EnvMode, EnvironmentOption } from "../BranchToolbar.logic";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerOptionRow } from "./ComposerOptionsPopover";
-import { OpenInPicker } from "./OpenInPicker";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./PanelLayoutControls";
 import { SplitPaneMenuControls } from "../split/SplitPaneMenuControls";
 
-/**
- * "Open in editor" shells out on the machine running the server, so it is only
- * meaningful for projects on the environment this client is hosted by.
- */
-export function shouldShowOpenInPicker(input: {
-  readonly activeProjectName: string | undefined;
-  readonly activeThreadEnvironmentId: EnvironmentId;
-  readonly primaryEnvironmentId: EnvironmentId | null;
-}): boolean {
-  return (
-    Boolean(input.activeProjectName) &&
-    input.primaryEnvironmentId !== null &&
-    input.activeThreadEnvironmentId === input.primaryEnvironmentId
-  );
-}
-
 export interface ComposerPaneMenuProps {
   readonly activeThreadEnvironmentId: EnvironmentId;
-  readonly activeProjectName: string | undefined;
-  readonly activeProjectCwd: string | null;
-  readonly openInCwd: string | null;
-  readonly activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
-  readonly preferredScriptId: string | null;
-  readonly keybindings: ResolvedKeybindingsConfig;
-  readonly availableEditors: ReadonlyArray<EditorId>;
+  readonly threadId: ThreadId;
+  readonly draftId?: DraftId;
   readonly terminalAvailable: boolean;
   readonly terminalOpen: boolean;
   readonly terminalShortcutLabel: string | null;
@@ -72,24 +48,23 @@ export interface ComposerPaneMenuProps {
   readonly onToggleTerminal: () => void;
   readonly onToggleRightPanel: () => void;
   readonly onToggleRightPanelMaximized: () => void;
-  readonly onRunProjectScript: (script: ProjectScript) => void;
-  readonly onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
-  readonly onUpdateProjectScript: (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ) => Promise<ProjectScriptActionResult>;
-  readonly onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  /** Run context — the same props `ComposerRunContext` used to forward. */
+  readonly envLocked: boolean;
+  readonly effectiveEnvModeOverride?: EnvMode;
+  readonly activeThreadBranchOverride?: string | null;
+  readonly startFromOrigin: boolean;
+  readonly availableEnvironments?: readonly EnvironmentOption[];
+  readonly onEnvModeChange: (mode: EnvMode) => void;
+  readonly onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
+  readonly onStartFromOriginChange: (startFromOrigin: boolean) => void;
+  readonly onCheckoutPullRequestRequest?: (reference: string) => void;
+  readonly onComposerFocusRequest?: () => void;
 }
 
 export const ComposerPaneMenu = memo(function ComposerPaneMenu({
   activeThreadEnvironmentId,
-  activeProjectName,
-  activeProjectCwd,
-  openInCwd,
-  activeProjectScripts,
-  preferredScriptId,
-  keybindings,
-  availableEditors,
+  threadId,
+  draftId,
   terminalAvailable,
   terminalOpen,
   terminalShortcutLabel,
@@ -101,22 +76,17 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
   onToggleTerminal,
   onToggleRightPanel,
   onToggleRightPanelMaximized,
-  onRunProjectScript,
-  onAddProjectScript,
-  onUpdateProjectScript,
-  onDeleteProjectScript,
+  envLocked,
+  effectiveEnvModeOverride,
+  activeThreadBranchOverride,
+  startFromOrigin,
+  availableEnvironments,
+  onEnvModeChange,
+  onActiveThreadBranchOverrideChange,
+  onStartFromOriginChange,
+  onCheckoutPullRequestRequest,
+  onComposerFocusRequest,
 }: ComposerPaneMenuProps) {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const fileScripts = useT3ProjectFileScripts(
-    activeThreadEnvironmentId,
-    activeProjectScripts ? activeProjectCwd : null,
-  );
-  const showOpenInPicker = shouldShowOpenInPicker({
-    activeProjectName,
-    activeThreadEnvironmentId,
-    primaryEnvironmentId,
-  });
-
   return (
     <Popover>
       <Tooltip>
@@ -147,37 +117,34 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
         side="bottom"
         sideOffset={8}
         data-chat-composer-pane-popup="true"
-        // Editor names and script names both vary a lot; a fixed width clips
-        // them against the viewport's overflow-clip.
+        // Branch names vary a lot; a fixed width clips them against the
+        // viewport's overflow-clip.
         className="!w-auto min-w-64 max-w-[min(26rem,calc(100vw-2rem))]"
         viewportClassName="py-3"
       >
         <div className="grid gap-2.5">
-          {showOpenInPicker ? (
-            <ComposerOptionRow label="Open in">
-              <OpenInPicker
-                environmentId={activeThreadEnvironmentId}
-                keybindings={keybindings}
-                availableEditors={availableEditors}
-                openInCwd={openInCwd}
-              />
-            </ComposerOptionRow>
-          ) : null}
-
-          {activeProjectScripts ? (
-            <ComposerOptionRow label="Actions" hint="Project scripts">
-              <ProjectScriptsControl
-                scripts={activeProjectScripts}
-                fileScripts={fileScripts}
-                keybindings={keybindings}
-                preferredScriptId={preferredScriptId}
-                onRunScript={onRunProjectScript}
-                onAddScript={onAddProjectScript}
-                onUpdateScript={onUpdateProjectScript}
-                onDeleteScript={onDeleteProjectScript}
-              />
-            </ComposerOptionRow>
-          ) : null}
+          {/* Workspace and branch lead: they answer "what does send actually
+              touch", which is the question you open this menu to check. */}
+          <ComposerOptionRow label="Workspace" hint="Checkout and branch">
+            <BranchToolbar
+              layout="menu"
+              environmentId={activeThreadEnvironmentId}
+              threadId={threadId}
+              {...(draftId ? { draftId } : {})}
+              envLocked={envLocked}
+              {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+              {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+              {...(onActiveThreadBranchOverrideChange
+                ? { onActiveThreadBranchOverrideChange }
+                : {})}
+              startFromOrigin={startFromOrigin}
+              onStartFromOriginChange={onStartFromOriginChange}
+              onEnvModeChange={onEnvModeChange}
+              {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+              {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+              {...(availableEnvironments ? { availableEnvironments } : {})}
+            />
+          </ComposerOptionRow>
 
           <ComposerOptionRow label="Split" hint="Two threads at once">
             <SplitPaneMenuControls />

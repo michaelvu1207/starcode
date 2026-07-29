@@ -57,8 +57,10 @@ interface BranchToolbarProps {
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   // "composer" is the strip glued under the composer; "inline" is a bare row
-  // for hosts that supply their own chrome, such as the composer's footer.
-  layout?: "composer" | "inline";
+  // for hosts that supply their own chrome, such as the composer's footer;
+  // "menu" stacks the workspace and branch selectors for the composer's
+  // three-dots popover, where they now live.
+  layout?: "composer" | "inline" | "menu";
 }
 
 interface MobileRunContextSelectorProps {
@@ -306,8 +308,43 @@ export const BranchToolbar = memo(function BranchToolbar({
   const isMobile = useIsMobile();
 
   const isInlineLayout = layout === "inline";
+  const isMenuLayout = layout === "menu";
 
   if (!hasActiveThread || !activeProject) return null;
+
+  // The popover host. Stacked rather than a row because a popover is free to
+  // be tall and the two controls are read together — and the machine indicator
+  // is deliberately absent: it stays in the footer, where "which machine is
+  // this" is worth seeing without opening anything.
+  if (isMenuLayout) {
+    return (
+      <div className="flex min-w-0 flex-col items-stretch gap-1">
+        <BranchToolbarEnvModeSelector
+          envLocked={envModeLocked}
+          effectiveEnvMode={effectiveEnvMode}
+          activeWorktreePath={activeWorktreePath}
+          onEnvModeChange={onEnvModeChange}
+          previousWorktreeLabel={previousWorktreeLabel}
+          onUsePreviousWorktree={onUsePreviousWorktree}
+        />
+        <BranchToolbarBranchSelector
+          className="min-w-0"
+          popupAlign="start"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -335,44 +372,49 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : (
         <div className="flex min-w-0 shrink-0 items-center gap-1">
           {showEnvironmentIndicator && availableEnvironments && (
+            <BranchToolbarEnvironmentSelector
+              envLocked={envLocked}
+              environmentId={environmentId}
+              availableEnvironments={availableEnvironments}
+              {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+            />
+          )}
+          {/* Workspace and branch used to sit here. They are in the composer's
+              three-dots menu now; the separator went with them, since the
+              machine indicator is the only thing left on this side. */}
+          {isInlineLayout ? null : (
             <>
-              <BranchToolbarEnvironmentSelector
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
-              />
               <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              <BranchToolbarEnvModeSelector
+                envLocked={envModeLocked}
+                effectiveEnvMode={effectiveEnvMode}
+                activeWorktreePath={activeWorktreePath}
+                onEnvModeChange={onEnvModeChange}
+                previousWorktreeLabel={previousWorktreeLabel}
+                onUsePreviousWorktree={onUsePreviousWorktree}
+              />
             </>
           )}
-          <BranchToolbarEnvModeSelector
-            envLocked={envModeLocked}
-            effectiveEnvMode={effectiveEnvMode}
-            activeWorktreePath={activeWorktreePath}
-            onEnvModeChange={onEnvModeChange}
-            previousWorktreeLabel={previousWorktreeLabel}
-            onUsePreviousWorktree={onUsePreviousWorktree}
-          />
         </div>
       )}
 
-      <BranchToolbarBranchSelector
-        className={
-          isInlineLayout ? "min-w-0" : "min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
-        }
-        popupAlign={isInlineLayout ? "start" : "end"}
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+      {isInlineLayout ? null : (
+        <BranchToolbarBranchSelector
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          popupAlign="end"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      )}
     </div>
   );
 });
