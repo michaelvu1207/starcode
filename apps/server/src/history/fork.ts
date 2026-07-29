@@ -12,9 +12,14 @@
  * turn is not a conflict anybody detects — the adapter's session map is keyed
  * by `ThreadId`, so each thread gets its own process, and both then append to
  * one transcript file. The fork marker (`forkFacts.forkResumeCursor`) is what
- * turns the first turn into `forkSession: true`, which resumes the source's
- * history and writes to a **new** session id. The source is read and never
- * written.
+ * each driver turns into its own fork verb — `forkSession: true` for Claude's
+ * SDK, `thread/fork` for Codex's app server — both of which resume the source's
+ * history and write to a **new** session. The source is read and never written.
+ *
+ * A `side` fork is the same three moves with two fields set: the new thread
+ * carries `sideOfThreadId`, which keeps it out of every list a person reads,
+ * and the cursor carries `ephemeral` where the driver understands one. See
+ * `HistoryForkInput`.
  *
  * Every precondition is a refusal, never a fallback, for the reason import
  * documents: a fork that quietly degraded to an empty thread would look
@@ -54,11 +59,12 @@ import { HistoryIndex, type HistoryIndexEntry } from "./HistoryIndex.ts";
 import {
   forkResumeCursor,
   forkThreadTitle,
+  historyProviderForDriverKind,
   isForkableDriverKind,
   readBindingCwd,
   readForkableSessionId,
 } from "./forkFacts.ts";
-import { claudeNativeSessionIdForPath } from "./importFacts.ts";
+import { claudeNativeSessionIdForPath, codexNativeSessionIdForPath } from "./importFacts.ts";
 import { HistoryImportRegistry } from "./importRegistry.ts";
 import { readSessionOpening } from "./tailReader.ts";
 
@@ -81,6 +87,23 @@ const refuse = (reason: HistoryForkRefusalReason, detail?: string) =>
 export interface HistoryForkInput {
   readonly threadId: ThreadId;
   readonly title?: string | undefined;
+  /**
+   * A side thread: a fork nobody filed.
+   *
+   * Sets two independent things, and they are independent on purpose. It marks
+   * the new thread as `sideOf` its source, which is what keeps it out of the
+   * sidebar and the command palette; and on Codex it reaches `thread/fork` as
+   * `ephemeral`, which is what stops the app server persisting a rollout for it.
+   * Claude has no equivalent for the second, so a Claude side thread is
+   * ephemeral in our store and durable in the SDK's — see `forkResumeCursor`.
+   */
+  readonly ephemeral?: boolean;
+  /**
+   * The thread this one is the side of. Always `threadId` when the caller is
+   * `/side`; passed explicitly rather than inferred so that a future
+   * "side thread of a side thread" is a decision rather than an accident.
+   */
+  readonly sideOfThreadId?: ThreadId;
 }
 
 export const makeHistoryForker = Effect.gen(function* () {
@@ -108,19 +131,20 @@ export const makeHistoryForker = Effect.gen(function* () {
    */
   const findSourceSessionFile = (
     sourceSessionId: string,
+    provider: "claude" | "codex",
   ): Effect.Effect<HistoryIndexEntry | null> =>
-    historyIndex
-      .snapshot()
-      .pipe(
-        Effect.map(
-          (index) =>
-            index.entries.find(
-              (entry) =>
-                entry.provider === "claude" &&
-                claudeNativeSessionIdForPath(entry.path) === sourceSessionId,
-            ) ?? null,
-        ),
-      );
+    historyIndex.snapshot().pipe(
+      Effect.map((index) => {
+        const nativeSessionIdForPath =
+          provider === "codex" ? codexNativeSessionIdForPath : claudeNativeSessionIdForPath;
+        return (
+          index.entries.find(
+            (entry) =>
+              entry.provider === provider && nativeSessionIdForPath(entry.path) === sourceSessionId,
+          ) ?? null
+        );
+      }),
+    );
 
   /**
    * The one line the forked thread will wear, assembled from bounded reads.
@@ -176,16 +200,27 @@ export const makeHistoryForker = Effect.gen(function* () {
         "This thread has not started a session yet, so there is no conversation to fork.",
       );
     }
-    // Provider before session id: "Codex cannot fork" is a permanent fact about
-    // the thread and a better sentence than "no session found", which reads as
-    // something waiting a turn would fix.
+    // Provider before session id: "this driver cannot fork" is a permanent fact
+    // about the thread and a better sentence than "no session found", which
+    // reads as something waiting a turn would fix.
     if (!isForkableDriverKind(binding.provider)) {
       return yield* refuse(
         "provider_unsupported",
         `Forking a conversation needs a provider that can fork a session, and '${binding.provider}' cannot.`,
       );
     }
-    const sourceSessionId = readForkableSessionId(binding.resumeCursor);
+    const provider = historyProviderForDriverKind(binding.provider);
+    if (provider === null) {
+      // Unreachable while this set and the one above agree; a refusal rather
+      // than a cast so that adding a driver to `FORKABLE_DRIVER_KINDS` without
+      // teaching this mapping fails as a refusal instead of writing a
+      // provenance row that names the wrong provider.
+      return yield* refuse(
+        "provider_unsupported",
+        `'${binding.provider}' can fork, but this machine cannot name its history provider.`,
+      );
+    }
+    const sourceSessionId = readForkableSessionId(binding.resumeCursor, binding.provider);
     if (sourceSessionId === null) {
       return yield* refuse(
         "no_resumable_session",
@@ -214,6 +249,7 @@ export const makeHistoryForker = Effect.gen(function* () {
       interactionMode: source.interactionMode,
       branch: source.branch,
       worktreePath: source.worktreePath,
+      ...(input.sideOfThreadId === undefined ? {} : { sideOfThreadId: input.sideOfThreadId }),
       createdAt: DateTime.formatIso(yield* DateTime.now),
     } as unknown as ClientOrchestrationCommand).pipe(
       Effect.catch((cause) => refuse("thread_create_failed", String(cause))),
@@ -236,7 +272,12 @@ export const makeHistoryForker = Effect.gen(function* () {
         ...(binding.adapterKey === undefined ? {} : { adapterKey: binding.adapterKey }),
         runtimeMode: source.runtimeMode,
         status: "stopped",
-        resumeCursor: forkResumeCursor({ threadId, sourceSessionId }),
+        resumeCursor: forkResumeCursor({
+          threadId,
+          sourceSessionId,
+          driverKind: binding.provider,
+          ...(input.ephemeral === true ? { ephemeral: true } : {}),
+        }),
         ...(cwd === null ? {} : { runtimePayload: { cwd } }),
       })
       .pipe(
@@ -264,7 +305,7 @@ export const makeHistoryForker = Effect.gen(function* () {
     // makes. The fork resumes off its binding row whether or not this file was
     // written, and failing a fork that has already succeeded because a JSON
     // file would not save would be the wrong way round.
-    const sourceFile = yield* findSourceSessionFile(sourceSessionId).pipe(
+    const sourceFile = yield* findSourceSessionFile(sourceSessionId, provider).pipe(
       Effect.catchCause(() => Effect.succeed(null)),
     );
     const startedAt =
@@ -276,7 +317,7 @@ export const makeHistoryForker = Effect.gen(function* () {
       sourceThreadId: input.threadId,
       sourceTitle: source.title.trim().length > 0 ? source.title.trim() : null,
       sourceSessionId,
-      provider: "claude",
+      provider,
       projectId: source.projectId,
       forkedAt: DateTime.formatIso(yield* DateTime.now),
       historySessionId: sourceFile === null ? null : (sourceFile.id as HistorySessionId),
@@ -304,7 +345,7 @@ export const makeHistoryForker = Effect.gen(function* () {
       sourceThreadId: input.threadId,
       projectId: source.projectId,
       title,
-      provider: "claude",
+      provider,
       sourceSessionId,
     } satisfies HistoryForkResult;
   });

@@ -586,6 +586,22 @@ export const HistoryForkRequest = Schema.Struct({
    * projection, so neither needs to guess.
    */
   title: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Take this fork as a *side thread*: a scratch conversation that opens beside
+   * its source and is thrown away when its panel closes.
+   *
+   * One flag rather than two, even though it sets two things — `sideOfThreadId`
+   * on the new thread, and `ephemeral` on the provider fork where the driver
+   * has such a thing. They are not independently useful: a thread marked side
+   * but persisted durably would accumulate rollouts nobody can reach, and one
+   * marked ephemeral but listed would appear in the sidebar and then vanish.
+   * Letting a caller ask for either alone is offering a choice between two
+   * broken states.
+   *
+   * Absent means an ordinary fork, which is what the sidebar's "Fork with
+   * conversation" has always taken.
+   */
+  side: Schema.optionalKey(Schema.Boolean),
 });
 export type HistoryForkRequest = typeof HistoryForkRequest.Type;
 

@@ -18,6 +18,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { SidebarV2ThreadSortOrder } from "@t3tools/contracts";
+import { isListableThread } from "@t3tools/contracts";
 
 import { sortThreadsForSidebarV2 } from "./Sidebar.logic";
 import { rankThreadsForSidebarV2 } from "./SidebarV2.activity";
@@ -35,7 +36,7 @@ export function partitionSidebarV2Threads(
 ): ReadonlyArray<EnvironmentThreadShell> {
   const visible = input.threads.filter(
     (thread) =>
-      thread.archivedAt === null &&
+      isListableThread(thread) &&
       (input.scopedProjectKeys === null ||
         input.scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

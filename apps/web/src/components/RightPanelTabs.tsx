@@ -1,6 +1,16 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { Bot, ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import {
+  Bot,
+  ClipboardList,
+  FileDiff,
+  Files,
+  Globe2,
+  MessagesSquare,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -219,6 +229,12 @@ function surfaceTitle(
       return "Plan";
     case "subagents":
       return "Agents";
+    case "side":
+      // Not the side thread's own title. It is a fork, so it inherits the
+      // parent's name, and a tab reading "Reworking the picker (fork)" next to
+      // the thread it forked from says nothing about which one you are looking
+      // at. The tab's job here is only to say "this is the scratch one".
+      return "Side";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -282,6 +298,8 @@ function SurfaceIcon({
       return <ClipboardList className="size-3.5 shrink-0" />;
     case "subagents":
       return <Bot className="size-3.5 shrink-0" />;
+    case "side":
+      return <MessagesSquare className="size-3.5 shrink-0" />;
   }
 }
 

@@ -7,7 +7,11 @@ import {
 import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
-import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import {
+  type ComposerSlashCommand,
+  type ComposerThreadCommand,
+  type ComposerTriggerKind,
+} from "../../composer-logic";
 import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
@@ -32,7 +36,14 @@ export type ComposerCommandItem =
   | {
       id: string;
       type: "slash-command";
-      command: ComposerSlashCommand;
+      /**
+       * Wider than `ComposerSlashCommand` because the built-in menu now carries
+       * commands that are not interaction modes — `/side` and `/fork` each
+       * create a thread. Kept as a union of the two rather than widened to
+       * `string` so that the dispatch switch in `ChatComposer` still fails to
+       * compile when an entry is added and not handled.
+       */
+      command: ComposerSlashCommand | ComposerThreadCommand;
       label: string;
       description: string;
     }

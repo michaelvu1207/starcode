@@ -22,6 +22,7 @@ export const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "terminal",
+  "side",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -47,7 +48,21 @@ export type RightPanelSurface =
     }
   | { id: "plan"; kind: "plan" }
   /** Subagents for this thread. Singleton, like plan — one list, not one per task. */
-  | { id: "subagents"; kind: "subagents" };
+  | { id: "subagents"; kind: "subagents" }
+  /**
+   * A side conversation: a whole other thread, mounted in this panel.
+   *
+   * Keyed by the side thread's id rather than being a singleton, because the
+   * id *is* the resource — closing this surface is what ends the conversation,
+   * and a singleton would silently adopt whichever side thread was opened last
+   * while orphaning the one before it on the server.
+   *
+   * Not a singleton also means several can be open at once, which falls out of
+   * the tab strip for free and is the right answer: the whole point of a side
+   * thread is that it does not interrupt what you were doing, and that argument
+   * does not stop applying at the second one.
+   */
+  | { id: `side:${string}`; kind: "side"; threadId: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 8;
@@ -60,10 +75,17 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "side" | "terminal">) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  /**
+   * Mount a side conversation. `threadId` is the *side* thread — already
+   * created on the server by the time this is called, because a surface
+   * pointing at a thread that does not exist yet renders as "not available
+   * from here", which reads like a bug rather than like waiting.
+   */
+  openSide: (ref: ScopedThreadRef, threadId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -82,7 +104,10 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  toggle: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "side" | "terminal">,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -93,7 +118,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "side" | "terminal">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -122,6 +147,12 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+});
+
+const sideSurface = (threadId: string): RightPanelSurface => ({
+  id: `side:${threadId}`,
+  kind: "side",
+  threadId,
 });
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -195,6 +226,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ? surface.revealRequestId
                           : 0;
                       return [{ ...surface, revealLine, revealRequestId }];
+                    }
+                    if (surface.kind === "side") {
+                      // A surface whose thread id did not survive the round
+                      // trip cannot be re-mounted and cannot be closed (closing
+                      // is what deletes the thread), so it is dropped rather
+                      // than rendered as a dead tab.
+                      return "threadId" in surface &&
+                        typeof surface.threadId === "string" &&
+                        surface.id === `side:${surface.threadId}`
+                        ? [surface]
+                        : [];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -270,6 +312,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
+        })),
+      openSide: (ref, threadId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, sideSurface(threadId)),
+          ),
         })),
       openFile: (ref, relativePath, line) =>
         set((state) => ({

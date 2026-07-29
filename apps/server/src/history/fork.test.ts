@@ -91,6 +91,8 @@ const withHarness = <A, E>(
     readonly sourceCursor?: Record<string, unknown> | undefined;
     /** False writes no session file, so the index cannot resolve the source. */
     readonly withSessionFile?: boolean;
+    /** The source thread's driver. Defaults to Claude's. */
+    readonly provider?: string;
   },
 ): Effect.Effect<A, E | PlatformError.PlatformError> =>
   Effect.gen(function* () {
@@ -153,9 +155,9 @@ const withHarness = <A, E>(
               ? Option.none()
               : Option.some({
                   threadId: SOURCE_THREAD_ID,
-                  provider: "claudeAgent",
-                  providerInstanceId: "claudeAgent",
-                  adapterKey: "claudeAgent",
+                  provider: options?.provider ?? "claudeAgent",
+                  providerInstanceId: options?.provider ?? "claudeAgent",
+                  adapterKey: options?.provider ?? "claudeAgent",
                   resumeCursor: options?.sourceCursor ?? {
                     threadId: SOURCE_THREAD_ID,
                     resume: SOURCE_SESSION_UUID,
@@ -202,6 +204,79 @@ describe("history fork provenance", () => {
         assert.isAbove(record?.sourceSizeBytes ?? 0, 0);
         assert.equal(record?.startedAt, "2026-07-23T09:00:00.000Z");
         assert.isDefined(record?.lastActivityAt);
+      }),
+    ),
+  );
+
+  it.effect("forks a Codex thread through its app-server thread id", () =>
+    withHarness(
+      () =>
+        Effect.gen(function* () {
+          const forker = yield* makeHistoryForker;
+
+          const result = yield* forker.forkThread({ threadId: SOURCE_THREAD_ID });
+
+          // The Codex cursor names a thread, not a session file, and the row
+          // has to say "codex" rather than the hardcoded "claude" this used to
+          // write — a provenance row naming the wrong provider sends the reader
+          // looking in the wrong store.
+          assert.equal(result.provider, "codex");
+          assert.equal(result.sourceSessionId, "codex-thread-9");
+        }),
+      {
+        provider: "codex",
+        sourceCursor: { threadId: "codex-thread-9" },
+        withSessionFile: false,
+      },
+    ),
+  );
+
+  it.effect("marks a side thread and asks its driver for an ephemeral fork", () =>
+    withHarness(
+      (harness) =>
+        Effect.gen(function* () {
+          const forker = yield* makeHistoryForker;
+
+          const result = yield* forker.forkThread({
+            threadId: SOURCE_THREAD_ID,
+            ephemeral: true,
+            sideOfThreadId: SOURCE_THREAD_ID,
+          });
+
+          // Both halves, because either alone is a broken state: a thread
+          // marked side but durable accumulates rollouts nobody can reach, and
+          // one marked ephemeral but listed appears in the sidebar then
+          // vanishes.
+          const created = harness.commands.find((command) => command.type === "thread.create");
+          assert.equal(
+            (created as unknown as { readonly sideOfThreadId?: string })?.sideOfThreadId,
+            SOURCE_THREAD_ID,
+          );
+          const binding = harness.bindings.find((entry) => entry.threadId === result.threadId);
+          assert.equal(
+            (binding?.resumeCursor as { readonly ephemeral?: boolean })?.ephemeral,
+            true,
+          );
+        }),
+      { provider: "codex", sourceCursor: { threadId: "codex-thread-9" }, withSessionFile: false },
+    ),
+  );
+
+  it.effect("leaves an ordinary fork listable and durable", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const forker = yield* makeHistoryForker;
+
+        const result = yield* forker.forkThread({ threadId: SOURCE_THREAD_ID });
+
+        // The regression guard for the sidebar's existing "Fork with
+        // conversation": it must keep producing a thread you can find.
+        const created = harness.commands.find((command) => command.type === "thread.create");
+        assert.isUndefined(
+          (created as unknown as { readonly sideOfThreadId?: string })?.sideOfThreadId,
+        );
+        const binding = harness.bindings.find((entry) => entry.threadId === result.threadId);
+        assert.isUndefined((binding?.resumeCursor as { readonly ephemeral?: boolean })?.ephemeral);
       }),
     ),
   );

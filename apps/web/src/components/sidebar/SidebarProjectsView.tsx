@@ -261,9 +261,6 @@ export function SidebarProjectsView(props: {
               <span className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
                 {group.title}
               </span>
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground/45">
-                {group.rows.length}
-              </span>
               <span className="flex-1" />
             </button>
             {group.slug === null ? (

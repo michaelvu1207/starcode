@@ -81,6 +81,19 @@ const FORKED_THREAD_POLL_INTERVAL_MS = 100;
  */
 const CLAUDE_DRIVER_KIND = "claudeAgent";
 
+/**
+ * The drivers whose sessions can be forked, mirroring the server's own list in
+ * `history/forkFacts.ts`.
+ *
+ * A client-side copy rather than a capability on the wire, which is the trade
+ * this menu already made: the row has to decide between two labels *before* it
+ * can ask, and the cost of guessing wrong is a menu entry that reads
+ * "setup only" and then forks the conversation anyway. Diverging from the
+ * server errs toward that harmless direction, not toward a broken fork — the
+ * server refuses what it cannot do and the caller falls back.
+ */
+const FORKABLE_DRIVER_KINDS: ReadonlySet<string> = new Set([CLAUDE_DRIVER_KIND, "codex"]);
+
 /** Titles are display, but an unbounded one is a row that never truncates. */
 const FORK_TITLE_MAX_LENGTH = 120;
 const FORK_TITLE_SUFFIX = " (fork)";
@@ -361,7 +374,15 @@ export function ThreadRowArchiveAction({
   );
 }
 
-async function waitForForkedThreadShell(
+/**
+ * Waits for a freshly forked thread to appear in the shell.
+ *
+ * Exported because `/fork` needs it for the same reason this menu does: the
+ * fork is created over HTTP and arrives in the client through the shell
+ * stream, so navigating the instant the response lands races the projection
+ * and shows "this thread is not available from here" for a beat.
+ */
+export async function waitForForkedThreadShell(
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ): Promise<void> {
@@ -376,9 +397,9 @@ async function waitForForkedThreadShell(
  * Whether this thread's fork can carry the conversation, guessed from what the
  * row already knows.
  *
- * The agent has to be one that can fork a *session* — only Claude can; Codex's
- * app-server has `thread/resume` and no fork, and resuming appends to the same
- * rollout, so a Codex "fork" would be two threads writing one transcript.
+ * The agent has to be one that can fork a *session*. Claude's SDK has
+ * `forkSession` and Codex's app-server has `thread/fork`; both read the source
+ * and write somewhere new, which is the property that matters.
  *
  * Then the thread has to have a conversation to carry, which is true in two
  * ways rather than one. Usually it means the thread has started a session. But
@@ -400,7 +421,7 @@ export function canForkConversation(input: {
   /** Whether this thread resumed somebody else's conversation to begin with. */
   readonly inheritedConversation?: boolean;
 }): boolean {
-  if (input.driverKind !== CLAUDE_DRIVER_KIND) return false;
+  if (!FORKABLE_DRIVER_KINDS.has(input.driverKind ?? "")) return false;
   return input.thread.session !== null || input.inheritedConversation === true;
 }
 
