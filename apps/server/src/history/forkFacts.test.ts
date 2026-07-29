@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   forkResumeCursor,
   forkThreadTitle,
+  historyProviderForDriverKind,
   isForkableDriverKind,
   readBindingCwd,
   readForkableSessionId,
@@ -21,12 +22,13 @@ describe("isForkableDriverKind", () => {
     expect(isForkableDriverKind("claude")).toBe(false);
   });
 
-  it("refuses Codex, whose app-server can only resume in place", () => {
-    // Not a gap to fill later with an equality flip: `thread/resume` appends to
-    // the same rollout file, so a Codex "fork" would be two threads writing one
-    // transcript — and Codex answers an unknown thread id with a fresh empty
-    // thread rather than an error, so it would fail silently.
-    expect(isForkableDriverKind("codex")).toBe(false);
+  it("allows Codex, whose app-server has thread/fork", () => {
+    // `thread/fork` reads the source rollout and opens a new one, which is the
+    // property that matters: the source is read and never written. Plain
+    // `thread/resume` would append to the source's own file, so this staying
+    // true depends on `openCodexThread` never falling back to resume when a
+    // fork fails — see the comment there.
+    expect(isForkableDriverKind("codex")).toBe(true);
   });
 
   it.each(["opencode", "gemini", "grok", "claudeagent", "", null])(
@@ -37,17 +39,45 @@ describe("isForkableDriverKind", () => {
   );
 });
 
+describe("historyProviderForDriverKind", () => {
+  it("translates between the two vocabularies a fork straddles", () => {
+    // The provenance row spells Claude's provider "claude" while the driver
+    // kind is "claudeAgent". A caller that hardcoded either would write a row
+    // naming the wrong provider, and nothing would fail at the time.
+    expect(historyProviderForDriverKind("claudeAgent")).toBe("claude");
+    expect(historyProviderForDriverKind("codex")).toBe("codex");
+  });
+
+  it("agrees with isForkableDriverKind about who can fork", () => {
+    // These two lists disagreeing is the failure this pairing exists to catch:
+    // a driver added to one and not the other either forks and writes a wrong
+    // provenance row, or is refused for a reason that is not true.
+    for (const kind of ["claudeAgent", "codex"]) {
+      expect(isForkableDriverKind(kind)).toBe(true);
+      expect(historyProviderForDriverKind(kind)).not.toBe(null);
+    }
+  });
+
+  it.each(["opencode", "claude", "gemini", "", null])("has no name for %s", (kind) => {
+    expect(historyProviderForDriverKind(kind)).toBe(null);
+  });
+});
+
 describe("readForkableSessionId", () => {
   it("reads the cursor field the adapter writes", () => {
-    expect(readForkableSessionId({ threadId: "t-1", resume: SESSION, turnCount: 3 })).toBe(SESSION);
+    expect(
+      readForkableSessionId({ threadId: "t-1", resume: SESSION, turnCount: 3 }, "claudeAgent"),
+    ).toBe(SESSION);
   });
 
   it("reads the older spelling the adapter still accepts", () => {
-    expect(readForkableSessionId({ sessionId: SESSION })).toBe(SESSION);
+    expect(readForkableSessionId({ sessionId: SESSION }, "claudeAgent")).toBe(SESSION);
   });
 
   it("prefers `resume` when a cursor carries both", () => {
-    expect(readForkableSessionId({ resume: SESSION, sessionId: "not-a-uuid" })).toBe(SESSION);
+    expect(readForkableSessionId({ resume: SESSION, sessionId: "not-a-uuid" }, "claudeAgent")).toBe(
+      SESSION,
+    );
   });
 
   it("refuses anything that is not a session file's name", () => {
@@ -63,15 +93,40 @@ describe("readForkableSessionId", () => {
       "a string",
       undefined,
     ]) {
-      expect(readForkableSessionId(cursor)).toBe(null);
+      expect(readForkableSessionId(cursor, "claudeAgent")).toBe(null);
     }
   });
+});
+
+describe("readForkableSessionId, on Codex", () => {
+  it("reads the app-server thread id rather than a session file's name", () => {
+    // Codex's cursor names a thread, not a file, and its shape is the app
+    // server's business. Validating it against Claude's UUID pattern would
+    // refuse every real Codex thread.
+    expect(readForkableSessionId({ threadId: "0199c2f1-codex-thread" }, "codex")).toBe(
+      "0199c2f1-codex-thread",
+    );
+  });
+
+  it("does not read Claude's field for a Codex thread", () => {
+    // The two cursors agree on nothing, and `resume` on a Codex cursor would be
+    // a field nothing wrote.
+    expect(readForkableSessionId({ resume: SESSION }, "codex")).toBe(null);
+  });
+
+  it.each([{ threadId: "" }, { threadId: 7 }, {}, null, undefined])(
+    "answers null for %s",
+    (cursor) => {
+      expect(readForkableSessionId(cursor, "codex")).toBe(null);
+    },
+  );
 });
 
 describe("forkResumeCursor", () => {
   const cursor = forkResumeCursor({
     threadId: ThreadId.make("thread-fork"),
     sourceSessionId: SESSION,
+    driverKind: "claudeAgent",
   });
 
   it("carries the marker that makes the provider fork rather than continue", () => {
@@ -93,6 +148,49 @@ describe("forkResumeCursor", () => {
     // the source's value would silently give the fork less history than the
     // source has, which is the one difference a user would never think to check.
     expect("resumeSessionAt" in cursor).toBe(false);
+  });
+});
+
+describe("forkResumeCursor, on Codex", () => {
+  const cursor = forkResumeCursor({
+    threadId: ThreadId.make("thread-fork"),
+    sourceSessionId: "source-codex-thread",
+    driverKind: "codex",
+  });
+
+  it("points the cursor at the source thread, which is what thread/fork takes", () => {
+    // Note this is the *source's* id under `threadId`, not the new thread's —
+    // the opposite of Claude's cursor, because the Codex adapter reads this
+    // field as "the thread to open" rather than "the thread I am".
+    expect(cursor.threadId).toBe("source-codex-thread");
+    expect(cursor.fork).toBe(true);
+  });
+
+  it("stays durable unless the caller asks for an ephemeral fork", () => {
+    expect("ephemeral" in cursor).toBe(false);
+  });
+
+  it("carries ephemeral for a side thread", () => {
+    const side = forkResumeCursor({
+      threadId: ThreadId.make("thread-side"),
+      sourceSessionId: "source-codex-thread",
+      driverKind: "codex",
+      ephemeral: true,
+    });
+    expect(side.ephemeral).toBe(true);
+  });
+
+  it("does not fake ephemeral on Claude, which has no equivalent", () => {
+    // A cursor carrying a field its adapter ignores reads as a promise this
+    // code cannot keep. A Claude side thread is ephemeral in our store and
+    // durable in the SDK's, and that is the honest description.
+    const claudeSide = forkResumeCursor({
+      threadId: ThreadId.make("thread-side"),
+      sourceSessionId: SESSION,
+      driverKind: "claudeAgent",
+      ephemeral: true,
+    });
+    expect("ephemeral" in claudeSide).toBe(false);
   });
 });
 

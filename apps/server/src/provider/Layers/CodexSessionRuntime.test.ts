@@ -395,10 +395,13 @@ describe("isRecoverableThreadResumeError", () => {
 describe("openCodexThread", () => {
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
@@ -436,7 +439,7 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           _payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
@@ -466,6 +469,160 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+
+  it.effect("branches through thread/fork when the cursor asks for a fork", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("forked-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "source-thread",
+        fork: true,
+      });
+
+      // `thread/resume` must never be reached on a fork: it appends to the
+      // source's own rollout, which is the corruption forking exists to avoid.
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/fork"],
+      );
+      NodeAssert.equal(opened.thread.id, "forked-thread");
+      const payload = calls[0]?.payload as { readonly threadId: string; readonly cwd: string };
+      NodeAssert.equal(payload.threadId, "source-thread");
+      NodeAssert.equal(payload.cwd, "/tmp/project");
+    }),
+  );
+
+  it.effect("does not fall back to a resume when a fork fails", () =>
+    Effect.gen(function* () {
+      // The recoverable-error fallback above is correct for a resume and would
+      // be a data-loss bug here: retrying a failed fork as a resume would open
+      // this thread directly onto the source's rollout, and both would then
+      // append to one file. The failure is surfaced instead.
+      const calls: Array<string> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          if (method === "thread/fork") {
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "thread not found",
+              }),
+            );
+          }
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "source-thread",
+        fork: true,
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.deepStrictEqual(calls, ["thread/fork"]);
+    }),
+  );
+
+  it.effect("asks for an ephemeral fork only when the cursor does", () =>
+    Effect.gen(function* () {
+      const payloads: Array<Record<string, unknown>> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          payloads.push(payload as Record<string, unknown>);
+          return Effect.succeed(
+            makeThreadOpenResponse("forked-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+      const open = (ephemeral: boolean) =>
+        openCodexThread({
+          client,
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/project",
+          requestedModel: "gpt-5.3-codex",
+          serviceTier: undefined,
+          resumeThreadId: "source-thread",
+          fork: true,
+          ephemeral,
+        });
+
+      yield* open(true);
+      yield* open(false);
+
+      NodeAssert.equal(payloads[0]?.ephemeral, true);
+      // Absent rather than `false`: a durable fork should look identical to one
+      // taken before side threads existed.
+      NodeAssert.ok(payloads[1] !== undefined && !("ephemeral" in payloads[1]));
+    }),
+  );
+
+  it.effect("resumes in place when no fork was asked for", () =>
+    Effect.gen(function* () {
+      // The regression that matters most: every thread on this machine already
+      // has a cursor without a `fork` field, and any of them opening as a fork
+      // would silently branch a conversation on restart.
+      const calls: Array<string> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          return Effect.succeed(
+            makeThreadOpenResponse("resumed-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "source-thread",
+      });
+
+      NodeAssert.deepStrictEqual(calls, ["thread/resume"]);
     }),
   );
 });

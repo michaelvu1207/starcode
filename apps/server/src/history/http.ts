@@ -280,8 +280,20 @@ export const historyHttpApiLayer = HttpApiBuilder.group(
           // Same two-step as import, for the same reason: turning the refusal
           // into a value before the catch-all runs is what stops the catch-all
           // re-catching the environment error the refusal just became.
+          // `side` is one flag on the wire and two facts inside, and this is
+          // the seam that expands it. Deliberately here rather than in the
+          // forker: the parent of a side thread is *always* the thread being
+          // forked, and the route is the only place that is known to be true.
+          // A forker that defaulted `sideOfThreadId` to its own input would
+          // quietly do the wrong thing the first time something forks a thread
+          // on behalf of another.
+          const { side, ...forkPayload } = args.payload;
           const outcome = yield* forker
-            .forkThread({ threadId: args.params.threadId, ...args.payload })
+            .forkThread({
+              threadId: args.params.threadId,
+              ...forkPayload,
+              ...(side === true ? { ephemeral: true, sideOfThreadId: args.params.threadId } : {}),
+            })
             .pipe(
               Effect.catchTags({
                 HistoryForkRefusal: (refusal) => Effect.succeed({ refused: refusal } as const),

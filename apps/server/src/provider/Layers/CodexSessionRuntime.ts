@@ -64,8 +64,32 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+/**
+ * `fork` and `ephemeral` are the two fields that turn an *open* into a fork.
+ *
+ * Both are optional, and absent has to keep meaning "resume this thread" —
+ * every cursor already persisted on this machine predates them, and a cursor
+ * that started forking because a field was missing would branch a thread every
+ * time its process restarted.
+ *
+ * The pair is self-clearing by construction, and that is the safety property
+ * rather than a convenience: `start` below rebuilds the cursor as
+ * `{ threadId: providerThreadId }` from the *opened* thread, never spreading
+ * the old one, so the first successful fork replaces this cursor with one
+ * pointing at the fork's own id and carrying no marker. A fork therefore
+ * happens exactly once, and a fork whose open never reached the app server is
+ * still pending rather than silently spent — the same contract
+ * `HistoryForkFacts` documents for Claude.
+ */
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
+  /** Fork `threadId` into a new thread instead of resuming it in place. */
+  fork: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Ask the app server not to persist the fork's rollout. Only meaningful
+   * alongside `fork`, and only honoured by side threads — see `openCodexThread`.
+   */
+  ephemeral: Schema.optionalKey(Schema.Boolean),
 });
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
@@ -261,6 +285,24 @@ function readResumeCursorThreadId(
   return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
+/**
+ * Whether this cursor asks for a fork, and whether that fork should be
+ * ephemeral.
+ *
+ * Read as a pair rather than as two lookups because `ephemeral` is meaningless
+ * without `fork` — an ephemeral *resume* is not a thing the app server offers,
+ * and a caller that read them separately could send one.
+ */
+function readResumeCursorFork(resumeCursor: ProviderSession["resumeCursor"]): {
+  readonly fork: boolean;
+  readonly ephemeral: boolean;
+} {
+  if (!isCodexResumeCursorSchema(resumeCursor) || resumeCursor.fork !== true) {
+    return { fork: false, ephemeral: false };
+  }
+  return { fork: true, ephemeral: resumeCursor.ephemeral === true };
+}
+
 function runtimeModeToThreadConfig(input: RuntimeMode): {
   readonly approvalPolicy: EffectCodexSchema.V2ThreadStartParams__AskForApproval;
   readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
@@ -443,9 +485,10 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
 
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
-  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
+  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"]
+  | CodexRpc.ClientRequestResponsesByMethod["thread/fork"];
 
-type CodexThreadOpenMethod = "thread/start" | "thread/resume";
+type CodexThreadOpenMethod = "thread/start" | "thread/resume" | "thread/fork";
 
 interface CodexThreadOpenClient {
   readonly request: <M extends CodexThreadOpenMethod>(
@@ -462,6 +505,13 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  /**
+   * Branch `resumeThreadId` instead of continuing it. Ignored without a
+   * `resumeThreadId`, because there is nothing to branch from.
+   */
+  readonly fork?: boolean;
+  /** Only read when `fork` is set. */
+  readonly ephemeral?: boolean;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -473,6 +523,30 @@ export const openCodexThread = (input: {
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
+  }
+
+  // A fork reads the source's rollout and writes a *new* one, which is the
+  // whole reason a thread may branch at all: `thread/resume` would append to
+  // the source's file, and two threads appending to one rollout is corruption
+  // nobody detects at the time. So this is deliberately not a resume with a
+  // flag — it is a different verb, and falling back to `thread/resume` when it
+  // fails would reintroduce exactly the shared-transcript bug. On failure the
+  // caller gets the error; a fork that could not fork is not a thread anyone
+  // wants silently opened onto its source.
+  if (input.fork === true) {
+    // `thread/start` and `thread/fork` both take an `ephemeral`, and they do
+    // not agree on its type — start's is `boolean | null`, fork's is `boolean`.
+    // Dropping it from the spread rather than widening the target keeps this
+    // caller the only place that decides whether a fork is ephemeral, which is
+    // what the cursor is asking for. `buildThreadStartParams` never sets it
+    // today; taking it off the spread means that staying true is not a
+    // precondition of this code being correct.
+    const { ephemeral: _ignoredStartEphemeral, ...forkableStartParams } = startParams;
+    return input.client.request("thread/fork", {
+      threadId: resumeThreadId,
+      ...forkableStartParams,
+      ...(input.ephemeral === true ? { ephemeral: true } : {}),
+    });
   }
 
   return input.client
@@ -1219,6 +1293,7 @@ export const makeCodexSessionRuntime = (
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 
+      const forkRequest = readResumeCursorFork(options.resumeCursor);
       const opened = yield* openCodexThread({
         client,
         threadId: options.threadId,
@@ -1227,6 +1302,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(forkRequest.fork ? { fork: true, ephemeral: forkRequest.ephemeral } : {}),
       });
 
       const providerThreadId = opened.thread.id;

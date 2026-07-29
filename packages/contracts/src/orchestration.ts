@@ -414,6 +414,70 @@ export const AUTOMATIC_THREAD_TITLE_SOURCES: ReadonlyArray<ThreadTitleSource> = 
   "plan",
 ];
 
+/**
+ * The thread this one is a *side* of — a scratch fork opened beside its parent
+ * and thrown away when its panel closes.
+ *
+ * Non-null is what makes a thread invisible: side threads are filed under a
+ * project like any other thread and would otherwise appear in the sidebar, the
+ * command palette and every picker, which is the opposite of what "ask a quick
+ * question without derailing this" means. Every list that renders threads to a
+ * person filters on this, and `isListableThread` below is the single place that
+ * rule is written down.
+ *
+ * A thread id rather than a boolean, and that is the whole reason this is not
+ * spelled `isSide`. The panel that hosts a side thread has to know which parent
+ * it belongs to in order to re-open it after a reload, and a boolean would have
+ * forced a second lookup table on the client that could disagree with the
+ * server about who owns what.
+ *
+ * Optional rather than defaulted-and-required, for the reason `titleSource`
+ * gives a few fields above: a required field would force every construction
+ * site in the codebase to name a parent it has no opinion about, and that is
+ * how a field like this gets copy-pasted wrong. Absent and null mean the same
+ * thing — an ordinary thread — because a reader that had to distinguish "not a
+ * side thread" from "this server predates side threads" would answer both by
+ * showing the thread, so collapsing them loses nothing. `isListableThread`
+ * below is where that collapse is written down; readers should go through it
+ * rather than testing the field themselves.
+ */
+export const SideOfThreadId = Schema.optional(Schema.NullOr(ThreadId));
+
+/**
+ * The same field on a persisted event, where absent is not an option worth
+ * keeping.
+ *
+ * An event is replayed rather than re-sent, so "this payload predates side
+ * threads" is a real and permanent state of the store rather than a version
+ * skew that resolves itself — and it means exactly `null`. Defaulting it at the
+ * schema keeps every replay of an old `thread.created` producing a concrete
+ * answer instead of pushing an `undefined` through the projector.
+ */
+export const SideOfThreadIdEvent = Schema.NullOr(ThreadId).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+/**
+ * Whether a thread belongs in a list a person reads.
+ *
+ * The one rule, in one place, because the alternative is what this codebase
+ * already learned from `archivedAt`: the same predicate open-coded in the
+ * sidebar, the palette, the project home and three pickers, where adding a
+ * second reason to hide a thread means finding all six. A side thread that
+ * leaked into the sidebar would not look like a bug — it would look like a
+ * stray thread the user has to clean up, which is exactly the friction `/side`
+ * exists to remove.
+ *
+ * Takes the fields structurally rather than a whole thread so the shell, the
+ * detail and the client's own row types can all pass what they have.
+ */
+export function isListableThread(thread: {
+  readonly archivedAt: string | null;
+  readonly sideOfThreadId?: ThreadId | null;
+}): boolean {
+  return thread.archivedAt === null && (thread.sideOfThreadId ?? null) === null;
+}
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -431,6 +495,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadId,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -506,6 +571,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadId,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -654,6 +720,8 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Omitted means an ordinary thread. See `SideOfThreadId`. */
+  sideOfThreadId: Schema.optional(ThreadId),
   createdAt: IsoDateTime,
 });
 
@@ -1061,6 +1129,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadIdEvent,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
