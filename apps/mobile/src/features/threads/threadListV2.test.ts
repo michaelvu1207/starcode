@@ -152,3 +152,115 @@ describe("buildThreadListV2Items", () => {
     expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
   });
 });
+
+describe("live subagents", () => {
+  const agent = (taskId: string, overrides = {}) => ({
+    taskId,
+    toolUseId: `toolu_${taskId}`,
+    description: `Agent ${taskId}`,
+    subagentType: null,
+    status: "running" as const,
+    isBackgrounded: false,
+    lastToolName: null,
+    totalTokens: null,
+    startedAt: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  });
+
+  it("reports agents running while the thread's own session is idle", () => {
+    // The case the whole feature exists for: a backgrounded subagent outlives
+    // the turn that spawned it, so the session reads ready while work
+    // continues. Without this the row would say the thread is finished.
+    const status = resolveThreadListV2Status(
+      makeThread({ id: ThreadId.make("t"), title: "t", subagents: [agent("a")] }),
+    );
+
+    expect(status).toBe("agents");
+  });
+
+  it("still says working when the main agent is running too", () => {
+    // "Working" already says the thread is busy; the child rows say who.
+    const status = resolveThreadListV2Status(
+      makeThread({
+        id: ThreadId.make("t"),
+        title: "t",
+        subagents: [agent("a")],
+        session: {
+          status: "running",
+          providerName: "claude",
+          providerInstanceId: ProviderInstanceId.make("claude"),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
+      }),
+    );
+
+    expect(status).toBe("working");
+  });
+
+  it("places each agent directly beneath the thread that spawned it", () => {
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("newer"),
+          title: "Newer",
+          createdAt: "2026-06-02T00:00:00.000Z",
+          subagents: [agent("a1"), agent("a2")],
+        }),
+        makeThread({
+          id: ThreadId.make("older"),
+          title: "Older",
+          createdAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+    });
+
+    expect(
+      items.map((item) => (item.kind === "agent" ? `agent:${item.agent.taskId}` : item.thread.id)),
+    ).toEqual(["newer", "agent:a1", "agent:a2", "older"]);
+  });
+
+  it("leaves a thread without agents exactly as it was", () => {
+    // A list of quiet threads must not become a tree.
+    const { items } = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("t"), title: "t" })],
+      environmentId: null,
+      searchQuery: "",
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.kind).toBe("thread");
+  });
+
+  it("marks the last row as last even when an agent is the tail", () => {
+    // isLast drives the row's hairline; an agent tail would otherwise draw a
+    // separator against nothing.
+    const { items } = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("t"), title: "t", subagents: [agent("a1")] })],
+      environmentId: null,
+      searchQuery: "",
+    });
+
+    expect(items.at(-1)?.kind).toBe("agent");
+    expect(items.at(-1)?.isLast).toBe(true);
+  });
+
+  it("does not surface an agent whose thread was filtered out by search", () => {
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("hit"), title: "Keep", subagents: [agent("a1")] }),
+        makeThread({ id: ThreadId.make("miss"), title: "Drop", subagents: [agent("a2")] }),
+      ],
+      environmentId: null,
+      searchQuery: "keep",
+    });
+
+    expect(
+      items.map((item) => (item.kind === "agent" ? item.agent.taskId : item.thread.id)),
+    ).toEqual(["hit", "a1"]);
+  });
+});

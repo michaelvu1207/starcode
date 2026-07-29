@@ -3,6 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { OrchestrationThreadSubagent } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -43,6 +44,10 @@ const STATUS_LABEL_BY_STATUS: Partial<
   approval: { label: "Approval", className: "text-amber-700 dark:text-amber-300" },
   input: { label: "Input", className: "text-indigo-600 dark:text-indigo-300" },
   working: { label: "Working", className: "text-sky-600 dark:text-sky-400" },
+  // Shares working's sky hue because it is the same kind of fact — work is
+  // happening — and the wording carries the difference: the thread itself has
+  // stopped, its agents have not. A fourth hue would imply a fourth category.
+  agents: { label: "Agents", className: "text-sky-600 dark:text-sky-400" },
   failed: { label: "Failed", className: "text-red-700 dark:text-red-300" },
 };
 
@@ -57,6 +62,62 @@ const ROW_MENU_ACTIONS: MenuAction[] = [
 
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
+
+/**
+ * A subagent, as a child row beneath the thread that spawned it.
+ *
+ * Shares the thread row's metrics but nothing else: no swipe, no long-press
+ * menu, no PR chip. An agent is not yours to archive or delete, only to open
+ * and read, so the row offers exactly one gesture. The left inset is the whole
+ * hierarchy signal — a connector rule would fight the flat, edge-to-edge idiom
+ * the rest of the list is built on.
+ */
+export const ThreadListV2AgentRow = memo(function ThreadListV2AgentRow(props: {
+  readonly agent: OrchestrationThreadSubagent;
+  readonly thread: EnvironmentThreadShell;
+  readonly pane?: "screen" | "sidebar";
+  readonly onSelectAgent: (thread: EnvironmentThreadShell, taskId: string) => void;
+}) {
+  const { agent, thread, onSelectAgent } = props;
+  const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const screenColor = useThemeColor("--color-screen");
+  const drawerColor = useThemeColor("--color-drawer");
+  const sidebarPane = props.pane === "sidebar";
+
+  const handlePress = useCallback(
+    () => onSelectAgent(thread, agent.taskId),
+    [agent.taskId, onSelectAgent, thread],
+  );
+
+  // Description is the caller's own words and always wins; the type is the
+  // fallback for an agent that never reported one. A nameless row still beats
+  // a dropped one, because the alternative is under-reporting what is running.
+  const label = agent.description ?? agent.subagentType ?? "Agent";
+  const subtitle = agent.status === "paused" ? "Paused" : agent.lastToolName;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open agent ${label}`}
+      onPress={handlePress}
+      style={({ pressed }) => ({
+        backgroundColor: pressed ? pressedBackgroundColor : sidebarPane ? drawerColor : screenColor,
+        ...(sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS } : {}),
+      })}
+    >
+      <View className="flex-row items-center gap-2 py-2 pr-4 pl-10">
+        <Text className="flex-1 text-[14px] text-secondary" numberOfLines={1}>
+          {label}
+        </Text>
+        {subtitle ? (
+          <Text className="text-[11px] text-tertiary" numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
 
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;

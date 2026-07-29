@@ -34,7 +34,7 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
-import { ThreadListV2Row } from "../threads/thread-list-v2-items";
+import { ThreadListV2AgentRow, ThreadListV2Row } from "../threads/thread-list-v2-items";
 import { buildThreadListV2Items, type ThreadListV2Item } from "../threads/threadListV2";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
@@ -433,44 +433,65 @@ export function HomeScreen(props: HomeScreenProps) {
   ]);
   const threadListV2Items = threadListV2Layout.items;
 
+  // Opening an agent opens the thread that owns it. Mobile has no per-agent
+  // transcript yet — the rows exist here for awareness, which is the thing the
+  // list can offer that no other surface can: seeing that a thread you thought
+  // was finished still has agents running, without opening it.
+  const handleSelectAgent = useCallback(
+    (thread: EnvironmentThreadShell, _taskId: string) => {
+      props.onSelectThread(thread);
+    },
+    [props.onSelectThread],
+  );
+
   const renderV2Item = useCallback(
-    ({ item }: { readonly item: ThreadListV2Item }) => (
-      <ThreadListV2Row
-        thread={item.thread}
-        project={
-          projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
-          null
-        }
-        projectTitle={v2ProjectTitleByProjectKey.get(
-          scopedProjectKey(item.thread.environmentId, item.thread.projectId),
-        )}
-        providerDriver={
-          serverConfigs
-            .get(item.thread.environmentId)
-            ?.providers.find(
-              (provider) =>
-                provider.instanceId ===
-                (item.thread.session?.providerInstanceId ?? item.thread.modelSelection.instanceId),
-            )?.driver ?? null
-        }
-        environmentLabel={
-          Object.keys(props.savedConnectionsById).length > 1
-            ? (props.savedConnectionsById[item.thread.environmentId]?.environmentLabel ?? null)
-            : null
-        }
-        onSelectThread={props.onSelectThread}
-        onDeleteThread={handleDeleteThread}
-        onArchiveThread={props.onArchiveThread}
-        projectCwd={
-          projectCwdByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
-          null
-        }
-        onSwipeableClose={handleSwipeableClose}
-        onSwipeableWillOpen={handleSwipeableWillOpen}
-      />
-    ),
+    ({ item }: { readonly item: ThreadListV2Item }) =>
+      item.kind === "agent" ? (
+        <ThreadListV2AgentRow
+          agent={item.agent}
+          thread={item.thread}
+          onSelectAgent={handleSelectAgent}
+        />
+      ) : (
+        <ThreadListV2Row
+          thread={item.thread}
+          project={
+            projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
+            null
+          }
+          projectTitle={v2ProjectTitleByProjectKey.get(
+            scopedProjectKey(item.thread.environmentId, item.thread.projectId),
+          )}
+          providerDriver={
+            serverConfigs
+              .get(item.thread.environmentId)
+              ?.providers.find(
+                (provider) =>
+                  provider.instanceId ===
+                  (item.thread.session?.providerInstanceId ??
+                    item.thread.modelSelection.instanceId),
+              )?.driver ?? null
+          }
+          environmentLabel={
+            Object.keys(props.savedConnectionsById).length > 1
+              ? (props.savedConnectionsById[item.thread.environmentId]?.environmentLabel ?? null)
+              : null
+          }
+          onSelectThread={props.onSelectThread}
+          onDeleteThread={handleDeleteThread}
+          onArchiveThread={props.onArchiveThread}
+          projectCwd={
+            projectCwdByKey.get(
+              scopedProjectKey(item.thread.environmentId, item.thread.projectId),
+            ) ?? null
+          }
+          onSwipeableClose={handleSwipeableClose}
+          onSwipeableWillOpen={handleSwipeableWillOpen}
+        />
+      ),
     [
       handleDeleteThread,
+      handleSelectAgent,
       handleSwipeableClose,
       handleSwipeableWillOpen,
       projectByKey,
@@ -483,7 +504,10 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
   const v2KeyExtractor = useCallback(
-    (item: ThreadListV2Item) => `${item.thread.environmentId}:${item.thread.id}`,
+    (item: ThreadListV2Item) =>
+      item.kind === "agent"
+        ? `${item.thread.environmentId}:${item.thread.id}:agent:${item.agent.taskId}`
+        : `${item.thread.environmentId}:${item.thread.id}`,
     [],
   );
 

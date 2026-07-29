@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationThreadSubagent, ProjectId } from "@t3tools/contracts";
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
@@ -9,10 +9,13 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status = "approval" | "input" | "working" | "agents" | "failed" | "ready";
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "session" | "subagents"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -25,6 +28,15 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  // The main agent stopped but work is still happening: a backgrounded
+  // subagent outlives the turn that spawned it, so the session goes ready
+  // while the agent keeps running. Without this the row reads as finished —
+  // idle-looking and busy at the same time. Ranked below `working` for the
+  // same reason as web: when the main agent is running too, "Working" already
+  // says the thread is busy.
+  if ((thread.subagents?.length ?? 0) > 0) {
+    return "agents";
   }
   return "ready";
 }
@@ -54,10 +66,26 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
   );
 }
 
-export interface ThreadListV2Item {
-  readonly thread: EnvironmentThreadShell;
-  readonly isLast: boolean;
-}
+/**
+ * A row in the list: either a thread, or one of its live subagents.
+ *
+ * A union rather than nesting agents inside the thread item, because the list
+ * is flat and native: FlatList wants one row per entry, and giving an agent
+ * its own entry is what lets it be pressed, keyed and measured like any other
+ * row instead of becoming a special case inside the thread row's layout.
+ */
+export type ThreadListV2Item =
+  | {
+      readonly kind: "thread";
+      readonly thread: EnvironmentThreadShell;
+      readonly isLast: boolean;
+    }
+  | {
+      readonly kind: "agent";
+      readonly thread: EnvironmentThreadShell;
+      readonly agent: OrchestrationThreadSubagent;
+      readonly isLast: boolean;
+    };
 
 export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
@@ -95,10 +123,16 @@ export function buildThreadListV2Items(input: {
     visible.push(thread);
   }
 
-  const items: ThreadListV2Item[] = sortThreadsForListV2(visible).map((thread) => ({
-    thread,
-    isLast: false,
-  }));
+  // Agents follow the thread that spawned them, so the list reads as a shallow
+  // tree without becoming one. Only live agents appear, so a project of quiet
+  // threads looks exactly as it did before.
+  const items: ThreadListV2Item[] = [];
+  for (const thread of sortThreadsForListV2(visible)) {
+    items.push({ kind: "thread", thread, isLast: false });
+    for (const agent of thread.subagents ?? []) {
+      items.push({ kind: "agent", thread, agent, isLast: false });
+    }
+  }
   const last = items.at(-1);
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
