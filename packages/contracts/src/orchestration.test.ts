@@ -348,36 +348,7 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
-it.effect("decodes thread settle and unsettle commands", () =>
-  Effect.gen(function* () {
-    const settle = yield* decodeOrchestrationCommand({
-      type: "thread.settle",
-      commandId: "cmd-settle-1",
-      threadId: "thread-1",
-    });
-    const unsettle = yield* decodeOrchestrationCommand({
-      type: "thread.unsettle",
-      commandId: "cmd-unsettle-1",
-      threadId: "thread-1",
-      reason: "user",
-    });
-
-    assert.strictEqual(settle.type, "thread.settle");
-    assert.strictEqual(unsettle.type, "thread.unsettle");
-
-    // "activity" is server-owned: it exists on the event, never on the
-    // command, so a client cannot forge the neutral reset.
-    const forged = yield* decodeOrchestrationCommand({
-      type: "thread.unsettle",
-      commandId: "cmd-unsettle-2",
-      threadId: "thread-1",
-      reason: "activity",
-    }).pipe(Effect.flip);
-    assert.ok(forged);
-  }),
-);
-
-it.effect("defaults settled fields when decoding historical thread data", () =>
+it.effect("defaults optional fields when decoding historical thread data", () =>
   Effect.gen(function* () {
     const common = {
       id: "thread-1",
@@ -410,10 +381,8 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
       hasActionableProposedPlan: false,
     });
 
-    assert.strictEqual(thread.settledOverride, null);
-    assert.strictEqual(thread.settledAt, null);
-    assert.strictEqual(shell.settledOverride, null);
-    assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(thread.archivedAt, null);
+    assert.strictEqual(shell.archivedAt, null);
     // A shell from a server that predates the task-progress rollup omits the
     // key entirely; clients read that as "this environment has no bar to draw".
     assert.strictEqual(shell.planSummary, undefined);
@@ -475,48 +444,6 @@ it.effect("decodes thread archived and unarchived events", () =>
     }
     assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
     assert.strictEqual(unarchived.type, "thread.unarchived");
-  }),
-);
-
-it.effect("decodes thread settled and unsettled events", () =>
-  Effect.gen(function* () {
-    const settled = yield* decodeOrchestrationEvent({
-      sequence: 1,
-      eventId: "event-settle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.settled",
-      occurredAt: "2026-01-01T00:00:00.000Z",
-      commandId: "cmd-settle-1",
-      causationEventId: null,
-      correlationId: "cmd-settle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        settledAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    });
-    const unsettled = yield* decodeOrchestrationEvent({
-      sequence: 2,
-      eventId: "event-unsettle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.unsettled",
-      occurredAt: "2026-01-02T00:00:00.000Z",
-      commandId: "cmd-unsettle-1",
-      causationEventId: null,
-      correlationId: "cmd-unsettle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        reason: "user",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-    });
-
-    assert.strictEqual(settled.type, "thread.settled");
-    assert.strictEqual(unsettled.type, "thread.unsettled");
   }),
 );
 

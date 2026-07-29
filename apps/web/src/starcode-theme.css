@@ -503,12 +503,27 @@ html.dark body {
 /* ---------------------------------------------------------------------------
  * 4a. The field — the blurred-video layer
  *
- * WHAT THIS IS. Each keyframe of the timeline ships a 20x12 PNG of the sky at
- * that hour, measured off the source footage. The browser stretches it to the
- * viewport — a seventy-fold upscale, whose own bilinear interpolation does most
- * of the softening for free — and a blur takes out the interpolation's own
- * faint diamond structure. The result is the source, at the right time of day,
- * in this palette, with nothing photographic left in it to read.
+ * WHAT THIS IS. Each keyframe of the timeline ships a 48x29 PNG of the sky at
+ * that hour, measured off the source footage: a 20x12 grid of solved colour,
+ * upscaled and blurred at build time. The browser stretches it the rest of the
+ * way. The result is the source, at the right time of day, in this palette,
+ * with nothing photographic left in it to read.
+ *
+ * WHY THE BLUR IS NOT HERE ANY MORE. It used to be — `filter: blur(3.6vw)` on
+ * this rule, over the raw 20x12. It moved into
+ * `scripts/lib/starcode-sky-timeline.mjs`, which applies it once per keyframe at
+ * build time; that file's header has the full argument, including why the image
+ * had to grow to 48x29 to hold a blur at all.
+ *
+ * The original reason was the push: a filtered layer with a live transform is
+ * redrawn, filter and all, on every composited frame. The push is now gone too,
+ * which retires that argument — so the bake was re-measured without it, and it
+ * still pays. Against this same rule carrying `filter: blur(3.6vw)` on a static
+ * frame, the baked image measured about two points of a core cheaper. A filter
+ * is not free just because nothing is animating: it forces a render surface,
+ * which has to be composited and re-rastered on every resize, DPI change and
+ * theme flip. Two points of a core, permanently, against seventeen kilobytes of
+ * gzipped bundle, is still the right side of the trade.
  *
  * WHY NOT A GRADIENT, which is what this replaced. A gradient is what you get
  * when the measurement threw away the horizontal axis, and it looks like it: no
@@ -524,55 +539,59 @@ html.dark body {
  * heavily blurred backdrop, which is why there is no transition here and does
  * not need to be.
  *
- * THE SLOW PUSH. One transform, three and a half minutes, scaling by six
- * percent and back. It is the only motion the backdrop has now that the mesh
- * blobs are gone, and it reads as the thing it is imitating: a camera breathing
- * on a very long lens. Compositor-only, and it needs the overscan below anyway.
+ * THE SLOW PUSH, AND WHY IT IS GONE. This frame used to carry one transform —
+ * `scale(1)` to `scale(1.06)` and back over three and a half minutes, meant to
+ * read as a camera breathing on a very long lens. It was profiled out of the
+ * app, and the numbers are worth keeping because the mistake is easy to repeat:
+ *
+ *   - Ablated live over CDP, it was 17 of the GPU process's 25 percent of a
+ *     core. Removing it alone was worth as much as deleting the whole backdrop.
+ *   - Measured end to end — one extreme to the other, the entire journey — it
+ *     moved the sky by a mean of 2/255 and a maximum of 21/255.
+ *
+ * That is the whole trap. `ease-in-out` means the scale is a different number
+ * on every vsync, so a full-viewport layer was resampled some 25,000 times per
+ * cycle to deliver a change of under one percent. A slow animation is not a
+ * cheap one: duration sets how far it moves per frame, never how often. And the
+ * effect it bought was, correctly, invisible — a blurred gradient has no edge
+ * to track, so nothing about a six percent scale on it can be seen. The app's
+ * owner did not know the effect existed.
+ *
+ * If motion is ever wanted back here, it has to be stepped rather than eased
+ * (`steps(70)` measured at a third of the cost and looked identical), and it
+ * should be justified by something you can actually see.
+ *
+ * WHAT STILL MOVES. The sky itself, on the hour — `starcodeSky.ts` crossfades
+ * the two frames on a sixty-second tick, which is an opacity change on static
+ * layers and has never cost anything measurable. That is the backdrop's real
+ * animation and it is untouched.
  *
  * DARK ONLY. The light theme keeps its wash gradient. This is a photograph of a
  * night sky; on linen it is a smudge, which is the same reason the starfield has
  * never been allowed on paper.
  * ------------------------------------------------------------------------ */
 
-:root {
-  /* Viewport-relative, so the blur tracks the upscale factor instead of being
-     right on a laptop and wrong on a 5K display. About four percent of the
-     width is where the bilinear grid disappears and the cloud masses do not. */
-  --sc-sky-blur: 3.6vw;
-}
-
 .dark .starcode-sky-frame {
   position: absolute;
-  /* Overscan. A blur samples transparency outside its element and darkens the
-     edges for its whole radius, so the frame has to be bigger than what is
-     seen — and the push below has to stay covered at its smallest. */
+  /* Overscan. Nothing moves any more, so this is no longer covering a push and
+     no longer hiding a blur's dark rim — the bake clamps its own edges. What is
+     left is framing: the fields were derived, blurred and judged as this crop,
+     so opening it back out to the full image would recompose every keyframe. */
   inset: -12%;
   background-repeat: no-repeat;
   background-size: 100% 100%;
-  filter: blur(var(--sc-sky-blur));
-  animation: starcode-sky-breathe 210s ease-in-out infinite alternate;
 }
 
 .dark .starcode-sky-frame-a {
   background-image: var(--sc-sky-field-a);
 }
 
-/* The half of the crossfade that moves. Its own animation is offset so the two
-   frames are never at the same scale, which keeps the push from reading as one
-   flat image being zoomed. */
+/* The half of the crossfade that carries the blend. It used to hold an offset
+   animation-delay as well, so the two frames were never at the same scale; with
+   the push gone there is no scale for them to disagree about. */
 .dark .starcode-sky-frame-b {
   background-image: var(--sc-sky-field-b);
   opacity: var(--sc-sky-blend);
-  animation-delay: -70s;
-}
-
-@keyframes starcode-sky-breathe {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(1.06);
-  }
 }
 
 /* The chrome starfield, at the solved ceiling: `--sc-star-chrome-max` is the
@@ -1220,9 +1239,11 @@ html.dark body {
 
 /* Reduced motion holds every layer still at its average, so the field is
    identical to the static one it replaced — nothing is lost but the movement.
-   The field keeps its colour and loses its push, parked halfway along the
-   scale rather than at either end, so a still frame matches the animated
-   average instead of one extreme of it. */
+
+   The frames used to be parked here too, at `scale(1.03)`, halfway along a push
+   that no longer exists. Left in place it would have inverted itself: with the
+   animation deleted the frames sit at `scale(1)` for everyone, so the rule
+   would have handed reduced-motion users the only zoomed sky in the app. */
 @media (prefers-reduced-motion: reduce) {
   .dark .starcode-star-layer,
   .dark .starcode-sky-field {
@@ -1232,11 +1253,6 @@ html.dark body {
 
   .dark .starcode-sky-field {
     opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
-  }
-
-  .dark .starcode-sky-frame {
-    animation: none;
-    transform: scale(1.03);
   }
 }
 

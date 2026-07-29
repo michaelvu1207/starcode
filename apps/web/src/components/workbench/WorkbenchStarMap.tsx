@@ -22,17 +22,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { useNowMinute } from "../../hooks/useNowMinute";
-import { useClientSettings } from "../../hooks/useSettings";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useFeatureMapByEnvironment, useFeatureFlowView } from "../../state/featureFlow";
-import { environmentServerConfigsAtom } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useUiStateStore } from "../../uiStateStore";
 import { SkySpecks } from "../brand/CelestialArt";
@@ -65,7 +61,6 @@ import {
 } from "./Workbench.tone";
 
 /** No change-request state here: it only feeds auto-settle ranking. */
-const NO_CHANGE_REQUESTS: ReadonlyMap<string, "open" | "closed" | "merged"> = new Map();
 
 /** How long the constellation takes to finish tracing itself out. */
 const DRAW_IN_WINDOW_MS = 2_100;
@@ -207,7 +202,7 @@ function Star({
         openable ? "cursor-pointer" : "cursor-default",
         WORKBENCH_TONE_SVG_CLASS[feature.tone],
         feature.planned && "sc-starmap-star--planned",
-        feature.settled && !feature.planned && "sc-starmap-star--settled",
+        feature.landed && !feature.planned && "sc-starmap-star--landed",
         feature.alive && "sc-starmap-star--alive",
         igniting && "sc-starmap-star--igniting",
         // The glide a feature makes when it climbs a tier. Held back while the
@@ -603,10 +598,7 @@ export function WorkbenchStarMap({
   const navigate = useNavigate();
   const threads = useThreadShells();
   const projects = useProjects();
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
-  const nowMinute = useNowMinute();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const flow = useFeatureFlowView(masterThreadKey, includeThreadKey);
@@ -633,29 +625,18 @@ export function WorkbenchStarMap({
 
   const demoModel = useDemoModel();
   const liveModel = useMemo(() => {
-    const partition = partitionSidebarV2Threads({
-      threads,
-      scopedProjectKeys: null,
-      serverConfigs,
-      changeRequestStateByKey: NO_CHANGE_REQUESTS,
-      autoSettleAfterDays,
-      threadLastVisitedAtById,
-      threadSortOrder: "activity",
-      nowMinute,
-    });
     const board = buildWorkbenchBoard({
-      activeThreads: partition.activeThreads,
-      snoozedThreads: partition.snoozedThreads,
-      settledThreads: partition.settledThreads,
+      threads: partitionSidebarV2Threads({
+        threads,
+        scopedProjectKeys: null,
+        threadLastVisitedAtById,
+        threadSortOrder: "activity",
+      }),
       environments,
       primaryEnvironmentId,
       masterCreatedThreadIds,
       masterThreadKey,
       includeThreadKey,
-      // The sky wants every piece of work it can place. Which settled work is
-      // worth a star is decided by whether anything can say where it landed,
-      // not by a toggle.
-      showSettled: true,
     });
     return buildSkyModel({
       board,
@@ -666,7 +647,6 @@ export function WorkbenchStarMap({
       scope,
     });
   }, [
-    autoSettleAfterDays,
     environments,
     flow,
     includeThreadKey,
@@ -674,11 +654,9 @@ export function WorkbenchStarMap({
     master,
     masterCreatedThreadIds,
     masterThreadKey,
-    nowMinute,
     primaryEnvironmentId,
     projectTitleByKey,
     scope,
-    serverConfigs,
     threadLastVisitedAtById,
     threads,
   ]);

@@ -40,21 +40,13 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.settle / thread.unsettle commands. Absent on
-      pre-settlement servers, so clients treat missing as unsupported and
-      never send the commands under version skew. */
-  threadSettlement: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.snooze / thread.unsnooze commands. Same
-      version-skew contract as threadSettlement. */
-  threadSnooze: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Server serves `/api/peers*` and exposes the peer_threads_* MCP tools, so
       it can be registered as a federation peer and can register others. Absent
-      on upstream servers, which is exactly the version-skew contract the
-      settlement/snooze capabilities use: missing means unsupported. */
+      on upstream servers: missing means unsupported. */
   peerFederation: Schema.optionalKey(Schema.Boolean),
   /**
    * Server accepts operate-class peer registrations and serves the routes

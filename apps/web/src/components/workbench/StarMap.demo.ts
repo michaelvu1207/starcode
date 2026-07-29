@@ -22,7 +22,7 @@ interface DemoFeature {
   readonly stage: SkyFeature["stage"];
   readonly tone?: SkyFeature["tone"];
   readonly alive?: boolean;
-  readonly settled?: boolean;
+  readonly landed?: boolean;
   readonly planned?: boolean;
   readonly stageReported?: boolean;
   readonly progress?: readonly [completed: number, total: number];
@@ -45,7 +45,7 @@ const feature = (input: DemoFeature): SkyFeature => ({
   projectTitle: input.planned === true ? null : (input.project ?? "starcode"),
   tone: input.tone ?? "quiet",
   alive: input.alive ?? false,
-  settled: input.settled ?? false,
+  landed: input.landed ?? false,
   planned: input.planned ?? false,
   planSummary:
     input.progress === undefined
@@ -59,7 +59,7 @@ const feature = (input: DemoFeature): SkyFeature => ({
 
 export function buildSkyDemoModel(): SkyModel {
   const features: ReadonlyArray<SkyFeature> = [
-    // Shipped and settled work, high in the sky, still connected to the root it
+    // Shipped and landed work, high in the sky, still connected to the root it
     // grew from.
     feature({
       id: "a-brand",
@@ -67,7 +67,7 @@ export function buildSkyDemoModel(): SkyModel {
       description: "Ink-and-butter palette across every surface.",
       stage: "in-production",
       tone: "done",
-      settled: true,
+      landed: true,
       authored: true,
     }),
     feature({
@@ -75,7 +75,7 @@ export function buildSkyDemoModel(): SkyModel {
       name: "Sidebar header",
       stage: "in-production",
       tone: "done",
-      settled: true,
+      landed: true,
       dependsOn: "a-brand",
     }),
     feature({
@@ -83,7 +83,7 @@ export function buildSkyDemoModel(): SkyModel {
       name: "Thread rows and task progress",
       stage: "in-staging",
       tone: "done",
-      settled: true,
+      landed: true,
       dependsOn: "a-brand",
       mergeability: "ready",
     }),
@@ -93,7 +93,7 @@ export function buildSkyDemoModel(): SkyModel {
       description: "Drift, twinkle, and an hourly shooting star.",
       stage: "in-staging",
       tone: "done",
-      settled: true,
+      landed: true,
       dependsOn: "a-brand",
       authored: true,
     }),
@@ -104,7 +104,7 @@ export function buildSkyDemoModel(): SkyModel {
       name: "Terminal history reader",
       stage: "in-dev",
       tone: "done",
-      settled: true,
+      landed: true,
       mergeability: "ready",
     }),
     feature({
@@ -113,7 +113,7 @@ export function buildSkyDemoModel(): SkyModel {
       description: "Health, ping, and spend per machine.",
       stage: "in-dev",
       tone: "done",
-      settled: true,
+      landed: true,
       dependsOn: "e-history",
       authored: true,
       machine: "simforgelaptop",

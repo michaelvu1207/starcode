@@ -43,8 +43,6 @@ export function toneForPeerThreadStatus(status: PeerThreadStatus): WorkbenchTone
       return "input";
     case "failed":
       return "failed";
-    case "settled":
-      return "done";
     default:
       return "quiet";
   }

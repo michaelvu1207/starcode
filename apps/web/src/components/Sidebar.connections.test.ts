@@ -10,7 +10,6 @@ import {
   sidebarConnectionDotClassName,
   sidebarConnectionGroupExpansionKey,
   supportsSidebarRangeSelect,
-  type SidebarConnectionRow,
 } from "./Sidebar.connections";
 
 const LOCAL = EnvironmentId.make("env-local");
@@ -40,9 +39,6 @@ function makeThread(id: string, environmentId: EnvironmentId): EnvironmentThread
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
@@ -51,11 +47,10 @@ function makeThread(id: string, environmentId: EnvironmentId): EnvironmentThread
   };
 }
 
-function makeRows(count: number, environmentId: EnvironmentId): SidebarConnectionRow[] {
-  return Array.from({ length: count }, (_unused, index) => ({
-    thread: makeThread(`thread-${index}`, environmentId),
-    section: "active" as const,
-  }));
+function makeRows(count: number, environmentId: EnvironmentId): EnvironmentThreadShell[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    makeThread(`thread-${index}`, environmentId),
+  );
 }
 
 const ENVIRONMENTS = [
@@ -85,24 +80,20 @@ const ENVIRONMENTS = [
 describe("buildSidebarConnectionGroups", () => {
   it("groups the inbox partition by machine, local connection first", () => {
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [makeThread("a", SERVER), makeThread("b", LOCAL)],
-      snoozedThreads: [],
-      settledThreads: [],
+      threads: [makeThread("a", SERVER), makeThread("b", LOCAL)],
       environments: ENVIRONMENTS,
       primaryEnvironmentId: LOCAL,
     });
 
     expect(groups.map((group) => group.label)).toEqual(["This machine", "laptop", "simforge1"]);
     expect(groups[0]?.isLocal).toBe(true);
-    expect(groups[0]?.rows.map((row) => row.thread.id)).toEqual(["b"]);
-    expect(groups[2]?.rows.map((row) => row.thread.id)).toEqual(["a"]);
+    expect(groups[0]?.rows.map((row) => row.id)).toEqual(["b"]);
+    expect(groups[2]?.rows.map((row) => row.id)).toEqual(["a"]);
   });
 
   it("keeps a connected machine with no threads as an empty group", () => {
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [],
-      snoozedThreads: [],
-      settledThreads: [],
+      threads: [],
       environments: ENVIRONMENTS,
       primaryEnvironmentId: LOCAL,
     });
@@ -111,28 +102,23 @@ describe("buildSidebarConnectionGroups", () => {
     expect(groups.every((group) => group.rows.length === 0)).toBe(true);
   });
 
-  it("preserves the partition's order inside a group and tags each row's section", () => {
+  it("preserves the list's order inside a group", () => {
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [makeThread("active-1", LOCAL), makeThread("active-2", LOCAL)],
-      snoozedThreads: [makeThread("snoozed", LOCAL)],
-      settledThreads: [makeThread("settled", LOCAL)],
+      threads: [
+        makeThread("first", LOCAL),
+        makeThread("second", LOCAL),
+        makeThread("third", LOCAL),
+      ],
       environments: ENVIRONMENTS,
       primaryEnvironmentId: LOCAL,
     });
 
-    expect(groups[0]?.rows.map((row) => [row.thread.id, row.section])).toEqual([
-      ["active-1", "active"],
-      ["active-2", "active"],
-      ["snoozed", "snoozed"],
-      ["settled", "settled"],
-    ]);
+    expect(groups[0]?.rows.map((row) => row.id)).toEqual(["first", "second", "third"]);
   });
 
   it("still renders threads whose environment left the catalog, sunk to the bottom", () => {
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [makeThread("orphan", GONE), makeThread("live", LOCAL)],
-      snoozedThreads: [],
-      settledThreads: [],
+      threads: [makeThread("orphan", GONE), makeThread("live", LOCAL)],
       environments: ENVIRONMENTS,
       primaryEnvironmentId: LOCAL,
     });
@@ -140,16 +126,14 @@ describe("buildSidebarConnectionGroups", () => {
     const orphanGroup = groups.at(-1);
     expect(orphanGroup?.environmentId).toBe(GONE);
     expect(orphanGroup?.connection).toBeNull();
-    expect(orphanGroup?.rows.map((row) => row.thread.id)).toEqual(["orphan"]);
+    expect(orphanGroup?.rows.map((row) => row.id)).toEqual(["orphan"]);
     // The whole point: no thread is dropped on the floor.
     expect(groups.flatMap((group) => group.rows)).toHaveLength(2);
   });
 
   it("has no local group when nothing is primary yet", () => {
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [],
-      snoozedThreads: [],
-      settledThreads: [],
+      threads: [],
       environments: ENVIRONMENTS,
       primaryEnvironmentId: null,
     });
@@ -166,9 +150,7 @@ describe("buildSidebarConnectionGroups", () => {
       environment.environmentId === SERVER ? { ...environment, label: "aardvark" } : environment,
     );
     const groups = buildSidebarConnectionGroups({
-      activeThreads: [],
-      snoozedThreads: [],
-      settledThreads: [],
+      threads: [],
       environments: renamed,
       primaryEnvironmentId: LOCAL,
     });
@@ -196,7 +178,7 @@ describe("limitSidebarConnectionRows", () => {
 
   it("pulls the open thread out of the hidden tail", () => {
     const limited = limitSidebarConnectionRows(makeRows(30, LOCAL), 25, `${LOCAL}:thread-29`);
-    expect(limited.rows.at(-1)?.thread.id).toBe("thread-29");
+    expect(limited.rows.at(-1)?.id).toBe("thread-29");
     expect(limited.hiddenCount).toBe(4);
   });
 });

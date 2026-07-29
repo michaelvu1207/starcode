@@ -29,6 +29,8 @@ import {
   SOURCE_META,
   SUNRISE_HOUR,
   SUNSET_HOUR,
+  bakeSigma,
+  bakeSize,
   buildTimeline,
   clampReport,
   contrastRatio,
@@ -50,12 +52,20 @@ const INK_GROUND = "#0e1117";
 const NIGHT_GROUND_TOLERANCE = 1.08;
 /** Bundle budget for the field images, in KB of module source. One PNG per
     keyframe is the whole cost of the backdrop; past this it stops being a
-    background and starts being an asset. */
-const FIELD_BUDGET_KB = 56;
+    background and starts being an asset.
+
+    Raised from 56 when the blur moved into the bake. The fields carry the
+    blurred image now rather than the grid to blur, which needs enough pixels
+    for the blur to be real — see the note beside BAKE_WIDTH. What the bytes buy
+    is about two points of a CPU core, held permanently: a `filter` on the frame
+    forces a render surface even when nothing is animating. This is the ceiling
+    on what that is worth. */
+const FIELD_BUDGET_KB = 72;
 
 function formatModule(timeline) {
   const meta = SOURCE_META();
   const { width, height } = fieldSize();
+  const baked = bakeSize();
   const rows = timeline
     .map((frame) =>
       [
@@ -80,11 +90,17 @@ function formatModule(timeline) {
  * The sky's colour script, measured off a day-to-night time-lapse and restyled
  * into this palette. ${meta.source}
  *
- * Each keyframe is one moment on the local clock. \`field\` is a ${width}x${height}
- * PNG of the sky at that hour — small enough that no upscale can reveal
- * photographic detail, large enough to keep cloud masses and an asymmetric glow.
- * The app stretches it to the viewport and blurs it, which is as close to "we
- * blurred the video" as you can get without playing the video.
+ * Each keyframe is one moment on the local clock. \`field\` is a ${baked.width}x${baked.height}
+ * PNG of the sky at that hour: the ${width}x${height} grid every colour was solved on,
+ * upscaled and blurred here at build time. Small enough that no upscale can
+ * reveal photographic detail, large enough to keep cloud masses and an
+ * asymmetric glow — as close to "we blurred the video" as you can get without
+ * playing the video.
+ *
+ * The blur is baked rather than applied in CSS because a \`filter\` on the frame
+ * forces a render surface the compositor has to keep and re-raster; measured, it
+ * costs about two points of a CPU core more than painting these as they are.
+ * The app now paints them as they are.
  *
  * \`top\` is the average of the field's top row, for the titlebar tint and the
  * layer's own base colour. \`wash\` is the light theme's paper tint. \`stars\`
@@ -112,14 +128,14 @@ export interface SkyKeyframe {
   readonly wash: string;
   /** Star field opacity, 0 to 1. */
   readonly stars: number;
-  /** ${width}x${height} PNG data URI. Upscaled to the viewport and blurred. */
+  /** ${baked.width}x${baked.height} PNG data URI, already blurred. Stretched to the viewport. */
   readonly field: string;
 }
 
 export type SkyPhaseName = "night" | "dawn" | "day" | "dusk";
 
-export const SKY_FIELD_WIDTH = ${width};
-export const SKY_FIELD_HEIGHT = ${height};
+export const SKY_FIELD_WIDTH = ${baked.width};
+export const SKY_FIELD_HEIGHT = ${baked.height};
 
 export const SKY_TIMELINE: readonly SkyKeyframe[] = [
 ${rows}
@@ -131,7 +147,7 @@ const timeline = buildTimeline(LIGHTNESS_CEILING);
 const generated = formatModule(timeline);
 
 if (process.argv.includes("--print")) {
-  const { width } = fieldSize();
+  const { width } = bakeSize();
   for (const frame of timeline) {
     const cells = decodeField(frame.field);
     // The corners and the middle: enough to see the arc and the asymmetry.
@@ -199,17 +215,58 @@ if (fieldKb > FIELD_BUDGET_KB) {
 }
 
 const summary =
-  `${timeline.length} keyframes at ${fieldSize().width}x${fieldSize().height}, ` +
+  `${timeline.length} keyframes, ${fieldSize().width}x${fieldSize().height} solved and ` +
+  `baked to ${bakeSize().width}x${bakeSize().height} at sigma ${bakeSigma().toFixed(2)}, ` +
   `${fieldKb.toFixed(1)}KB of fields, ceiling ${LIGHTNESS_CEILING}, ` +
   `${clamped}/${total} cells at the contrast floor, ` +
   `worst bare-sky contrast ${worst.ratio.toFixed(2)}`;
 
+/**
+ * Is the module on disk the same derivation as the one just built?
+ *
+ * Compared as pixels rather than as bytes, which the stored-block encoder used
+ * to allow. The fields are deflated now, and deflate output can differ between
+ * zlib builds over a file nobody touched — a byte comparison would fail a
+ * colleague's build for a reason that is not their problem. Decoding both sides
+ * holds the invariant that actually matters: the shipped table is a derivation
+ * of the source, not a snapshot somebody hand-edited.
+ *
+ * Everything outside the field payloads is still compared verbatim.
+ */
+function driftFrom(onDisk) {
+  const fields = (text) => text.match(/"data:image\/png;base64,[^"]+"/g) ?? [];
+  const onDiskFields = fields(onDisk);
+  const builtFields = fields(generated);
+  if (onDiskFields.length !== builtFields.length) return "the keyframe count changed";
+
+  const strip = (text) => text.replace(/"data:image\/png;base64,[^"]+"/g, '"<field>"');
+  if (strip(onDisk) !== strip(generated)) return "the table around the fields changed";
+
+  for (const [index, field] of builtFields.entries()) {
+    if (field === onDiskFields[index]) continue;
+    const built = decodeField(JSON.parse(field));
+    let shipped;
+    try {
+      shipped = decodeField(JSON.parse(onDiskFields[index]));
+    } catch {
+      return `keyframe ${index} is not a field this module wrote`;
+    }
+    if (built.length !== shipped.length) return `keyframe ${index} changed size`;
+    const moved = built.findIndex((cell, i) =>
+      cell.some((channel, c) => channel !== shipped[i][c]),
+    );
+    if (moved !== -1) return `keyframe ${index} differs from the derivation at cell ${moved}`;
+  }
+  return null;
+}
+
 if (process.argv.includes("--check")) {
   const onDisk = NodeFS.existsSync(outputPath) ? NodeFS.readFileSync(outputPath, "utf8") : "";
-  if (onDisk !== generated) {
+  const drift = onDisk === generated ? null : driftFrom(onDisk);
+  if (drift !== null) {
     problems.push(
       `${NodePath.relative(NodePath.resolve(here, ".."), outputPath)} is out of sync with the ` +
-        "derivation. Re-run without --check.",
+        `derivation — ${drift}. Re-run without --check.`,
     );
   }
 

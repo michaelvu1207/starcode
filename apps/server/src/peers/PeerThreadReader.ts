@@ -315,8 +315,6 @@ export const make = Effect.gen(function* () {
           latestTurn: thread.latestTurn,
           session: thread.session,
           archivedAt: thread.archivedAt,
-          settledAt: thread.settledAt,
-          settledOverride: thread.settledOverride,
         }),
         provider: thread.session?.providerName ?? thread.modelSelection.instanceId ?? null,
         totalEntries: page.totalEntries,

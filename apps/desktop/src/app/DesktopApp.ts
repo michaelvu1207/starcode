@@ -15,6 +15,7 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopDiscordPresence from "../presence/DesktopDiscordPresence.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
@@ -196,6 +197,12 @@ const bootstrap = Effect.gen(function* () {
 
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
+
+  // Forked rather than awaited: the loop never returns, and its first tick
+  // happens before the renderer has pushed any counts, so there is nothing for
+  // bootstrap to wait on. It no-ops entirely while the setting is off.
+  const discordPresence = yield* DesktopDiscordPresence.DesktopDiscordPresence;
+  yield* Effect.forkScoped(discordPresence.run);
 
   if (!(yield* Ref.get(state.quitting))) {
     // In wsl-only mode the renderer is served by the WSL backend, which can be

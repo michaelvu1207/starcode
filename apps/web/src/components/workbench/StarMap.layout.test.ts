@@ -17,7 +17,7 @@ function feature(key: string, overrides?: Partial<SkyFeature>): SkyFeature {
     projectTitle: null,
     tone: "working",
     alive: false,
-    settled: false,
+    landed: false,
     planned: false,
     planSummary: null,
     mergeability: "unknown",

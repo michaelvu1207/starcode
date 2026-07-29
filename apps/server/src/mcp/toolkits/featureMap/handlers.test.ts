@@ -52,8 +52,6 @@ const shellSnapshot = {
       title: "Hub",
       worktreePath: null,
       archivedAt: null,
-      settledAt: null,
-      settledOverride: null,
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       updatedAt: "2026-07-25T00:00:00.000Z",

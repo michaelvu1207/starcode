@@ -36,8 +36,6 @@ function shell(
     createdAt: "2026-07-25T00:00:00.000Z",
     updatedAt: "2026-07-25T00:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
@@ -60,7 +58,6 @@ function card(
   return {
     key: `${env}:${id}`,
     thread: shell(id, env, threadOverrides),
-    section: "active",
     status: "idle" as SidebarV2Status,
     masterCreated: false,
     ...rest,
@@ -78,7 +75,6 @@ function group(
     isLocal: environmentId === MAC,
     connection: null,
     cards,
-    settledHiddenCount: 0,
   };
 }
 
@@ -251,16 +247,16 @@ describe("buildSkyModel", () => {
     expect(built.features[0]!.dependsOnKeys).toEqual([]);
   });
 
-  it("draws settled work only where something can say where it landed", () => {
+  it("marks work as landed once something can say which trunk holds it", () => {
     const built = model({
-      board: board([
-        group([card("t-landed", { section: "settled" }), card("t-lost", { section: "settled" })]),
-      ]),
+      board: board([group([card("t-landed"), card("t-open")])]),
       flow: flow({ features: [featureNode("t-landed", { stage: "in-production" })] }),
     });
 
-    expect(built.features.map((feature) => feature.name)).toEqual(["t-landed"]);
-    expect(built.features[0]!.settled).toBe(true);
+    const byName = new Map(built.features.map((feature) => [feature.name, feature]));
+    expect(byName.get("t-landed")!.landed).toBe(true);
+    // Nothing has said where this one reached, so it has not landed anywhere.
+    expect(byName.get("t-open")!.landed).toBe(false);
   });
 
   it("names machines that cannot report tiers, and stays silent about the unasked", () => {

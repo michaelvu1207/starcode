@@ -97,6 +97,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
+import type { DiscordPresenceState, DiscordPresenceSummary } from "./discordPresence.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
@@ -1030,6 +1031,21 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /**
+   * Discord rich presence. Optional across the board because the hosted web app
+   * can be loaded by a desktop build older than this feature — the renderer
+   * ships separately from the shell, so a missing method is a real case, not a
+   * theoretical one.
+   */
+  getDiscordPresenceState?: () => Promise<DiscordPresenceState>;
+  setDiscordPresenceEnabled?: (enabled: boolean) => Promise<DiscordPresenceState>;
+  /**
+   * Push the latest counts. Only the renderer can compute these, and it is
+   * expected to call this on every change; the main process throttles and
+   * de-duplicates before anything reaches Discord.
+   */
+  setDiscordPresenceSummary?: (summary: DiscordPresenceSummary) => Promise<void>;
+  onDiscordPresenceState?: (listener: (state: DiscordPresenceState) => void) => () => void;
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.

@@ -50,11 +50,10 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings sidebar v2", () => {
-  it("defaults on, activity-ranked, with a three-day auto-settle threshold", () => {
+  it("defaults on and activity-ranked", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(true);
     expect(settings.sidebarV2ThreadSortOrder).toBe("activity");
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
   });
 
   it("keeps an explicit opt-out and the static creation order selectable", () => {
@@ -87,17 +86,6 @@ describe("ClientSettings sidebar v2", () => {
   it("rejects an unknown v2 view mode", () => {
     expect(() => decodeClientSettings({ sidebarV2ViewMode: "workbench" })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarV2ViewMode: "workbench" })).toThrow();
-  });
-
-  it("allows auto-settle by inactivity to be disabled", () => {
-    expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
-    ).toBeNull();
-  });
-
-  it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
   });
 });
 

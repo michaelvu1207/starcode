@@ -19,14 +19,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   buildSidebarConnectionGroups,
   type SidebarConnectionEnvironment,
-  type SidebarConnectionSection,
 } from "../Sidebar.connections";
 import { resolveSidebarV2Status, type SidebarV2Status } from "../Sidebar.logic";
 
 export interface WorkbenchBoardCard {
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
-  readonly section: SidebarConnectionSection;
   readonly status: SidebarV2Status;
   /** Started by the designated master through the peer tools. */
   readonly masterCreated: boolean;
@@ -38,14 +36,10 @@ export interface WorkbenchBoardGroup {
   readonly isLocal: boolean;
   readonly connection: EnvironmentConnectionPresentation | null;
   readonly cards: ReadonlyArray<WorkbenchBoardCard>;
-  /** Cards hidden because the board is not showing settled work. */
-  readonly settledHiddenCount: number;
 }
 
 export interface WorkbenchBoardInput {
-  readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly snoozedThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments: ReadonlyArray<SidebarConnectionEnvironment>;
   readonly primaryEnvironmentId: EnvironmentId | null;
   /** Thread ids the master's transcript says it created. */
@@ -59,7 +53,6 @@ export interface WorkbenchBoardInput {
    * hidden: they are not this board's work, so there is nothing to reveal.
    */
   readonly includeThreadKey?: ((key: string) => boolean) | null;
-  readonly showSettled: boolean;
 }
 
 export interface WorkbenchBoard {
@@ -70,9 +63,7 @@ export interface WorkbenchBoard {
 
 export function buildWorkbenchBoard(input: WorkbenchBoardInput): WorkbenchBoard {
   const groups = buildSidebarConnectionGroups({
-    activeThreads: input.activeThreads,
-    snoozedThreads: input.snoozedThreads,
-    settledThreads: input.settledThreads,
+    threads: input.threads,
     environments: input.environments,
     primaryEnvironmentId: input.primaryEnvironmentId,
   });
@@ -81,23 +72,17 @@ export function buildWorkbenchBoard(input: WorkbenchBoardInput): WorkbenchBoard 
   let masterCreatedCount = 0;
 
   const boardGroups = groups.map((group): WorkbenchBoardGroup => {
-    let settledHiddenCount = 0;
     const cards: WorkbenchBoardCard[] = [];
-    for (const row of group.rows) {
-      const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
+    for (const thread of group.rows) {
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       if (key === input.masterThreadKey) continue;
       if (input.includeThreadKey != null && !input.includeThreadKey(key)) continue;
-      if (row.section === "settled" && !input.showSettled) {
-        settledHiddenCount += 1;
-        continue;
-      }
-      const masterCreated = input.masterCreatedThreadIds.has(row.thread.id);
+      const masterCreated = input.masterCreatedThreadIds.has(thread.id);
       if (masterCreated) masterCreatedCount += 1;
       cards.push({
         key,
-        thread: row.thread,
-        section: row.section,
-        status: resolveSidebarV2Status(row.thread),
+        thread,
+        status: resolveSidebarV2Status(thread),
         masterCreated,
       });
     }
@@ -108,7 +93,6 @@ export function buildWorkbenchBoard(input: WorkbenchBoardInput): WorkbenchBoard 
       isLocal: group.isLocal,
       connection: group.connection,
       cards,
-      settledHiddenCount,
     };
   });
 

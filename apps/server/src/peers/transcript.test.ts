@@ -113,8 +113,6 @@ const shell = {
   latestTurn: null,
   session: null,
   archivedAt: null,
-  settledAt: null,
-  settledOverride: null,
 } as const;
 
 it("ranks needs-attention states above lifecycle states", () => {
@@ -138,14 +136,9 @@ it("ranks needs-attention states above lifecycle states", () => {
   expect(resolvePeerThreadStatus({ ...shell, archivedAt: "2026-07-24T00:00:00.000Z" })).toBe(
     "archived",
   );
-  expect(resolvePeerThreadStatus({ ...shell, settledAt: "2026-07-24T00:00:00.000Z" })).toBe(
-    "settled",
-  );
   expect(
     resolvePeerThreadStatus({
       ...shell,
-      settledAt: "2026-07-24T00:00:00.000Z",
-      settledOverride: "active",
     }),
   ).toBe("idle");
 });

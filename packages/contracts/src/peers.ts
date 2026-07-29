@@ -188,8 +188,7 @@ export type PeerRemoveResult = typeof PeerRemoveResult.Type;
 /**
  * Coarse thread state derived from the peer's shell snapshot. Intentionally
  * narrower than the client's sidebar classification: it only uses fields the
- * shell snapshot itself carries, so it cannot drift with client-side settle or
- * snooze policy.
+ * shell snapshot itself carries, so it cannot drift with client-side policy.
  */
 export const PeerThreadStatus = Schema.Literals([
   "approval",
@@ -197,7 +196,6 @@ export const PeerThreadStatus = Schema.Literals([
   "working",
   "failed",
   "archived",
-  "settled",
   "idle",
 ]);
 export type PeerThreadStatus = typeof PeerThreadStatus.Type;

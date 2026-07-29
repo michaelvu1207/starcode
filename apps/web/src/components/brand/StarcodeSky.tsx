@@ -23,9 +23,9 @@
  * existing glass vocabulary correct.
  *
  * WHAT IT PAINTS, IN ORDER
- *   1. two field frames — the keyframes either side of now, each a 20x12 PNG
- *      of the real sky stretched to the viewport and blurred, with the top
- *      one's opacity carrying the crossfade between them
+ *   1. two field frames — the keyframes either side of now, each a 48x29 PNG
+ *      of the real sky, already blurred, stretched to the viewport, with the
+ *      top one's opacity carrying the crossfade between them
  *   2. the starfield — the chrome field, at the solved ceiling, drifting
  *
  * It used to paint a five-stop gradient and three mesh blobs under a turbulence
@@ -33,10 +33,21 @@
  * field has the shape, so the blobs are gone: fewer layers, less CSS, and a
  * backdrop that is the sky rather than an impression of one.
  *
- * All of it is `transform` and `opacity` on pre-painted layers, so it lives on
- * the compositor. The blur is a filter on a static image and rasterises once.
- * No canvas, no WebGL, no rAF, no timer beyond the one-minute tick in
+ * All of it is `opacity` on pre-painted layers, so it lives on the compositor.
+ * No filter, no canvas, no WebGL, no rAF, no timer beyond the one-minute tick in
  * `starcodeSky.ts` that moves the pair along.
+ *
+ * WHAT THIS LAYER IS ALLOWED TO COST. Nothing per frame. The frames used to
+ * carry a slow `scale()` as well, and it was profiled at seventeen points of a
+ * CPU core — more than half the GPU process — to move the sky by under one
+ * percent over three and a half minutes. Nobody had ever noticed the effect.
+ * It is gone; `starcode-theme.css` has the numbers next to the rule.
+ *
+ * The rule that came out of that: a wallpaper may not animate per frame. The
+ * hour-to-hour crossfade is the exception that proves it — a step of a few
+ * percent opacity, once a minute, on two static layers, which is free. If you
+ * are adding motion here, it has to be stepped, and it has to be visible enough
+ * to argue for.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";

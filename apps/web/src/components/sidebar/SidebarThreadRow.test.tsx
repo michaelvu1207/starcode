@@ -23,10 +23,7 @@ const actions: SidebarThreadRowActions = {
   onRenameKeyDown: noop,
   onRenameBlur: noop,
   onStartRename: noop,
-  onSettle: noop,
-  onUnsettle: noop,
-  onUnsnooze: noop,
-  onSnooze: noop,
+  onArchive: noop,
 };
 
 function makeThread(overrides?: Partial<EnvironmentThreadShell>): EnvironmentThreadShell {
@@ -44,9 +41,6 @@ function makeThread(overrides?: Partial<EnvironmentThreadShell>): EnvironmentThr
     createdAt: "2026-07-25T00:00:00.000Z",
     updatedAt: "2026-07-25T00:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
@@ -67,25 +61,17 @@ function render(
       isActive: false,
       isSelected: false,
       isUnread: false,
-      isWoke: false,
       shouldRecede: false,
       isRenaming: false,
     },
     actions,
     timeLabel: "4h",
-    snoozeWakeLabelText: null,
-    rowAction: "settle",
-    settlementSupported: true,
-    snoozeSupported: true,
-    snoozeAllowed: true,
     driverKind: null,
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
     // Hidden by default: whether a split can hold this thread is a property of
-    // the window and of what is already on screen, and letting it default to
-    // ready would let every assertion about settlement and snooze pass for the
-    // wrong reason.
+    // the window and of what is already on screen.
     splitState: "hidden",
     onOpenInSplit: noop,
     ...overrides,
@@ -107,32 +93,15 @@ describe("SidebarThreadRow", () => {
     else globals.window = previousWindow;
   });
 
-  it("carries the name, the machine and the time on one row", () => {
+  it("carries the name and the time on one row", () => {
     const markup = render();
 
     expect(markup).toContain('data-testid="sidebar-v2-row"');
     expect(markup).toContain("Teach the sidebar one row");
-    expect(markup).toContain('data-environment-id="env-laptop"');
     expect(markup).toContain(">4h<");
-  });
-
-  it("is one shape for every section — settled and snoozed rows are the same row", () => {
-    // The variant split is the thing this component replaced: a thread that
-    // settles must not change size or lose its machine.
-    const live = render({ rowAction: "settle" });
-    const settled = render({ rowAction: "unsettle" });
-    const snoozed = render({ rowAction: "unsnooze", snoozeWakeLabelText: "2h" });
-
-    for (const markup of [live, settled, snoozed]) {
-      expect(markup).toContain('data-testid="sidebar-v2-row"');
-      expect(markup).toContain('data-environment-id="env-laptop"');
-      // The old shapes are gone, not merely unused.
-      expect(markup).not.toContain("sidebar-v2-row-card");
-      expect(markup).not.toContain("sidebar-v2-row-slim");
-    }
-    // A snoozed row shows when it comes back, not when it last spoke.
-    expect(snoozed).toContain(">2h<");
-    expect(snoozed).not.toContain(">4h<");
+    // The old shapes are gone, not merely unused.
+    expect(markup).not.toContain("sidebar-v2-row-card");
+    expect(markup).not.toContain("sidebar-v2-row-slim");
   });
 
   it("draws no card: the row surface is square and full-bleed", () => {
@@ -160,25 +129,26 @@ describe("SidebarThreadRow", () => {
     }
   });
 
-  it("leads with the machine: the mark comes before the title, not after it", () => {
-    const markup = render();
-    const mark = markup.indexOf('data-testid="connection-mark"');
-    const title = markup.indexOf("Teach the sidebar one row");
+  it("draws the machine as the status glyph's colour rather than a mark of its own", () => {
+    const markup = render({ status: "working" });
+    const status = markup.slice(markup.indexOf('data-testid="sidebar-v2-row-status"'));
 
-    expect(mark).toBeGreaterThan(-1);
-    expect(title).toBeGreaterThan(-1);
-    // A column of marks down the left edge is the point — one buried in the
-    // trailing block reads as furniture and cannot be scanned.
-    expect(mark).toBeLessThan(title);
-    // Exactly one: the left edge replaced the trailing slot rather than
-    // doubling it.
-    expect(markup.match(/data-testid="connection-mark"/g)).toHaveLength(1);
+    // The mark that used to lead the row is gone: two glyphs on a 32px row is
+    // one more than carries its weight.
+    expect(markup).not.toContain('data-testid="connection-mark"');
+    // What replaced it: the same machine hue, on the glyph that was already
+    // there. Same class the connection groups draw, so one machine is one
+    // colour everywhere.
+    expect(status).toContain("sc-machine-mark");
+    expect(status).toContain("--sc-machine-hue");
+    expect(status).toContain('data-environment-id="env-laptop"');
   });
 
   it("names the live status for anyone who cannot see the colour", () => {
     expect(render({ status: "working" })).toContain('aria-label="Working"');
     expect(render({ status: "approval" })).toContain('aria-label="Waiting for approval"');
-    // A quiet, read thread wears no badge at all.
+    // A quiet, read thread wears no badge at all — and so shows no machine
+    // either, which is the trade the colour-carries-the-machine design makes.
     expect(render()).not.toContain('data-testid="sidebar-v2-row-status"');
   });
 
@@ -193,7 +163,7 @@ describe("SidebarThreadRow", () => {
     expect(render()).not.toContain('role="progressbar"');
   });
 
-  it("holds still under the pointer — only the time gives way to the menu", () => {
+  it("holds still under the pointer — only the time gives way to the actions", () => {
     // The regression this guards: hover used to fade out the machine, the
     // agent and the status alongside the time and slide a strip of icon
     // buttons in over them. Four things moved every time the pointer crossed a
@@ -208,44 +178,36 @@ describe("SidebarThreadRow", () => {
     expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
   });
 
-  it("puts the row's actions behind the menu rather than on the row", () => {
+  it("puts archive on the row itself, one click from the pointer", () => {
     const markup = render();
 
-    // The old hover strip's buttons are gone from the row itself; what they did
-    // now lives in the menu, which SSR does not open.
-    expect(markup).not.toContain('aria-label="Settle thread"');
-    expect(markup).not.toContain('aria-label="Snooze thread"');
+    // Archive is the one thing you do to a thread you are finished with, so it
+    // does not wait behind the `···` — it sits beside it in the same hover
+    // strip. (The menu keeps its own copy, which SSR does not open.)
+    expect(markup).toContain('data-testid="sidebar-v2-row-archive"');
+    expect(markup).toContain('aria-label="Archive thread"');
     expect(markup).toContain('aria-label="Thread actions"');
   });
 
-  it("shows no menu button when the row has nothing to offer", () => {
-    // This used to be a real state: when every entry in the menu was
-    // capability-gated, a server that predated settlement left rows wearing an
-    // empty `···`. It cannot happen any more. Rename, move, fork and archive
-    // ask the server for nothing, so the menu always has entries and the guard
-    // that hid the button is gone — asserted here rather than deleted, because
-    // "the oldest server still gets a usable row menu" is the property that
-    // replaced it.
-    const markup = render({
-      settlementSupported: false,
-      snoozeAllowed: false,
-      snoozeSupported: false,
-    });
+  it("gives the hover strip the row's own background so it does not float over the title", () => {
+    // It is wider than the time it replaces, so without a backing it would sit
+    // on top of the tail of a long title.
+    const markup = render();
+    const strip = markup.slice(markup.indexOf("focus-within:opacity-100"));
+
+    expect(strip).toContain("bg-sidebar-row-hover");
+  });
+
+  it("offers the same menu on every row", () => {
+    // This used to be capability-gated: when every entry in the menu depended
+    // on a server capability, an older server left rows wearing an empty
+    // `···`. Rename, move, fork and archive ask the server for nothing, so the
+    // menu always has entries.
+    const markup = render();
 
     expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
     // And the time makes way for it, on every row, for the same reason.
     expect(markup).toContain("group-hover/v2-row:opacity-0");
-  });
-
-  it("keeps the lifecycle entries capability-gated even though the menu is not", () => {
-    // The menu is unconditional now; its *contents* are not. Settle, un-settle
-    // and wake are still the entries a pre-settlement server has no verb for,
-    // and the separator above them still has to disappear with them or the menu
-    // grows a rule with nothing under it.
-    expect(rowSource).toContain(
-      'rowAction === "unsnooze" ? snoozeSupported : settlementSupported || snoozeAllowed',
-    );
-    expect(rowSource).toContain("{hasLifecycleEntries ? <MenuSeparator /> : null}");
   });
 
   it("mounts the thread verbs only while the popup is open", () => {
@@ -259,27 +221,28 @@ describe("SidebarThreadRow", () => {
     // exact line, because the formatter reflows these across lines the moment a
     // prop is added — and a discriminator that breaks on reformatting is a
     // discriminator that gets deleted rather than fixed.
-    for (const component of ["<ThreadRowFilingActions", "<ThreadRowArchiveAction"]) {
-      const at = rowSource.indexOf(component);
-      expect(at).toBeGreaterThan(-1);
-      const guard = rowSource.slice(Math.max(0, at - 60), at);
-      expect(guard).toContain("{open ? ");
-    }
+    const at = rowSource.indexOf("<ThreadRowFilingActions");
+    expect(at).toBeGreaterThan(-1);
+    expect(rowSource.slice(Math.max(0, at - 60), at)).toContain("{open ? ");
   });
 
   it("puts archive last, alone, below its own separator", () => {
-    // Ordering is the whole safety story for this entry: it is the only one
-    // that takes the thread off the list, and it sits directly under the snooze
-    // presets, which are what a fast hand is actually aiming for.
+    // Ordering is the whole safety story for this entry: it is the only one in
+    // the menu that takes the thread off the list.
     const archiveAt = rowSource.indexOf("<ThreadRowArchiveAction");
     const filingAt = rowSource.indexOf("<ThreadRowFilingActions");
-    const snoozeAt = rowSource.indexOf("resolveSnoozePresets(new Date())");
 
     expect(filingAt).toBeLessThan(archiveAt);
-    expect(snoozeAt).toBeLessThan(archiveAt);
     expect(rowSource.slice(0, archiveAt).lastIndexOf("<MenuSeparator />")).toBeGreaterThan(
       filingAt,
     );
+  });
+
+  it("routes the row button and the menu entry at one archive handler", () => {
+    // Two ways in, one act. Two implementations would eventually disagree
+    // about what archiving does.
+    expect(rowSource).toContain("onClick={actions.onArchive}");
+    expect(rowSource).toContain("onArchive={actions.onArchive}");
   });
 
   it("greys the split entry out rather than letting it look clickable", () => {
@@ -310,21 +273,6 @@ describe("SidebarThreadRow", () => {
     expect(splitItem).toContain("event.stopPropagation()");
   });
 
-  it("offers the menu on a snoozed row whether or not waking is supported", () => {
-    // A snoozed row on a server that cannot wake it still renames, moves, forks
-    // and archives — the wake entry is the only one that goes missing.
-    for (const snoozeSupported of [true, false]) {
-      expect(
-        render({
-          rowAction: "unsnooze",
-          snoozeWakeLabelText: "2h",
-          snoozeSupported,
-          snoozeAllowed: snoozeSupported,
-        }),
-      ).toContain('data-testid="sidebar-v2-row-menu"');
-    }
-  });
-
   it("routes the menu's Rename at the same handler double-click uses", () => {
     // Two ways in, one act: the rename input is row state, so the entry cannot
     // own it and must call back out. Source-level — the entry lives inside the
@@ -347,7 +295,6 @@ const renderFlags = {
   isActive: false,
   isSelected: false,
   isUnread: false,
-  isWoke: false,
   shouldRecede: false,
   isRenaming: false,
 };

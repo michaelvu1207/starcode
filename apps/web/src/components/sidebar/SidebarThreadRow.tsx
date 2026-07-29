@@ -2,51 +2,49 @@
  * The sidebar thread row. One row, one shape, every view.
  *
  * There used to be two: an elevated three-line card for live threads and a
- * one-line slim row for settled and snoozed ones. That is two layouts for one
- * object, so the same thread changed size and lost half its detail the moment
- * it settled, and a list containing both read as two lists stapled together.
- * The card also spent 78px and three lines saying what fits on one.
+ * one-line slim row for the ones that had been put away. That is two layouts
+ * for one object, and a list containing both read as two lists stapled
+ * together. The card also spent 78px and three lines saying what fits on one.
  *
- * What is on the row, and nothing else: the machine it runs on, the thread's
- * name, and when it last spoke — the machine's mark leading the row, the title
- * taking the space that is left. Status is a coloured glyph in front of the
- * time, and how far through its task list the thread is is a hairline along the
- * bottom edge. Everything the card used to spell out — project name, machine
- * name, model, branch, task counts, the failure — is in the tooltip, which is
- * where second-order detail belongs on a surface you scan forty times a day.
+ * What is on the row, and nothing else: the thread's name, and when it last
+ * spoke. Status is a glyph in front of the time, and how far through its task
+ * list the thread is is a hairline along the bottom edge. Everything the card
+ * used to spell out — project name, machine name, model, branch, task counts,
+ * the failure — is in the tooltip, which is where second-order detail belongs
+ * on a surface you scan forty times a day.
  *
- * Four things are deliberately absent. There is no rounded card: the hover and
- * selection surfaces are full-bleed bands, so a list of threads reads as a list
- * and not as a stack of tiles. There is no ticking work duration; the working
- * glyph pulses, which answers "is it running" without a second of layout
- * churn per second. There is no machine *name* — the mark carries the machine's
- * identity in colour, and the name is one hover away. And there is no agent
- * glyph: which of Claude or Codex is driving is not how you pick a thread out
- * of a list, and it is named beside its model in the tooltip.
+ * The machine is in the status glyph's *colour* rather than in a mark of its
+ * own. Two glyphs at the edges of a 32px row is one more than carries its
+ * weight, and the two facts compose cleanly: the shape says what the thread is
+ * doing, the hue says where it is doing it. A quiet thread draws neither, which
+ * is the point — a list where every row wears a badge has told you nothing.
+ *
+ * Three more things are deliberately absent. There is no rounded card: the
+ * hover and selection surfaces are full-bleed bands, so a list of threads reads
+ * as a list and not as a stack of tiles. There is no ticking work duration; the
+ * working glyph pulses, which answers "is it running" without a second of
+ * layout churn per second. And there is no agent glyph: which of Claude or
+ * Codex is driving is not how you pick a thread out of a list, and it is named
+ * beside its model in the tooltip.
  *
  * Fork-owned and purely presentational. Every piece of state and every handler
- * arrives as a prop from `SidebarV2Row`, which keeps the hooks, the git and PR
- * lookups, and the rename plumbing where upstream put them — so the permanent
- * diff in `SidebarV2.tsx` is the JSX this file replaced and nothing more.
+ * arrives as a prop from `SidebarV2Row`, which keeps the hooks, the git lookups
+ * and the rename plumbing where upstream put them — so the permanent diff in
+ * `SidebarV2.tsx` is the JSX this file replaced and nothing more.
  */
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { SidebarThreadSummary } from "../../types";
 import type { SidebarV2Status } from "../Sidebar.logic";
-import type { SnoozePreset } from "../Sidebar.snooze";
 import {
-  AlarmClockIcon,
-  AlarmClockOffIcon,
-  CheckIcon,
+  ArchiveIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
   Columns2Icon,
   EllipsisIcon,
-  Undo2Icon,
 } from "lucide-react";
 import {
-  useMemo,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -55,27 +53,14 @@ import {
 
 import { cn } from "~/lib/utils";
 import type { OpenInSplitState } from "../split/openInSplit";
-import { resolveSnoozePresets } from "../Sidebar.snooze";
-import { Menu, MenuGroup, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
-import { ConnectionMark } from "./ConnectionMark";
+import { connectionAccentHue } from "./ConnectionMark.model";
 import { ThreadRowArchiveAction, ThreadRowFilingActions } from "./SidebarThreadRowActions";
 import { ThreadTaskProgress } from "./ThreadTaskProgress";
 import { hasThreadTaskProgress } from "./ThreadTaskProgress.logic";
 import { resolveThreadRowStatusChip, type ThreadRowStatusTone } from "./SidebarThreadRow.status";
-
-/**
- * Status hues follow the convention sidebar v1 and the mobile Live Activity
- * set, so a thread reads the same colour everywhere it surfaces.
- */
-const STATUS_TONE_CLASS: Readonly<Record<ThreadRowStatusTone, string>> = {
-  working: "animate-status-pulse text-sky-600 motion-reduce:animate-none dark:text-sky-400",
-  approval: "text-amber-700 dark:text-amber-300",
-  input: "text-indigo-600 dark:text-indigo-300",
-  failed: "text-red-700 dark:text-red-300",
-  woke: "text-amber-700 dark:text-amber-300",
-  done: "text-emerald-700 dark:text-emerald-300",
-};
+import "./Connections.css";
 
 function StatusGlyph({ tone }: { readonly tone: ThreadRowStatusTone }): ReactNode {
   const className = "size-3.5 shrink-0";
@@ -88,8 +73,6 @@ function StatusGlyph({ tone }: { readonly tone: ThreadRowStatusTone }): ReactNod
       return <CircleDotIcon aria-hidden className={className} />;
     case "failed":
       return <CircleAlertIcon aria-hidden className={className} />;
-    case "woke":
-      return <AlarmClockIcon aria-hidden className={className} />;
     case "done":
       return <CircleCheckIcon aria-hidden className={className} />;
   }
@@ -131,21 +114,16 @@ const SPLIT_MENU_LABEL: Readonly<Record<Exclude<OpenInSplitState, "hidden">, str
  * things moved every time the pointer crossed a row, which in a list you skim
  * is most of the time, and none of the four was what you were looking at.
  *
- * Now the row holds still and a single `···` appears in the time's place — the
- * one swap worth making, because the time is the least load-bearing thing on
- * the row and the alternative is either a permanently visible button on every
- * row or no room for one at all.
+ * Now the row holds still and the time's slot fills with two things — archive,
+ * and this `···`. The one swap worth making, because the time is the least
+ * load-bearing thing on the row and the alternative is either two permanently
+ * visible buttons on every row or no room for either.
  *
- * The presets are menu items rather than a nested popover. Snooze used to be
- * its own button opening its own surface, which meant two clicks and two
- * dismiss targets for something that is one decision; a labelled group in the
- * menu that is already open costs neither.
- *
- * Four blocks, separated, in the order you reach for them: open it beside what
- * you are reading; edit it (rename, file, fork); park it (settle, snooze);
- * archive it. Archive is last and alone because it is the only entry that takes
- * the thread off the list, and the snooze presets are the thing directly above
- * it that a fast hand is aiming for.
+ * Three blocks, separated, in the order you reach for them: open it beside what
+ * you are reading; edit it (rename, file, fork); archive it. Archive is last
+ * and alone because it is the only entry that takes the thread off the list —
+ * and it is duplicated as the icon button beside this trigger, which is the
+ * same act one click sooner.
  *
  * `stopPropagation` on the trigger is not defensive: the whole row is a click
  * target that navigates, so without it opening the menu also opens the thread.
@@ -155,17 +133,10 @@ function ThreadRowMenu({
   onOpenChange,
   thread,
   driverKind,
-  rowAction,
-  settlementSupported,
-  snoozeAllowed,
-  snoozeSupported,
   splitState,
   onOpenInSplit,
   onRename,
-  onSettle,
-  onUnsettle,
-  onUnsnooze,
-  onSnooze,
+  onArchive,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
@@ -173,28 +144,12 @@ function ThreadRowMenu({
   readonly thread: SidebarThreadSummary;
   /** Which agent drives it. Only some can fork a session — see the fork entry. */
   readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
-  readonly rowAction: "settle" | "unsettle" | "unsnooze";
-  readonly settlementSupported: boolean;
-  readonly snoozeAllowed: boolean;
-  readonly snoozeSupported: boolean;
   /** Whether this thread can go in the right pane — see `openInSplit`. */
   readonly splitState: OpenInSplitState;
   readonly onOpenInSplit: () => void;
   readonly onRename: () => void;
-  readonly onSettle: (event: ReactMouseEvent) => void;
-  readonly onUnsettle: (event: ReactMouseEvent) => void;
-  readonly onUnsnooze: (event: ReactMouseEvent) => void;
-  readonly onSnooze: (preset: SnoozePreset) => void;
+  readonly onArchive: (event: ReactMouseEvent) => void;
 }): ReactNode {
-  // Resolved at open time so "In 1 hour" is an hour from the click rather than
-  // from whenever this row mounted.
-  const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
-  // Whether the lifecycle block has anything in it. Its entries are the only
-  // ones in this menu the server can refuse to support, so it is the only block
-  // whose separator has to be conditional.
-  const hasLifecycleEntries =
-    rowAction === "unsnooze" ? snoozeSupported : settlementSupported || snoozeAllowed;
-
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
       <MenuTrigger
@@ -223,8 +178,7 @@ function ThreadRowMenu({
                 *component* tree, so this click reaches the row — and the row
                 navigates. Without it, opening a thread on the right also drags
                 the left pane onto it, which is the one thing this entry exists
-                not to do. The settle and wake handlers stop it for the same
-                reason; the snooze presets take no event and need none. */}
+                not to do. */}
             <MenuItem
               closeOnClick
               disabled={splitState !== "ready"}
@@ -240,69 +194,16 @@ function ThreadRowMenu({
             <MenuSeparator />
           </>
         )}
-        {/* What you do TO the thread, above what you do WITH its lifecycle:
-            renaming, filing and forking are edits to the thread itself, and
-            they are the ones that ask nothing of the server, so they are the
-            block that is always here. Mounted only while the popup is open —
-            they carry their own hooks, and the row is rendered hundreds of
-            times. */}
+        {/* What you do TO the thread: renaming, filing and forking are edits to
+            the thread itself. Mounted only while the popup is open — they carry
+            their own hooks, and the row is rendered hundreds of times. */}
         {open ? (
           <ThreadRowFilingActions thread={thread} driverKind={driverKind} onRename={onRename} />
         ) : null}
-        {hasLifecycleEntries ? <MenuSeparator /> : null}
-        {rowAction === "unsnooze" ? (
-          snoozeSupported ? (
-            <MenuItem closeOnClick onClick={onUnsnooze} className="sm:text-xs">
-              <AlarmClockOffIcon aria-hidden className="size-3.5" />
-              Wake now
-            </MenuItem>
-          ) : null
-        ) : (
-          <>
-            {settlementSupported ? (
-              <MenuItem
-                closeOnClick
-                onClick={rowAction === "unsettle" ? onUnsettle : onSettle}
-                className="sm:text-xs"
-              >
-                {rowAction === "unsettle" ? (
-                  <Undo2Icon aria-hidden className="size-3.5" />
-                ) : (
-                  <CheckIcon aria-hidden className="size-3.5" />
-                )}
-                {rowAction === "unsettle" ? "Un-settle" : "Settle"}
-              </MenuItem>
-            ) : null}
-            {snoozeAllowed ? (
-              <>
-                {settlementSupported ? <MenuSeparator /> : null}
-                <MenuGroup>
-                  <div className="px-2 py-1 font-medium text-muted-foreground sm:text-xs">
-                    Snooze
-                  </div>
-                  {presets.map((preset) => (
-                    <MenuItem
-                      key={preset.id}
-                      closeOnClick
-                      onClick={() => onSnooze(preset)}
-                      className="sm:text-xs"
-                    >
-                      <span className="flex-1">{preset.label}</span>
-                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/60">
-                        {preset.whenLabel}
-                      </span>
-                    </MenuItem>
-                  ))}
-                </MenuGroup>
-              </>
-            ) : null}
-          </>
-        )}
-        {/* Alone below the last separator: archive is the only entry here that
-            takes the thread off the list, and the one you must not reach for by
-            accident on the way to Snooze. */}
+        {/* Alone below the separator: archive is the only entry here that takes
+            the thread off the list. */}
         <MenuSeparator />
-        {open ? <ThreadRowArchiveAction thread={thread} /> : null}
+        <ThreadRowArchiveAction onArchive={onArchive} />
       </MenuPopup>
     </Menu>
   );
@@ -312,7 +213,6 @@ export interface SidebarThreadRowFlags {
   readonly isActive: boolean;
   readonly isSelected: boolean;
   readonly isUnread: boolean;
-  readonly isWoke: boolean;
   /** Read, quiet, or merely in flight: recedes so the list's loud rows lead. */
   readonly shouldRecede: boolean;
   readonly isRenaming: boolean;
@@ -328,10 +228,8 @@ export interface SidebarThreadRowActions {
   readonly onRenameBlur: () => void;
   /** Puts the row into its rename input. Double-click and the menu share it. */
   readonly onStartRename: () => void;
-  readonly onSettle: (event: ReactMouseEvent) => void;
-  readonly onUnsettle: (event: ReactMouseEvent) => void;
-  readonly onUnsnooze: (event: ReactMouseEvent) => void;
-  readonly onSnooze: (preset: SnoozePreset) => void;
+  /** Takes the thread off the list. The hover button and the menu entry share it. */
+  readonly onArchive: (event: ReactMouseEvent) => void;
 }
 
 export function SidebarThreadRow({
@@ -340,11 +238,6 @@ export function SidebarThreadRow({
   flags,
   actions,
   timeLabel,
-  snoozeWakeLabelText,
-  rowAction,
-  settlementSupported,
-  snoozeSupported,
-  snoozeAllowed,
   splitState,
   driverKind,
   jumpLabel,
@@ -358,16 +251,6 @@ export function SidebarThreadRow({
   readonly actions: SidebarThreadRowActions;
   /** When the thread last spoke, already compacted ("4h", "now"). */
   readonly timeLabel: string;
-  /** Compact wake countdown ("2h") for rows on the snooze shelf. */
-  readonly snoozeWakeLabelText: string | null;
-  /** What the hover button on this row does. */
-  readonly rowAction: "settle" | "unsettle" | "unsnooze";
-  /** False where the server predates thread.settle: the button hides. */
-  readonly settlementSupported: boolean;
-  /** Same contract for thread.snooze/unsnooze — gates the wake button. */
-  readonly snoozeSupported: boolean;
-  /** Snooze is also refused on blocked or queued work, so it has its own gate. */
-  readonly snoozeAllowed: boolean;
   /**
    * Whether this thread can go in the right pane, and if not, why. A property
    * of the window and of what is already on screen rather than of the thread —
@@ -385,20 +268,20 @@ export function SidebarThreadRow({
   readonly tooltip: ReactNode;
   readonly onOpenInSplit: () => void;
 }): ReactNode {
-  const chip = resolveThreadRowStatusChip({
-    status,
-    isUnread: flags.isUnread,
-    isWoke: flags.isWoke,
-  });
+  const chip = resolveThreadRowStatusChip({ status, isUnread: flags.isUnread });
   // Owned here rather than by the caller: which menu is open is presentation,
-  // and keeping it in the row is what lets the `···` stay pinned while the
-  // pointer is off in the menu.
+  // and keeping it in the row is what lets the hover strip stay pinned while
+  // the pointer is off in the menu.
   const [menuOpen, setMenuOpen] = useState(false);
   const hasProgress = hasThreadTaskProgress(thread.planSummary);
-  // A snoozed row shows when it comes BACK rather than when it was last
-  // touched: the return ticket is that row's whole story.
-  const trailingLabel =
-    rowAction === "unsnooze" && snoozeWakeLabelText !== null ? snoozeWakeLabelText : timeLabel;
+  // The row's own background, named once: the hover strip paints the same
+  // colour so the buttons it reveals sit on the row rather than on the tail of
+  // the title they overlap.
+  const rowBackgroundClass = flags.isActive
+    ? "bg-sidebar-row-active"
+    : flags.isSelected
+      ? "bg-sidebar-row-selected"
+      : "bg-sidebar-row-hover";
 
   return (
     <li
@@ -433,15 +316,6 @@ export function SidebarThreadRow({
             />
           }
         >
-          {/* The machine leads the row. It is the one thing here that says where
-              the work is happening, and a column of marks down the left edge is
-              scannable in a way the same glyph buried in the trailing block was
-              not — you find a machine's threads by running down one edge rather
-              than reading four rows' worth of right-hand furniture.
-              Outside the rename branch so it holds its place while the title is
-              an input: the row must not reflow to be edited. */}
-          <ConnectionMark environmentId={thread.environmentId} className="size-3.5" />
-
           {flags.isRenaming ? (
             <input
               autoFocus
@@ -460,7 +334,7 @@ export function SidebarThreadRow({
               className={cn(
                 "min-w-0 flex-1 truncate text-sm group-hover/v2-row:text-foreground",
                 flags.shouldRecede ? "font-normal" : "font-medium",
-                flags.isActive || flags.isWoke
+                flags.isActive
                   ? "text-foreground"
                   : flags.shouldRecede
                     ? "text-muted-foreground/75"
@@ -474,14 +348,15 @@ export function SidebarThreadRow({
           {/* The trailing block holds still. Status is fixed-width and never
               moves, so nothing about the row changes shape when the pointer
               crosses it — the thing that made a list of these unreadable to
-              skim. Only the time slot swaps, and only for the menu: it is the
-              least load-bearing thing on the row, and the alternative is a `···`
-              sitting permanently on every row.
+              skim. Only the time slot swaps, and only for the hover actions: it
+              is the least load-bearing thing on the row, and the alternative is
+              two buttons sitting permanently on every row.
               The agent's glyph used to sit here, beside the machine's. Two
               decorative marks in the corner of a row you skim is one more than
               carries its weight, and of the two the agent is the one you rarely
               choose a thread by — it is named, with its model, in the tooltip.
-              The machine kept its place in the list and moved to the left edge. */}
+              The machine did not move to the other edge; it moved *into* the
+              status glyph, as its hue. */}
           <span className="flex h-6 shrink-0 items-center justify-end gap-2">
             {chip === null ? null : (
               <span
@@ -490,7 +365,21 @@ export function SidebarThreadRow({
                 title={chip.label}
                 data-testid="sidebar-v2-row-status"
                 data-tone={chip.tone}
-                className={cn("inline-flex shrink-0 items-center", STATUS_TONE_CLASS[chip.tone])}
+                data-environment-id={thread.environmentId}
+                // `sc-machine-mark` is the machine's colour, the same rotation
+                // the connection groups and the connections dropdown draw — so
+                // a thread's status reads as "this machine" without a second
+                // glyph to say so. Working still pulses: that is motion, not
+                // colour, so the two signals do not compete.
+                style={
+                  {
+                    "--sc-machine-hue": `${connectionAccentHue(thread.environmentId)}deg`,
+                  } as never
+                }
+                className={cn(
+                  "sc-machine-mark inline-flex shrink-0 items-center",
+                  chip.tone === "working" && "animate-status-pulse motion-reduce:animate-none",
+                )}
               >
                 <StatusGlyph tone={chip.tone} />
               </span>
@@ -499,44 +388,52 @@ export function SidebarThreadRow({
               {/* The time always makes way now. It used to hold its place on
                   rows whose menu would have been empty — a real case when the
                   only entries were capability-gated — but rename, move, fork
-                  and archive ask the server for nothing, so every row has a
-                  menu and every row's time steps aside for it. */}
+                  and archive ask the server for nothing, so every row has both
+                  actions and every row's time steps aside for them. */}
               <span
                 className={cn(
                   "text-xs tabular-nums transition-opacity text-muted-foreground/55 group-hover/v2-row:opacity-0",
                   menuOpen && "opacity-0",
-                  rowAction === "unsnooze" &&
-                    snoozeWakeLabelText !== null &&
-                    "text-blue-600 dark:text-blue-400",
                 )}
               >
-                {trailingLabel}
+                {timeLabel}
               </span>
-              {/* Focus-reachable, not hover-only: the row is tabbable and this
-                  is the next stop after it, so the menu opens from the keyboard
-                  without a pointer ever touching the row. */}
+              {/* Focus-reachable, not hover-only: the row is tabbable and these
+                  are the next stops after it, so both open from the keyboard
+                  without a pointer ever touching the row. The strip carries the
+                  row's own background because it is wider than the time it
+                  replaces and would otherwise float over the title's tail. */}
               <span
                 className={cn(
-                  "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                  "absolute inset-y-0 right-0 flex items-stretch pl-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                  rowBackgroundClass,
                   menuOpen && "opacity-100",
                 )}
               >
+                {/* Archive earns its own button rather than staying one level
+                    down in the menu: it is the only thing you do to a finished
+                    thread, and it is what the list is *for* — a thread you are
+                    done with should leave in one click, not three. */}
+                <button
+                  type="button"
+                  aria-label="Archive thread"
+                  title="Archive thread"
+                  data-testid="sidebar-v2-row-archive"
+                  onClick={actions.onArchive}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  className="inline-flex h-full cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground hover:text-foreground"
+                >
+                  <ArchiveIcon aria-hidden className="size-3.5" />
+                </button>
                 <ThreadRowMenu
                   open={menuOpen}
                   onOpenChange={setMenuOpen}
                   thread={thread}
                   driverKind={driverKind}
-                  rowAction={rowAction}
-                  settlementSupported={settlementSupported}
-                  snoozeAllowed={snoozeAllowed}
-                  snoozeSupported={snoozeSupported}
                   splitState={splitState}
                   onOpenInSplit={onOpenInSplit}
                   onRename={actions.onStartRename}
-                  onSettle={actions.onSettle}
-                  onUnsettle={actions.onUnsettle}
-                  onUnsnooze={actions.onUnsnooze}
-                  onSnooze={actions.onSnooze}
+                  onArchive={actions.onArchive}
                 />
               </span>
             </span>

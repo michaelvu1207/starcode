@@ -91,9 +91,6 @@ function makeThread(
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
@@ -120,18 +117,12 @@ const membershipFor = (
 const build = (input: {
   readonly projects: ReadonlyArray<ProjectCategoryView>;
   readonly active?: ReadonlyArray<EnvironmentThreadShell>;
-  readonly snoozed?: ReadonlyArray<EnvironmentThreadShell>;
-  readonly settled?: ReadonlyArray<EnvironmentThreadShell>;
 }) => {
-  const active = input.active ?? [];
-  const snoozed = input.snoozed ?? [];
-  const settled = input.settled ?? [];
+  const threads = input.active ?? [];
   return buildSidebarProjectGroups({
-    activeThreads: active,
-    snoozedThreads: snoozed,
-    settledThreads: settled,
+    threads,
     projects: input.projects,
-    membership: membershipFor(input.projects, [...active, ...snoozed, ...settled]),
+    membership: membershipFor(input.projects, threads),
   });
 };
 
@@ -155,8 +146,8 @@ describe("buildSidebarProjectGroups", () => {
     const { groups } = build({ projects, active: [alpha, beta] });
 
     expect(groups.map((group) => group.title)).toEqual(["Atlas", "Borealis"]);
-    expect(groups[0]?.rows.map((row) => row.thread.id)).toEqual([alpha.id]);
-    expect(groups[1]?.rows.map((row) => row.thread.id)).toEqual([beta.id]);
+    expect(groups[0]?.rows.map((row) => row.id)).toEqual([alpha.id]);
+    expect(groups[1]?.rows.map((row) => row.id)).toEqual([beta.id]);
   });
 
   it("puts one project's threads from different machines in the same group", () => {
@@ -175,34 +166,25 @@ describe("buildSidebarProjectGroups", () => {
     const { groups } = build({ projects, active: [here, there] });
 
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.rows.map((row) => row.thread.environmentId)).toEqual([LOCAL, LAPTOP]);
+    expect(groups[0]?.rows.map((row) => row.environmentId)).toEqual([LOCAL, LAPTOP]);
   });
 
-  it("carries the inbox's section order into each group", () => {
-    const working = makeThread("t-working", LOCAL);
-    const napping = makeThread("t-napping", LOCAL);
-    const done = makeThread("t-done", LOCAL);
+  it("carries the inbox's order into each group", () => {
+    const first = makeThread("t-first", LOCAL);
+    const second = makeThread("t-second", LOCAL);
+    const third = makeThread("t-third", LOCAL);
     const projects = [
       project({
         slug: "atlas",
-        sections: [
-          { environmentId: LOCAL, local: { threadIds: [working.id, napping.id, done.id] } },
-        ],
+        sections: [{ environmentId: LOCAL, local: { threadIds: [third.id, first.id, second.id] } }],
       }),
     ];
 
-    const { groups } = build({
-      projects,
-      active: [working],
-      snoozed: [napping],
-      settled: [done],
-    });
+    // The catalog lists them in its own order; the group must follow the
+    // inbox's.
+    const { groups } = build({ projects, active: [first, second, third] });
 
-    expect(groups[0]?.rows).toEqual([
-      { thread: working, section: "active" },
-      { thread: napping, section: "snoozed" },
-      { thread: done, section: "settled" },
-    ]);
+    expect(groups[0]?.rows).toEqual([first, second, third]);
   });
 
   it("keeps a project with no threads rather than dropping it", () => {
@@ -254,7 +236,7 @@ describe("the Chats section", () => {
     expect(chatsGroup?.key).toBe(SIDEBAR_UNFILED_GROUP_KEY);
     expect(chatsGroup?.title).toBe(SIDEBAR_CHATS_GROUP_TITLE);
     expect(chatsGroup?.slug).toBeNull();
-    expect(chatsGroup?.rows.map((row) => row.thread.id)).toEqual([loose.id]);
+    expect(chatsGroup?.rows.map((row) => row.id)).toEqual([loose.id]);
   });
 
   it("is null when every thread is filed, rather than an empty header", () => {
@@ -292,26 +274,17 @@ describe("the Chats section", () => {
     const { groups, chatsGroup } = build({ projects, active: [bound] });
 
     expect(groups[0]?.rows).toEqual([]);
-    expect(chatsGroup?.rows.map((row) => row.thread.id)).toEqual([bound.id]);
+    expect(chatsGroup?.rows.map((row) => row.id)).toEqual([bound.id]);
   });
 
-  it("keeps the inbox's section order, the same as a project group", () => {
-    const working = makeThread("t-working", LOCAL);
-    const napping = makeThread("t-napping", LOCAL);
-    const done = makeThread("t-done", LOCAL);
+  it("keeps the inbox's order, the same as a project group", () => {
+    const first = makeThread("t-first", LOCAL);
+    const second = makeThread("t-second", LOCAL);
+    const third = makeThread("t-third", LOCAL);
 
-    const { chatsGroup } = build({
-      projects: [],
-      active: [working],
-      snoozed: [napping],
-      settled: [done],
-    });
+    const { chatsGroup } = build({ projects: [], active: [first, second, third] });
 
-    expect(chatsGroup?.rows).toEqual([
-      { thread: working, section: "active" },
-      { thread: napping, section: "snoozed" },
-      { thread: done, section: "settled" },
-    ]);
+    expect(chatsGroup?.rows).toEqual([first, second, third]);
   });
 });
 
@@ -369,7 +342,7 @@ describe("archived projects", () => {
     expect(archivedGroups.map((group) => group.key)).toEqual(["old-thing"]);
     // The archived project still owns its thread: it must not leak into
     // "unfiled", which would make archiving look like a filing decision.
-    expect(archivedGroups[0]?.rows.map((row) => row.thread.id)).toEqual([shelved.id]);
+    expect(archivedGroups[0]?.rows.map((row) => row.id)).toEqual([shelved.id]);
   });
 
   it("reports how many threads a collapsed disclosure is hiding", () => {

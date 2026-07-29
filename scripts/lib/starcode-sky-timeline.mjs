@@ -263,6 +263,76 @@ const WASH_LIGHTNESS = 0.918;
 const WASH_CHROMA_GAIN = 1.9;
 const WASH_CHROMA_CEILING = 0.041;
 
+/* ---------------------------------------------------------------------------
+ * The bake — the upscale and the blur, moved off the GPU and into this file.
+ *
+ * WHAT MOVED, AND WHY. The app used to ship the 20x12 derivation grid and ask
+ * the browser to stretch it to the viewport and run `filter: blur(3.6vw)` over
+ * the result. So the blur is applied here instead, once, at build time: the
+ * shipped image is the blurred result rather than the thing to blur, and the CSS
+ * drops `filter` entirely.
+ *
+ * The first reason was a 210s `scale()` animation on the frame — a filtered
+ * layer with a live transform is redrawn, filter and all, on every composited
+ * frame, which on a 5504x2304 display held about a quarter of a CPU core in the
+ * GPU process, permanently. That animation has since been deleted outright (it
+ * was profiled at seventeen points of a core to move the sky by under one
+ * percent, and nobody could see it), which retires the argument that motivated
+ * this bake.
+ *
+ * It was therefore re-measured on a static frame, and it still pays: against the
+ * same frame carrying `filter: blur(3.6vw)`, the baked image came in about two
+ * points of a core cheaper. A filter is not free on a still layer — it forces a
+ * render surface that must be composited, and re-rastered on every resize, DPI
+ * change and theme flip. Two points held permanently against seventeen kilobytes
+ * of gzipped bundle is still the right trade, so the bake stays.
+ *
+ * WHY THE IMAGE HAD TO GROW. A blur cannot be baked into 20x12. The frame
+ * spans 124% of the viewport (the overscan, which the crop now depends on), so one grid cell is
+ * 6.2vw and the 3.6vw blur is 0.58 of a cell — a sub-pixel smudge on the grid,
+ * while on screen it is the whole softening. Worse, most of what that blur is
+ * for does not exist yet at 20x12: it is there to take out the diamond
+ * structure the 340x bilinear upscale *creates*. You cannot pre-empt an
+ * artefact from downstream of it.
+ *
+ * The bake therefore does both steps at a resolution where the blur is real —
+ * upscale to `BAKE_WIDTH`, blur by the sigma that lands at 3.6vw on screen —
+ * and ships that. The browser's remaining upscale is smooth-on-smooth and adds
+ * nothing.
+ *
+ * HOW WIDE. Sigma in baked pixels is `BAKE_WIDTH * BLUR_VW / (100 * OVERSCAN)`,
+ * so width and blur quality are the same knob. At sigma 1.39 the sampled image
+ * is band-limited far below its own Nyquist — the residual the browser's
+ * bilinear reconstruction can miss is under a thousandth of local amplitude,
+ * which on a sky that moves a couple of 8-bit levels per cell is nothing. Below
+ * about sigma 1.2 the grid starts to reappear under the upscale; above it the
+ * bytes buy nothing you can see. 48 is the smallest width that clears the bar
+ * with room, and it is where this stops paying.
+ *
+ * WHAT IT COSTS. Rather more source than the 20x12 did — see FIELD_BUDGET_KB in
+ * `derive-starcode-sky-timeline.mjs`, which was raised for exactly this. A
+ * one-off pile of bytes against a quarter core held continuously is not a close
+ * trade.
+ *
+ * THE ONE THING THE BAKE GIVES UP. `filter` blurred in screen space, so the
+ * softening was isotropic at any window shape. Baked, it is isotropic in the
+ * *image*, and the stretch to a window of a different aspect makes it slightly
+ * directional — a wide window blurs a little wider than tall. On a formless
+ * blurred sky whose gradients are mostly vertical anyway this is not a thing
+ * you can see, and it is the price of the layer being static.
+ * ------------------------------------------------------------------------ */
+
+/** Frame width as a fraction of the viewport — `inset: -12%` in the stylesheet.
+    The overscan the `scale()` push needs; also what sets the blur's scale. */
+const FRAME_OVERSCAN = 1.24;
+/** The blur the stylesheet used to apply, in vw. Was `--sc-sky-blur`. */
+const SCREEN_BLUR_VW = 3.6;
+/** Width of the shipped, already-blurred field. See the note above. */
+const BAKE_WIDTH = 48;
+
+/** Blur sigma in baked pixels that lands at `SCREEN_BLUR_VW` on screen. */
+const BAKE_SIGMA = (BAKE_WIDTH * SCREEN_BLUR_VW) / (100 * FRAME_OVERSCAN);
+
 /** The keyframe grid: one hour through the two plateaus, half an hour through
     the twilights, where the whole arc happens. */
 const GRID_SEGMENTS = [
@@ -281,10 +351,22 @@ function readSource() {
   return cachedSource;
 }
 
+/** The derivation grid — the resolution every colour decision is made at. */
 export const fieldSize = () => {
   const { fieldWidth, fieldHeight } = readSource().analysis;
   return { width: fieldWidth, height: fieldHeight };
 };
+
+/** The shipped image — the derivation grid, upscaled and blurred. Keeps the
+    grid's aspect so the bake introduces no stretch the app was not already
+    applying. */
+export const bakeSize = () => {
+  const { width, height } = fieldSize();
+  return { width: BAKE_WIDTH, height: Math.round((BAKE_WIDTH * height) / width) };
+};
+
+/** Blur sigma the bake uses, in baked pixels. Exported for the gate's report. */
+export const bakeSigma = () => BAKE_SIGMA;
 
 /** One source sample decoded to an array of OKLab cells, row-major. */
 const decodedCache = new Map();
@@ -532,18 +614,121 @@ function washFor(cells) {
 }
 
 /* ---------------------------------------------------------------------------
- * PNG, by hand, with STORED deflate blocks.
+ * The bake: upscale, then blur. Both in sRGB, because that is where CSS did it.
  *
- * No dependency, and — the reason for stored rather than compressed — perfectly
- * deterministic. `zlib.deflateSync` output can differ between zlib builds, which
- * would make `--check` fail on a colleague's machine over a file nobody touched.
- * A stored block is a length and its bytes; there is nothing in it to vary.
- *
- * It also costs less than it looks. Base64 of compressed data is
- * incompressible, so a "smaller" deflated PNG arrives at the browser larger once
- * the server has gzipped the bundle; base64 of raw smooth RGB gzips well. The
- * uncompressed form is about 25% more source and less over the wire.
+ * `filter: blur()` operates on non-linear sRGB values — correct or not, it is
+ * what shipped and what the palette was judged against, so blurring in linear
+ * light here would quietly relight every keyframe. The point of this stage is
+ * to produce the pixels the GPU was producing, not better ones.
  * ------------------------------------------------------------------------ */
+
+/**
+ * Bilinear resample, sampling at texel centres — the same reconstruction the
+ * browser applies to a stretched background, so the bake starts from the image
+ * the upscale was already producing.
+ */
+function resampleBilinear(rgb, from, to) {
+  const out = new Float64Array(to.width * to.height * 3);
+  const axis = (i, dst, src) => {
+    const s = Math.min(src - 1, Math.max(0, ((i + 0.5) * src) / dst - 0.5));
+    const low = Math.floor(s);
+    return { low, high: Math.min(src - 1, low + 1), t: s - low };
+  };
+
+  for (let y = 0; y < to.height; y += 1) {
+    const v = axis(y, to.height, from.height);
+    for (let x = 0; x < to.width; x += 1) {
+      const h = axis(x, to.width, from.width);
+      for (let c = 0; c < 3; c += 1) {
+        const at = (row, col) => rgb[(row * from.width + col) * 3 + c];
+        const top = at(v.low, h.low) * (1 - h.t) + at(v.low, h.high) * h.t;
+        const bottom = at(v.high, h.low) * (1 - h.t) + at(v.high, h.high) * h.t;
+        out[(y * to.width + x) * 3 + c] = top * (1 - v.t) + bottom * v.t;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Separable Gaussian with the edges clamped rather than transparent.
+ *
+ * This is the one place the bake deliberately differs from what the GPU did.
+ * `filter` samples transparency past the element and darkens the whole radius
+ * inward, which is half of why the frame overscans at all; clamping extends the
+ * edge colour instead and produces no rim to hide. The overscan stays — the
+ * `scale()` push still needs it — but it no longer has a dark edge to cover.
+ */
+function gaussianBlur(buf, size, sigma) {
+  const radius = Math.ceil(sigma * 3);
+  const kernel = [];
+  let total = 0;
+  for (let i = -radius; i <= radius; i += 1) {
+    const weight = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel.push(weight);
+    total += weight;
+  }
+  for (let i = 0; i < kernel.length; i += 1) kernel[i] /= total;
+
+  const pass = (src, horizontal) => {
+    const dst = new Float64Array(src.length);
+    for (let y = 0; y < size.height; y += 1) {
+      for (let x = 0; x < size.width; x += 1) {
+        for (let c = 0; c < 3; c += 1) {
+          let acc = 0;
+          for (let k = -radius; k <= radius; k += 1) {
+            const sx = horizontal ? Math.min(size.width - 1, Math.max(0, x + k)) : x;
+            const sy = horizontal ? y : Math.min(size.height - 1, Math.max(0, y + k));
+            acc += src[(sy * size.width + sx) * 3 + c] * kernel[k + radius];
+          }
+          dst[(y * size.width + x) * 3 + c] = acc;
+        }
+      }
+    }
+    return dst;
+  };
+
+  return pass(pass(buf, true), false);
+}
+
+/** The derivation grid, as the blurred image the app actually paints. */
+function bakeField(rgb) {
+  const from = fieldSize();
+  const to = bakeSize();
+  const blurred = gaussianBlur(resampleBilinear(rgb, from, to), to, BAKE_SIGMA);
+  const out = Buffer.alloc(to.width * to.height * 3);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = Math.min(255, Math.max(0, Math.round(blurred[i])));
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
+ * PNG, by hand, with an Up filter and a real deflate.
+ *
+ * No dependency, and until the bake landed no compression either: the field was
+ * 240 pixels and STORED blocks made `--check` byte-identical everywhere, since
+ * `zlib.deflateSync` output can differ between zlib builds. That is no longer
+ * affordable. The baked field is a hundred and sixteen times the pixels, and
+ * stored blocks put it past 200KB of module source — an order out.
+ *
+ * So: deflate, at pinned settings, over rows filtered against the row above.
+ * The image is a vertical gradient by construction, which is precisely what an
+ * Up filter is for — it takes the payload to roughly a third of what filtering
+ * none does, and unlike per-row filter selection it costs the decoder four
+ * lines rather than forty. Adaptive selection was measured at about 6KB better
+ * and is not worth what it makes this file.
+ *
+ * `--check` no longer requires the bytes to match, only the pixels — see the
+ * gate in `derive-starcode-sky-timeline.mjs`. That keeps the invariant that
+ * matters (the shipped table is a derivation, not a hand-edited snapshot)
+ * without failing a colleague's build over a zlib revision.
+ * ------------------------------------------------------------------------ */
+
+/** Pinned so a given zlib produces one answer; see the note on `--check`. */
+const DEFLATE_OPTIONS = { level: 9, windowBits: 15, memLevel: 8 };
+/** PNG filter type 2: each byte carried as its delta from the row above. */
+const FILTER_UP = 2;
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -570,38 +755,36 @@ function pngChunk(type, data) {
   return Buffer.concat([length, body, crc]);
 }
 
-/** Adler-32 over the raw scanlines, which the zlib stream has to carry. */
-function adler32(buf) {
-  let a = 1;
-  let b = 0;
-  for (const byte of buf) {
-    a = (a + byte) % 65521;
-    b = (b + a) % 65521;
-  }
-  return ((b << 16) | a) >>> 0;
-}
-
-function encodePng(width, height, rgb) {
+/** Scanlines as PNG rows: filter byte, then this row minus the one above. */
+function filterRows(width, height, rgb) {
   const stride = width * 3;
   const raw = Buffer.alloc(height * (1 + stride));
   for (let y = 0; y < height; y += 1) {
-    raw[y * (1 + stride)] = 0; // filter: none
-    rgb.copy(raw, y * (1 + stride) + 1, y * stride, (y + 1) * stride);
+    raw[y * (1 + stride)] = FILTER_UP;
+    for (let i = 0; i < stride; i += 1) {
+      const above = y > 0 ? rgb[(y - 1) * stride + i] : 0;
+      raw[y * (1 + stride) + 1 + i] = (rgb[y * stride + i] - above) & 0xff;
+    }
   }
+  return raw;
+}
 
-  // zlib stream: header, one stored block per 65535 bytes, adler32.
-  const parts = [Buffer.from([0x78, 0x01])];
-  for (let offset = 0; offset < raw.length; offset += 65535) {
-    const slice = raw.subarray(offset, Math.min(raw.length, offset + 65535));
-    const header = Buffer.alloc(5);
-    header[0] = offset + slice.length >= raw.length ? 1 : 0;
-    header.writeUInt16LE(slice.length, 1);
-    header.writeUInt16LE(~slice.length & 0xffff, 3);
-    parts.push(header, slice);
+/** The inverse, for the round-trip guard and the contrast gate. */
+function unfilterRows(raw, width, height) {
+  const stride = width * 3;
+  const rgb = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y += 1) {
+    if (raw[y * (1 + stride)] !== FILTER_UP) return null;
+    for (let i = 0; i < stride; i += 1) {
+      const above = y > 0 ? rgb[(y - 1) * stride + i] : 0;
+      rgb[y * stride + i] = (raw[y * (1 + stride) + 1 + i] + above) & 0xff;
+    }
   }
-  const adler = Buffer.alloc(4);
-  adler.writeUInt32BE(adler32(raw));
-  parts.push(adler);
+  return rgb;
+}
+
+function encodePng(width, height, rgb) {
+  const idat = NodeZlib.deflateSync(filterRows(width, height, rgb), DEFLATE_OPTIONS);
 
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
@@ -611,7 +794,7 @@ function encodePng(width, height, rgb) {
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", Buffer.concat(parts)),
+    pngChunk("IDAT", idat),
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -626,28 +809,29 @@ function idatOf(png) {
 /** Round-trip guard: node's own inflate has to accept what we hand the browser. */
 export function verifyPng(png, width, height, rgb) {
   const raw = NodeZlib.inflateSync(idatOf(png));
-  const stride = width * 3;
-  if (raw.length !== height * (1 + stride)) return false;
-  for (let y = 0; y < height; y += 1) {
-    if (raw[y * (1 + stride)] !== 0) return false;
-    const row = raw.subarray(y * (1 + stride) + 1, (y + 1) * (1 + stride));
-    if (!row.equals(rgb.subarray(y * stride, (y + 1) * stride))) return false;
-  }
-  return true;
+  if (raw.length !== height * (1 + width * 3)) return false;
+  const decoded = unfilterRows(raw, width, height);
+  return decoded !== null && decoded.equals(rgb);
 }
 
-/** Decode a shipped keyframe's field back to RGB cells, for the gates. */
+/**
+ * Decode a shipped keyframe's field back to RGB cells, for the gates.
+ *
+ * These are baked cells, not derivation cells — so the contrast gate now reads
+ * the pixels that reach the screen rather than the grid they were solved on.
+ * That is strictly the better thing to measure: the blur pulls every extreme
+ * toward its neighbours, so the old gate was holding the sky to a worst case
+ * the viewer was never shown.
+ */
 export function decodeField(dataUri) {
   const png = Buffer.from(dataUri.slice("data:image/png;base64,".length), "base64");
-  const { width, height } = fieldSize();
-  const raw = NodeZlib.inflateSync(idatOf(png));
-  const stride = width * 3;
+  const { width, height } = bakeSize();
+  const rgb = unfilterRows(NodeZlib.inflateSync(idatOf(png)), width, height);
+  if (rgb === null)
+    throw new Error("field PNG is not Up-filtered — was it written by this module?");
   const cells = [];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const p = y * (1 + stride) + 1 + x * 3;
-      cells.push([raw[p], raw[p + 1], raw[p + 2]]);
-    }
+  for (let i = 0; i < width * height; i += 1) {
+    cells.push([rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]]);
   }
   return cells;
 }
@@ -770,8 +954,15 @@ export function buildTimeline(ceiling = LIGHTNESS_CEILING) {
       rgb[i * 3 + 1] = g;
       rgb[i * 3 + 2] = b;
     });
-    const png = encodePng(width, height, rgb);
-    if (!verifyPng(png, width, height, rgb)) throw new Error(`PNG round-trip failed at ${hour}h`);
+
+    // Everything above is the derivation, at the grid it was solved on.
+    // Everything the app sees is the bake — see the note beside BAKE_WIDTH.
+    const baked = bakeField(rgb);
+    const size = bakeSize();
+    const png = encodePng(size.width, size.height, baked);
+    if (!verifyPng(png, size.width, size.height, baked)) {
+      throw new Error(`PNG round-trip failed at ${hour}h`);
+    }
 
     return {
       hour,

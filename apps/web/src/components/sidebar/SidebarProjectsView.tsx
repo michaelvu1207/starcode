@@ -68,7 +68,6 @@ import {
   resolveSidebarProjectGroupExpanded,
   sidebarProjectGroupExpansionKey,
   type SidebarProjectGroup,
-  type SidebarProjectSection,
 } from "../Sidebar.projects";
 import { SidebarUnfiledTriage } from "./SidebarUnfiledTriage";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
@@ -76,14 +75,9 @@ import "../projects/Projects.css";
 import "./ChatsDock.css";
 
 export function SidebarProjectsView(props: {
-  readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly snoozedThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly routeThreadKey: string | null;
-  readonly renderThreadRow: (
-    thread: EnvironmentThreadShell,
-    section: SidebarProjectSection,
-  ) => ReactNode;
+  readonly renderThreadRow: (thread: EnvironmentThreadShell) => ReactNode;
 }): ReactNode {
   const view = useProjectCatalogView();
   const membership = useProjectMembership(view);
@@ -110,13 +104,11 @@ export function SidebarProjectsView(props: {
   const { groups, archivedGroups, chatsGroup } = useMemo(
     () =>
       buildSidebarProjectGroups({
-        activeThreads: props.activeThreads,
-        snoozedThreads: props.snoozedThreads,
-        settledThreads: props.settledThreads,
+        threads: props.threads,
         projects: view.projects,
         membership,
       }),
-    [membership, props.activeThreads, props.settledThreads, props.snoozedThreads, view.projects],
+    [membership, props.threads, view.projects],
   );
 
   const environmentLabelById = useMemo(
@@ -276,7 +268,7 @@ export function SidebarProjectsView(props: {
             </button>
             {group.slug === null ? (
               <SidebarUnfiledTriage
-                threads={group.rows.map((row) => row.thread)}
+                threads={group.rows}
                 projects={fileableProjects}
                 environmentLabelById={environmentLabelById}
               />
@@ -318,7 +310,7 @@ export function SidebarProjectsView(props: {
             No threads yet
           </li>
         ) : null}
-        {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
+        {rows.map((row) => props.renderThreadRow(row))}
         {expanded && hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
       </Fragment>
     );
@@ -374,7 +366,7 @@ export function SidebarProjectsView(props: {
                 rather than on the title plus a button. */}
             <span className="absolute bottom-1.5 right-2.5">
               <SidebarUnfiledTriage
-                threads={group.rows.map((row) => row.thread)}
+                threads={group.rows}
                 projects={fileableProjects}
                 environmentLabelById={environmentLabelById}
               />
@@ -383,7 +375,7 @@ export function SidebarProjectsView(props: {
           {expanded ? (
             <div className="max-h-[38vh] overflow-y-auto">
               <ul role="list" className="flex flex-col gap-px">
-                {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
+                {rows.map((row) => props.renderThreadRow(row))}
                 {hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
               </ul>
             </div>

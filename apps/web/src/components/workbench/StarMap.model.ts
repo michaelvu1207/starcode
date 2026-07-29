@@ -60,7 +60,12 @@ export interface SkyFeature {
   readonly tone: WorkbenchTone;
   /** A turn is running: the one thing on the map that pulses. */
   readonly alive: boolean;
-  readonly settled: boolean;
+  /**
+   * The work reached a trunk. Its star stops twinkling: it is a fixed point,
+   * not something still moving. Derived from the stage rather than from any
+   * thread state — a thread you have stopped looking at has not shipped.
+   */
+  readonly landed: boolean;
   /** Intent rather than work. Renders as a ghost beside the lit stars. */
   readonly planned: boolean;
   readonly planSummary: OrchestrationThreadPlanSummary | null;
@@ -162,7 +167,6 @@ interface ThreadFacts {
   readonly title: string;
   readonly tone: WorkbenchTone;
   readonly alive: boolean;
-  readonly settled: boolean;
   readonly planSummary: OrchestrationThreadPlanSummary | null;
   readonly lastActivityAt: string;
 }
@@ -180,7 +184,6 @@ function factsFromCard(
     title: thread.title,
     tone: toneForThreadStatus(card.status),
     alive: card.status === "working",
-    settled: card.section === "settled",
     planSummary: thread.planSummary ?? null,
     lastActivityAt: thread.updatedAt,
   };
@@ -194,7 +197,6 @@ function factsFromFeature(feature: FeatureFlowFeatureNode): ThreadFacts {
     title: feature.title,
     tone: toneForPeerThreadStatus(feature.status),
     alive: feature.status === "working",
-    settled: feature.status === "settled",
     planSummary: feature.planSummary,
     lastActivityAt: feature.lastActivityAt,
   };
@@ -208,8 +210,6 @@ function factsFromFeature(feature: FeatureFlowFeatureNode): ThreadFacts {
  * tree must not change because a turn finished somewhere.
  */
 export function buildSkyModel(input: SkyModelInput): SkyModel {
-  const featuresByKey = new Map(input.flow.features.map((feature) => [feature.key, feature]));
-
   // 1. Everything with a thread behind it, from either source, keyed by thread.
   const threadFacts = new Map<string, ThreadFacts>();
   const derivedStage = new Map<string, FeatureFlowStage>();
@@ -218,9 +218,6 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
 
   for (const group of input.board.groups) {
     for (const card of group.cards) {
-      const feature = featuresByKey.get(card.key);
-      // A settled thread nothing can place has no honest tier to sit in.
-      if (card.section === "settled" && feature === undefined) continue;
       threadFacts.set(card.key, factsFromCard(card, group.label, input.projectTitleByKey));
     }
   }
@@ -271,7 +268,7 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
         projectTitle: facts?.projectTitle ?? null,
         tone: entry.planned ? "quiet" : (facts?.tone ?? "quiet"),
         alive: facts?.alive ?? false,
-        settled: facts?.settled ?? false,
+        landed: entry.stage !== "in-progress",
         planned: entry.planned,
         planSummary: facts?.planSummary ?? null,
         mergeability:
@@ -298,7 +295,7 @@ export function buildSkyModel(input: SkyModelInput): SkyModel {
       projectTitle: facts.projectTitle,
       tone: facts.tone,
       alive: facts.alive,
-      settled: facts.settled,
+      landed: stage !== undefined && stage !== "in-progress",
       planned: false,
       planSummary: facts.planSummary,
       mergeability: derivedMergeability.get(key) ?? "unknown",

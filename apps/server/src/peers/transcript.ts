@@ -67,13 +67,7 @@ export const peerThreadLastActivityAt = (
 export const resolvePeerThreadStatus = (
   thread: Pick<
     OrchestrationThreadShell,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "latestTurn"
-    | "session"
-    | "archivedAt"
-    | "settledAt"
-    | "settledOverride"
+    "hasPendingApprovals" | "hasPendingUserInput" | "latestTurn" | "session" | "archivedAt"
   >,
 ): PeerThreadStatus => {
   if (thread.hasPendingApprovals) return "approval";
@@ -81,12 +75,6 @@ export const resolvePeerThreadStatus = (
   if (thread.latestTurn?.state === "running") return "working";
   if (thread.latestTurn?.state === "error" || thread.session?.status === "error") return "failed";
   if (thread.archivedAt !== null) return "archived";
-  if (
-    thread.settledOverride === "settled" ||
-    (thread.settledAt !== null && thread.settledOverride !== "active")
-  ) {
-    return "settled";
-  }
   return "idle";
 };
 

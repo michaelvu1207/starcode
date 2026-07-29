@@ -63,9 +63,9 @@
   opacity: 0.5;
 }
 
-/* Work that has come to rest does not twinkle. A settled star is a fixed
+/* Work that has come to rest does not twinkle. A landed star is a fixed
    point: it is finished, and the map should feel that. */
-.sc-starmap-star--settled {
+.sc-starmap-star--landed {
   animation: none;
   opacity: 0.55;
 }

@@ -41,7 +41,6 @@ import {
   resolveSidebarConnectionGroupExpanded,
   sidebarConnectionDotClassName,
   sidebarConnectionGroupExpansionKey,
-  type SidebarConnectionSection,
 } from "../Sidebar.connections";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
@@ -50,14 +49,9 @@ import { SidebarImportConversationRow } from "./SidebarImportConversationRow";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 
 export function SidebarConnectionsView(props: {
-  readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly snoozedThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly routeThreadKey: string | null;
-  readonly renderThreadRow: (
-    thread: EnvironmentThreadShell,
-    section: SidebarConnectionSection,
-  ) => ReactNode;
+  readonly renderThreadRow: (thread: EnvironmentThreadShell) => ReactNode;
 }): ReactNode {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -74,19 +68,11 @@ export function SidebarConnectionsView(props: {
   const groups = useMemo(
     () =>
       buildSidebarConnectionGroups({
-        activeThreads: props.activeThreads,
-        snoozedThreads: props.snoozedThreads,
-        settledThreads: props.settledThreads,
+        threads: props.threads,
         environments,
         primaryEnvironmentId,
       }),
-    [
-      environments,
-      primaryEnvironmentId,
-      props.activeThreads,
-      props.settledThreads,
-      props.snoozedThreads,
-    ],
+    [environments, primaryEnvironmentId, props.threads],
   );
 
   const toggleGroup = useCallback(
@@ -225,7 +211,7 @@ export function SidebarConnectionsView(props: {
                 No threads yet
               </li>
             ) : null}
-            {rows.map((row) => props.renderThreadRow(row.thread, row.section))}
+            {rows.map((row) => props.renderThreadRow(row))}
             {expanded && hiddenCount > 0 ? (
               <li className="list-none">
                 <button

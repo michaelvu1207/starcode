@@ -36,9 +36,11 @@
  * COST
  * One `setInterval` at 60s, writing six custom properties. Two of them are the
  * same data URIs as last minute for twenty-nine minutes out of thirty, so the
- * browser reuses the decoded image and the blurred raster behind it. Everything
- * that moves is a CSS animation on the compositor — there is no rAF loop and no
- * canvas. A chat app should not spend a GPU core on its wallpaper.
+ * browser reuses the decoded image and the raster behind it. Everything that
+ * moves is a CSS animation on the compositor — there is no rAF loop, no canvas
+ * and no filter. A chat app should not spend a GPU core on its wallpaper, and
+ * for a while this one did: see `components/brand/StarcodeSky.tsx` for what the
+ * blur was costing before it moved into the build.
  *
  * TUNING
  * Not here. Every knob is a named constant in

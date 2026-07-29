@@ -17,9 +17,8 @@
  * detail the row already carries — and it is the one structural difference from
  * the connections view, where a group is a machine and can never mix.
  *
- * Order inside a group is the inbox's order, preserved: active first (ranked by
- * attention, or by creation when the user opted out), then the snooze shelf by
- * soonest wake, then the settled tail by when the work ended. Order OF the
+ * Order inside a group is the inbox's order, preserved — ranked by attention,
+ * or by creation when the user opted out. Order OF the
  * groups is by title, and deliberately NOT by attention the way the /projects
  * index sorts its cards. The index is a dashboard you open to decide what to
  * work on, so ranking is its job; the sidebar is a map you navigate all day,
@@ -51,17 +50,12 @@ import {
 // than restated. The rule that the thread open in the chat pane is never the
 // one hidden behind "show more" is a correctness rule, not a layout choice, and
 // two copies of it would eventually disagree.
-import {
-  limitSidebarConnectionRows,
-  type SidebarConnectionRow,
-  type SidebarConnectionSection,
-} from "./Sidebar.connections";
+import { limitSidebarConnectionRows } from "./Sidebar.connections";
 
 export const SIDEBAR_PROJECT_ROWS_INITIAL_COUNT = 25;
 export const SIDEBAR_PROJECT_ROWS_PAGE_COUNT = 25;
 
-export type SidebarProjectSection = SidebarConnectionSection;
-export type SidebarProjectRow = SidebarConnectionRow;
+export type SidebarProjectRow = EnvironmentThreadShell;
 
 export { limitSidebarConnectionRows as limitSidebarProjectRows };
 
@@ -94,9 +88,8 @@ export interface SidebarProjectGroup {
 }
 
 export interface SidebarProjectsInput {
-  readonly activeThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly snoozedThreads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
+  /** The inbox list, already filtered and ordered; grouping only re-buckets it. */
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly projects: ReadonlyArray<ProjectCategoryView>;
   /** Already resolved by the fold. Never recomputed here. */
   readonly membership: ProjectMembership;
@@ -121,22 +114,13 @@ export interface SidebarProjectGroups {
 
 export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarProjectGroups {
   const rowsByThreadKey = new Map<string, SidebarProjectRow>();
-  const pushRows = (
-    threads: ReadonlyArray<EnvironmentThreadShell>,
-    section: SidebarProjectSection,
-  ) => {
-    for (const thread of threads) {
-      rowsByThreadKey.set(projectThreadKey(thread), { thread, section });
-    }
-  };
-  // Section order within a group mirrors the inbox top to bottom, and the
-  // insertion order of this map is what preserves it: membership hands back
-  // thread keys in its own order, so reading rows out of here rather than
-  // filtering the three arrays per group is what keeps a group's rows in the
-  // inbox's order instead of the catalog's.
-  pushRows(input.activeThreads, "active");
-  pushRows(input.snoozedThreads, "snoozed");
-  pushRows(input.settledThreads, "settled");
+  for (const thread of input.threads) {
+    rowsByThreadKey.set(projectThreadKey(thread), thread);
+  }
+  // The insertion order of this map is what preserves the inbox's order:
+  // membership hands back thread keys in its own order, so reading rows out of
+  // here rather than filtering the input per group is what keeps a group's rows
+  // in the inbox's order instead of the catalog's.
   const orderedKeys = [...rowsByThreadKey.keys()];
 
   const rowsFor = (threadKeys: ReadonlyArray<string>): ReadonlyArray<SidebarProjectRow> => {

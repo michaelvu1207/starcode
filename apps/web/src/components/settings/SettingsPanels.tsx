@@ -46,6 +46,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
+import { setDiscordPresenceEnabled, useDiscordPresenceState } from "../../state/discordPresence";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -174,6 +175,57 @@ function AboutVersionTitle() {
       <span>Version</span>
       <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
+  );
+}
+
+/**
+ * Discord rich presence toggle.
+ *
+ * Renders nothing outside the desktop app: presence talks to a socket the
+ * Discord client opens on the local machine, which a browser tab cannot reach
+ * and a remote environment does not have.
+ */
+function DiscordPresenceSettingsRow() {
+  const presence = useDiscordPresenceState();
+  const [isToggling, setIsToggling] = useState(false);
+
+  if (presence === null) return null;
+
+  const description =
+    presence.detail ??
+    (presence.status === "connected" && presence.accountName !== null
+      ? `Showing how many agents are running on your Discord profile as ${presence.accountName}.`
+      : "Show how many agents are running on your Discord profile. Counts only — no project or thread names.");
+
+  return (
+    <SettingsRow
+      title="Discord presence"
+      description={description}
+      control={
+        <Switch
+          checked={presence.enabled}
+          disabled={isToggling}
+          onCheckedChange={(checked) => {
+            setIsToggling(true);
+            void setDiscordPresenceEnabled(Boolean(checked))
+              .catch((error: unknown) => {
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Could not change Discord presence",
+                    description:
+                      error instanceof Error ? error.message : "Discord presence change failed.",
+                  }),
+                );
+              })
+              .finally(() => {
+                setIsToggling(false);
+              });
+          }}
+          aria-label="Discord presence"
+        />
+      }
+    />
   );
 }
 
@@ -1071,6 +1123,8 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
+
+        <DiscordPresenceSettingsRow />
       </SettingsSection>
 
       <SettingsSection title="About">

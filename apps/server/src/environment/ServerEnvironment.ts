@@ -140,8 +140,6 @@ export const make = Effect.gen(function* () {
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
-      threadSettlement: true,
-      threadSnooze: true,
       peerFederation: true,
       peerOrchestration: true,
       threadMailbox: true,

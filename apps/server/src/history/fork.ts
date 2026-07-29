@@ -21,10 +21,7 @@
  * identical to one that worked and would only be caught by asking the model
  * something it should have remembered.
  *
- * One thing this deliberately does not do: copy the source's settled/snoozed
- * state. A fork is new work, and new work is active.
- *
- * What it does do, after the fork is safely bound, is leave a provenance row —
+ * What it does, after the fork is safely bound, is leave a provenance row —
  * in the same registry file imports write to, in its own array. Without one a
  * fork is the very trap the import prelude exists to defuse: a thread that
  * opens empty and answers as though it remembers a conversation nobody can

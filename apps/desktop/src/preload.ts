@@ -146,6 +146,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  getDiscordPresenceState: () => ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_GET_STATE_CHANNEL),
+  setDiscordPresenceEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_SET_ENABLED_CHANNEL, enabled),
+  setDiscordPresenceSummary: (summary) =>
+    ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_SET_SUMMARY_CHANNEL, summary),
+  onDiscordPresenceState: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (typeof state !== "object" || state === null) return;
+      listener(state as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(IpcChannels.DISCORD_PRESENCE_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.DISCORD_PRESENCE_STATE_CHANNEL, wrappedListener);
+    };
+  },
   preview: {
     createTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, { tabId }),
     closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),

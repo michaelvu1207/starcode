@@ -501,8 +501,8 @@ export const make = Effect.gen(function* () {
         messageId: MessageId.make(`msg-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`),
         role: "user",
         // The whole reason the field exists. Everything downstream that treats
-        // an agent's message differently — the titler, the snooze rule, the
-        // transcript card — reads this rather than inspecting the text.
+        // an agent's message differently — the titler, the transcript card —
+        // reads this rather than inspecting the text.
         authoredBy: "agent",
         text: options.text,
         attachments: [],

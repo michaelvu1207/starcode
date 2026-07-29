@@ -508,7 +508,6 @@ export const ProjectToolThread = Schema.Struct({
   workspaceRoot: Schema.String,
   /** Waiting on a human: an approval or a question. */
   needsAttention: Schema.Boolean,
-  settled: Schema.Boolean,
   updatedAt: Schema.String,
 });
 export type ProjectToolThread = typeof ProjectToolThread.Type;

@@ -47,6 +47,11 @@ export const DesktopConfig = Config.all({
   otlpExportIntervalMs: Config.int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),
   ),
+  // Discord application id for rich presence. Registered per-fork in the
+  // Discord developer portal rather than shipped as a constant: the id is what
+  // names and illustrates the presence, and a fork inheriting upstream's would
+  // publish under upstream's branding. See docs/fork/DISCORD-PRESENCE.md.
+  discordApplicationId: trimmedString("T3CODE_DISCORD_APP_ID"),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),

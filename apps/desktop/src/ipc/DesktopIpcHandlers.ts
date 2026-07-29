@@ -41,6 +41,11 @@ import {
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
+import {
+  getDiscordPresenceState,
+  setDiscordPresenceEnabled,
+  setDiscordPresenceSummary,
+} from "./methods/discordPresence.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
@@ -88,6 +93,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
+
+  yield* ipc.handle(getDiscordPresenceState);
+  yield* ipc.handle(setDiscordPresenceEnabled);
+  yield* ipc.handle(setDiscordPresenceSummary);
+
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
   }

@@ -3,18 +3,18 @@
  *
  * Split out of `SidebarThreadRow` rather than added to it, for one structural
  * reason: these need hooks, and the row is rendered once per thread in a list
- * that can run to hundreds. Filing needs the folded project catalog, archiving
- * needs the thread-action commands, forking needs the create command and the
- * router — subscribing every row to all of that so that one row's menu can open
- * would make scrolling the sidebar pay for a menu nobody opened.
+ * that can run to hundreds. Filing needs the folded project catalog, forking
+ * needs the create command and the router — subscribing every row to all of
+ * that so that one row's menu can open would make scrolling the sidebar pay
+ * for a menu nobody opened.
  *
  * So the components here are rendered *inside the open popup* and nowhere else.
  * One row's menu is open at a time, so these hooks run once, on demand, and the
  * row above them stays the pure function of its props that it was.
  *
  * Two exports rather than one because the menu is not one block: renaming,
- * filing and forking sit above the lifecycle entries, and archiving sits below
- * everything, which is where the entry that takes a thread off the list belongs.
+ * filing and forking sit at the top, and archiving sits alone at the bottom,
+ * which is where the entry that takes a thread off the list belongs.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -41,7 +41,6 @@ import {
 
 import { cn } from "~/lib/utils";
 
-import { useThreadActions } from "../../hooks/useThreadActions";
 import { newThreadId } from "../../lib/utils";
 import { readThreadShell, useServerConfigs } from "../../state/entities";
 import {
@@ -330,43 +329,30 @@ function ThreadRowProjectSubmenu({
  *
  * Last in the menu and alone below the final separator, because it is the one
  * entry that takes the thread off the list. There is no "Unarchive" twin here:
- * the sidebar's partition excludes archived threads by construction, so this
- * menu is never rendered on one. Unarchiving lives where archived threads are
- * actually listed, in settings.
+ * the sidebar excludes archived threads by construction, so this menu is never
+ * rendered on one. Unarchiving lives where archived threads are actually
+ * listed, in settings.
+ *
+ * Presentational, unlike its neighbours above: the row now carries an archive
+ * button of its own, and the two must be one act rather than two
+ * implementations that could drift. The handler is the row's, passed down.
  */
 export function ThreadRowArchiveAction({
-  thread,
+  onArchive,
 }: {
-  readonly thread: EnvironmentThreadShell;
+  readonly onArchive: (event: ReactMouseEvent) => void;
 }): ReactNode {
-  const { archiveThread } = useThreadActions();
-
-  const archive = useCallback(
-    (event: ReactMouseEvent) => {
-      event.stopPropagation();
-      void (async () => {
-        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-        const result = await archiveThread(threadRef);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to archive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-      })();
-    },
-    [archiveThread, thread.environmentId, thread.id],
-  );
-
   return (
     <MenuItem
       closeOnClick
-      data-testid="sidebar-v2-row-archive"
-      onClick={archive}
+      data-testid="sidebar-v2-row-archive-menu"
+      // Stopped here as well as in the handler: every click in this file has
+      // to stop, and an entry whose guard lives in somebody else's callback is
+      // one refactor away from navigating the row it was meant to file away.
+      onClick={(event) => {
+        event.stopPropagation();
+        onArchive(event);
+      }}
       className="sm:text-xs"
     >
       <ArchiveIcon aria-hidden className="size-3.5" />

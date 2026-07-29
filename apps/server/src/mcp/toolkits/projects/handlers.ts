@@ -189,7 +189,6 @@ const handlers = {
             // The two ways a thread stops on its own and waits, which is the
             // one fact an orchestrator reading this actually needs.
             needsAttention: thread.hasPendingApprovals || thread.hasPendingUserInput,
-            settled: thread.settledAt !== null || thread.settledOverride === "settled",
             updatedAt: thread.updatedAt,
           }),
         )
