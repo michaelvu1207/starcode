@@ -237,4 +237,87 @@ describe("aggregateCliUsage", () => {
     assert.lengthOf(result.providers, 0);
     assert.strictEqual(result.totals.costUsd, 0);
   });
+
+  it("buckets a day series over the 30-day window only, ascending", () => {
+    const result = aggregateCliUsage(
+      [
+        claudeFile([
+          keyed({ dedupKey: "a", day: "2026-07-25", model: "claude-opus-5", output: 1_000_000 }),
+          keyed({ dedupKey: "b", day: "2026-07-01", model: "claude-opus-5", output: 1_000_000 }),
+          // Outside the window: counted in all-time, absent from the series.
+          keyed({ dedupKey: "c", day: "2026-05-01", model: "claude-opus-5", output: 1_000_000 }),
+        ]),
+      ],
+      options,
+    );
+
+    const claude = providerNamed(result, "claude");
+    assert.deepStrictEqual(
+      claude?.days?.map((day) => day.day),
+      ["2026-07-01", "2026-07-25"],
+    );
+    assert.strictEqual(claude?.days?.[0]?.messages, 1);
+    assert.strictEqual(claude?.allTime.messages, 3);
+    assert.strictEqual(claude?.last30Days.messages, 2);
+  });
+
+  it("sums a day's spend across the files that touched it", () => {
+    const result = aggregateCliUsage(
+      [
+        claudeFile([keyed({ dedupKey: "a", day: "2026-07-20", output: 1_000_000 })]),
+        claudeFile([keyed({ dedupKey: "b", day: "2026-07-20", output: 1_000_000 })]),
+      ],
+      options,
+    );
+
+    const day = providerNamed(result, "claude")?.days?.find((entry) => entry.day === "2026-07-20");
+    assert.strictEqual(day?.messages, 2);
+    // 2M output tokens of claude-opus-5 at $25/M.
+    assert.strictEqual(Math.round((day?.costUsd ?? 0) * 100) / 100, 50);
+  });
+
+  it("splits a model's totals by window, so a 30-day breakdown is not all-time", () => {
+    const result = aggregateCliUsage(
+      [
+        claudeFile([
+          keyed({ dedupKey: "a", day: "2026-07-25", model: "claude-opus-5", output: 1_000_000 }),
+          keyed({ dedupKey: "b", day: "2026-01-05", model: "claude-opus-5", output: 3_000_000 }),
+        ]),
+      ],
+      options,
+    );
+
+    const model = providerNamed(result, "claude")?.models[0];
+    assert.strictEqual(model?.model, "claude-opus-5");
+    assert.strictEqual(model?.totals.outputTokens, 4_000_000);
+    assert.strictEqual(model?.last30Days?.outputTokens, 1_000_000);
+    assert.strictEqual(model?.last30Days?.messages, 1);
+  });
+
+  it("gives a model that only ever ran outside the window a zeroed 30 days", () => {
+    const result = aggregateCliUsage(
+      [claudeFile([keyed({ dedupKey: "a", day: "2025-12-01", output: 1_000_000 })])],
+      options,
+    );
+
+    const model = providerNamed(result, "claude")?.models[0];
+    assert.strictEqual(model?.totals.messages, 1);
+    assert.strictEqual(model?.last30Days?.messages, 0);
+    assert.strictEqual(model?.last30Days?.costUsd, 0);
+    assert.deepStrictEqual(providerNamed(result, "claude")?.days, []);
+  });
+
+  it("dedups before bucketing, so a replayed message is one day's spend", () => {
+    const result = aggregateCliUsage(
+      [
+        claudeFile([keyed({ dedupKey: "msg_1:req_1", day: "2026-07-20", output: 100 })]),
+        claudeFile([keyed({ dedupKey: "msg_1:req_1", day: "2026-07-20", output: 250 })]),
+      ],
+      options,
+    );
+
+    const days = providerNamed(result, "claude")?.days;
+    assert.lengthOf(days ?? [], 1);
+    assert.strictEqual(days?.[0]?.messages, 1);
+  });
 });

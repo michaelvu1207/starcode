@@ -9,6 +9,8 @@ import {
   type EnvironmentUsageSnapshot,
   type ServerConfig,
   type ServerProvider,
+  type UsageRateLimitSnapshot,
+  type UsageRateLimitWindow,
   type UsageTotals,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -16,6 +18,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildAccountsUsageView,
   buildCliHistoryView,
+  buildCliSparkSeries,
+  cliTotalTokens,
   foldCliModelRows,
   formatCount,
   formatDayRange,
@@ -114,6 +118,16 @@ const model = (
   model: name,
   priced,
   totals: cliTotals({ costUsd, messages: 1, ...overrides }),
+});
+
+/** A model whose server could split it by window, which is what the panel needs. */
+const windowedModel = (
+  name: string,
+  allTimeCostUsd: number,
+  last30DaysCostUsd: number,
+): CliUsageModelTotals => ({
+  ...model(name, allTimeCostUsd),
+  last30Days: cliTotals({ costUsd: last30DaysCostUsd, messages: 1 }),
 });
 
 describe("buildAccountsUsageView", () => {
@@ -596,6 +610,311 @@ describe("foldCliModelRows", () => {
   });
 });
 
+describe("fleet CLI history, scoped to the window the panel shows", () => {
+  const environment = (
+    id: string,
+    providers: ReadonlyArray<CliProviderUsage>,
+  ): Parameters<typeof buildAccountsUsageView>[0][number] => ({
+    environmentId: environmentId(id),
+    label: id,
+    config: config([]),
+    usage: usage({ cliHistory: cliHistory({ providers }) }),
+  });
+
+  it("merges every machine's daily series by local day, ascending", () => {
+    const view = buildAccountsUsageView([
+      environment("mac", [
+        cliProvider({
+          provider: "claude",
+          days: [
+            { day: "2026-07-20", costUsd: 4, messages: 2 },
+            { day: "2026-07-22", costUsd: 6, messages: 3 },
+          ],
+        }),
+      ]),
+      environment("box", [
+        cliProvider({
+          provider: "claude",
+          days: [
+            { day: "2026-07-22", costUsd: 1.5, messages: 1 },
+            { day: "2026-07-19", costUsd: 2, messages: 1 },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(view.cliHistory.providers[0]?.days).toEqual([
+      { day: "2026-07-19", costUsd: 2, messages: 1 },
+      { day: "2026-07-20", costUsd: 4, messages: 2 },
+      { day: "2026-07-22", costUsd: 7.5, messages: 4 },
+    ]);
+  });
+
+  it("has no series at all when the machines' servers predate one", () => {
+    // `days` is an optional key: an older server omits it entirely, and a
+    // series of zeros would claim a month of no spend it cannot vouch for.
+    const view = buildAccountsUsageView([
+      environment("mac", [flatProvider("claude", { costUsd: 40, messages: 9 })]),
+    ]);
+    expect(view.cliHistory.providers[0]?.days).toEqual([]);
+    expect(view.cliHistory.providers[0]?.windows.last30Days.costUsd).toBe(40);
+  });
+
+  it("scopes the model breakdown to the window and re-sorts it by that cost", () => {
+    const view = buildAccountsUsageView([
+      environment("mac", [
+        cliProvider({
+          provider: "claude",
+          models: [
+            // Dominant all time, quiet lately: it must not lead a 30-day list.
+            windowedModel("claude-opus-4-8", 900, 12),
+            windowedModel("claude-opus-5", 300, 210),
+          ],
+        }),
+      ]),
+      environment("box", [
+        cliProvider({ provider: "claude", models: [windowedModel("claude-opus-5", 100, 90)] }),
+      ]),
+    ]);
+
+    const models = view.cliHistory.providers[0]?.models ?? [];
+    expect(models.map((entry) => entry.model)).toEqual(["claude-opus-5", "claude-opus-4-8"]);
+    expect(models[0]?.totals.costUsd).toBe(300);
+    expect(models[1]?.totals.costUsd).toBe(12);
+  });
+
+  it("drops a machine's models when its server cannot split them by window", () => {
+    const view = buildAccountsUsageView([
+      environment("mac", [
+        cliProvider({ provider: "claude", models: [model("claude-opus-5", 900)] }),
+      ]),
+    ]);
+    expect(view.cliHistory.providers[0]?.models).toEqual([]);
+  });
+
+  it("calls the cost a floor only when the shown window is the unpriced one", () => {
+    const stale = buildAccountsUsageView([
+      environment("mac", [
+        cliProvider({
+          provider: "codex",
+          allTime: cliTotals({ costUsd: 50, messages: 100, unpricedMessages: 40 }),
+          last30Days: cliTotals({ costUsd: 20, messages: 30 }),
+        }),
+      ]),
+    ]);
+    expect(stale.cliHistory.costIsFloor).toBe(false);
+
+    const current = buildAccountsUsageView([
+      environment("mac", [
+        cliProvider({
+          provider: "codex",
+          allTime: cliTotals({ costUsd: 50, messages: 100, unpricedMessages: 40 }),
+          last30Days: cliTotals({ costUsd: 20, messages: 30, unpricedMessages: 4 }),
+        }),
+      ]),
+    ]);
+    expect(current.cliHistory.costIsFloor).toBe(true);
+  });
+
+  it("pins the daily series' right edge to the latest day any machine reports", () => {
+    const view = buildAccountsUsageView([
+      { ...environment("mac", []), usage: usage({ today: "2026-07-24" }) },
+      { ...environment("box", []), usage: usage({ today: "2026-07-25" }) },
+    ]);
+    expect(view.latestDay).toBe("2026-07-25");
+    expect(view.mixedDays).toBe(true);
+  });
+});
+
+describe("buildCliSparkSeries", () => {
+  const day = (value: string, costUsd: number) => ({ day: value, costUsd, messages: 1 });
+
+  it("fills the days with no usage back in rather than closing the gap", () => {
+    const bars = buildCliSparkSeries(
+      [day("2026-07-21", 10), day("2026-07-25", 5)],
+      "2026-07-25",
+      5,
+    );
+    expect(bars.map((bar) => bar.day)).toEqual([
+      "2026-07-21",
+      "2026-07-22",
+      "2026-07-23",
+      "2026-07-24",
+      "2026-07-25",
+    ]);
+    expect(bars.map((bar) => bar.costUsd)).toEqual([10, 0, 0, 0, 5]);
+  });
+
+  it("scales every bar against the tallest one", () => {
+    const bars = buildCliSparkSeries([day("2026-07-24", 4), day("2026-07-25", 8)], "2026-07-25", 2);
+    expect(bars.map((bar) => bar.share)).toEqual([0.5, 1]);
+  });
+
+  it("keeps a run of idle days at the right edge visible", () => {
+    // The last spend was three days ago; the series must still end today, or
+    // "nothing since Tuesday" reads as "spending right up to now".
+    const bars = buildCliSparkSeries([day("2026-07-22", 9)], "2026-07-25", 4);
+    expect(bars.at(-1)).toEqual({ day: "2026-07-25", costUsd: 0, messages: 0, share: 0 });
+  });
+
+  it("crosses a month boundary without inventing a day", () => {
+    const bars = buildCliSparkSeries([day("2026-03-01", 3)], "2026-03-01", 3);
+    expect(bars.map((bar) => bar.day)).toEqual(["2026-02-27", "2026-02-28", "2026-03-01"]);
+  });
+
+  it("draws nothing when there is no series or no edge to anchor it to", () => {
+    expect(buildCliSparkSeries([], "2026-07-25")).toEqual([]);
+    expect(buildCliSparkSeries([day("2026-07-25", 1)], null, 1)).toEqual([
+      { day: "2026-07-25", costUsd: 1, messages: 1, share: 1 },
+    ]);
+  });
+});
+
+describe("buildAccountLimitRows", () => {
+  const limitWindow = (
+    usedPercent: number | null,
+    resetsAt: string | null = null,
+    key = "five_hour",
+  ): UsageRateLimitWindow => ({ key, label: key, usedPercent, resetsAt, windowMinutes: null });
+
+  const limits = (
+    windows: ReadonlyArray<UsageRateLimitWindow>,
+    status: UsageRateLimitSnapshot["status"] = "allowed",
+  ): UsageRateLimitSnapshot => ({
+    status,
+    planLabel: "Max",
+    windows,
+    observedAt: "2026-07-24T17:00:00.000Z",
+  });
+
+  const machine = (
+    id: string,
+    accounts: ReadonlyArray<{
+      readonly instanceId: string;
+      readonly rateLimits: UsageRateLimitSnapshot | null;
+    }>,
+  ): Parameters<typeof buildAccountsUsageView>[0][number] => ({
+    environmentId: environmentId(id),
+    label: id,
+    config: config(
+      accounts.map((account) =>
+        provider({ instanceId: account.instanceId as never, displayName: account.instanceId }),
+      ),
+    ),
+    usage: usage({
+      instances: accounts.map((account) => ({
+        providerInstanceId: account.instanceId as never,
+        driver: "claudeAgent" as never,
+        rateLimits: account.rateLimits,
+        today: EMPTY_USAGE_TOTALS,
+        week: EMPTY_USAGE_TOTALS,
+        days: [],
+        lastTurnAt: null,
+      })),
+    }),
+  });
+
+  it("puts the account closest to its limit first, and unknowns last", () => {
+    const view = buildAccountsUsageView([
+      machine("mac", [
+        { instanceId: "quiet", rateLimits: limits([limitWindow(12)]) },
+        { instanceId: "silent", rateLimits: null },
+        { instanceId: "hot", rateLimits: limits([limitWindow(94)]) },
+      ]),
+    ]);
+
+    expect(view.limitRows.map((row) => row.instanceId)).toEqual(["hot", "quiet", "silent"]);
+    expect(view.limitRows[0]?.peakUsedPercent).toBe(94);
+    expect(view.limitRows[2]?.peakUsedPercent).toBeNull();
+    expect(view.limitRows[2]?.status).toBeNull();
+  });
+
+  it("carries the machine each account runs on", () => {
+    const view = buildAccountsUsageView([
+      machine("box", [{ instanceId: "shared", rateLimits: limits([limitWindow(30)]) }]),
+      machine("mac", [{ instanceId: "shared", rateLimits: limits([limitWindow(30)]) }]),
+    ]);
+    expect(view.limitRows.map((row) => row.machineLabel)).toEqual(["box", "mac"]);
+  });
+
+  it("reports the reset of the window that is driving the peak", () => {
+    const view = buildAccountsUsageView([
+      machine("mac", [
+        {
+          instanceId: "a",
+          rateLimits: limits(
+            [
+              limitWindow(20, "2026-07-24T18:00:00.000Z", "five_hour"),
+              limitWindow(81, "2026-07-29T00:00:00.000Z", "seven_day"),
+            ],
+            "warning",
+          ),
+        },
+      ]),
+    ]);
+
+    expect(view.limitRows[0]?.peakUsedPercent).toBe(81);
+    expect(view.limitRows[0]?.resetsAt).toBe("2026-07-29T00:00:00.000Z");
+    expect(view.limitRows[0]?.status).toBe("warning");
+  });
+
+  it("falls back to any reset it has when no window reports a figure", () => {
+    const view = buildAccountsUsageView([
+      machine("mac", [
+        { instanceId: "a", rateLimits: limits([limitWindow(null, "2026-07-24T18:00:00.000Z")]) },
+      ]),
+    ]);
+    expect(view.limitRows[0]?.peakUsedPercent).toBeNull();
+    expect(view.limitRows[0]?.resetsAt).toBe("2026-07-24T18:00:00.000Z");
+  });
+
+  it("keeps a removed account only while it still reports a limit", () => {
+    const orphan = (rateLimits: UsageRateLimitSnapshot | null) =>
+      buildAccountsUsageView([
+        {
+          environmentId: environmentId("mac"),
+          label: "mac",
+          config: config([]),
+          usage: usage({
+            instances: [
+              {
+                providerInstanceId: "deleted" as never,
+                driver: "claudeAgent" as never,
+                rateLimits,
+                today: totals({ costUsd: 3 }),
+                week: totals({ costUsd: 3 }),
+                days: [],
+                lastTurnAt: null,
+              },
+            ],
+          }),
+        },
+      ]);
+
+    expect(orphan(limits([limitWindow(55)])).limitRows.map((row) => row.instanceId)).toEqual([
+      "deleted",
+    ]);
+    expect(orphan(null).limitRows).toEqual([]);
+    // The spend it recorded still counts, whether or not it has a limit row.
+    expect(orphan(null).today.costUsd).toBe(3);
+  });
+});
+
+describe("cliTotalTokens", () => {
+  it("counts cache traffic, which is most of a long session's tokens", () => {
+    expect(
+      cliTotalTokens(
+        cliTotals({
+          inputTokens: 1_000,
+          outputTokens: 2_000,
+          cacheWriteTokens: 30_000,
+          cacheReadTokens: 400_000,
+        }),
+      ),
+    ).toBe(433_000);
+  });
+});
+
 describe("peakUsedPercent", () => {
   const window = (usedPercent: number | null) => ({
     key: "primary",
@@ -670,6 +989,8 @@ describe("formatting", () => {
     expect(formatTokens(48_000)).toBe("48k");
     expect(formatTokens(2_400_000)).toBe("2.4M");
     expect(formatTokens(31_000_000)).toBe("31M");
+    expect(formatTokens(1_200_000_000)).toBe("1.2B");
+    expect(formatTokens(42_000_000_000)).toBe("42B");
   });
 
   it("spells message counts out in full", () => {

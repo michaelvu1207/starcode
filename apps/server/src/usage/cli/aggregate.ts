@@ -14,6 +14,7 @@
  */
 import {
   type CliProviderUsage,
+  type CliUsageDayTotals,
   type CliUsageModelTotals,
   type CliUsageProvider,
   type CliUsageTotals,
@@ -103,12 +104,21 @@ const totalTokensOf = (tokens: MessageTokens): number =>
   tokens.cacheWrite1hTokens +
   tokens.cacheReadTokens;
 
+interface ModelAccumulator {
+  readonly priced: boolean;
+  readonly totals: MutableTotals;
+  /** The same model inside the 30-day window, for the panel's breakdown. */
+  readonly last30Days: MutableTotals;
+}
+
 interface ProviderAccumulator {
   readonly allTime: MutableTotals;
   readonly last30Days: MutableTotals;
   readonly last7Days: MutableTotals;
   readonly today: MutableTotals;
-  readonly models: Map<string, { readonly priced: boolean; readonly totals: MutableTotals }>;
+  readonly models: Map<string, ModelAccumulator>;
+  /** Day within the 30-day window -> that day's spend. Sparse by design. */
+  readonly days: Map<string, MutableTotals>;
   firstDay: string | null;
   lastDay: string | null;
   files: number;
@@ -120,6 +130,7 @@ const emptyProviderAccumulator = (): ProviderAccumulator => ({
   last7Days: emptyMutable(),
   today: emptyMutable(),
   models: new Map(),
+  days: new Map(),
   firstDay: null,
   lastDay: null,
   files: 0,
@@ -150,8 +161,18 @@ const foldInto = (
   const priced = rate !== null;
 
   accumulate(accumulator.allTime, tokens, messages, costUsd, priced);
-  if (day >= options.earliest30Day) {
+  const withinMonth = day >= options.earliest30Day;
+  if (withinMonth) {
     accumulate(accumulator.last30Days, tokens, messages, costUsd, priced);
+
+    // Only days inside the window are bucketed. A series over all time would
+    // be years long on an old store, and nothing renders it.
+    let dayEntry = accumulator.days.get(day);
+    if (dayEntry === undefined) {
+      dayEntry = emptyMutable();
+      accumulator.days.set(day, dayEntry);
+    }
+    accumulate(dayEntry, tokens, messages, costUsd, priced);
   }
   if (day >= options.earliest7Day) {
     accumulate(accumulator.last7Days, tokens, messages, costUsd, priced);
@@ -162,10 +183,11 @@ const foldInto = (
 
   let modelEntry = accumulator.models.get(model);
   if (modelEntry === undefined) {
-    modelEntry = { priced, totals: emptyMutable() };
+    modelEntry = { priced, totals: emptyMutable(), last30Days: emptyMutable() };
     accumulator.models.set(model, modelEntry);
   }
   accumulate(modelEntry.totals, tokens, messages, costUsd, priced);
+  if (withinMonth) accumulate(modelEntry.last30Days, tokens, messages, costUsd, priced);
 
   if (accumulator.firstDay === null || day < accumulator.firstDay) accumulator.firstDay = day;
   if (accumulator.lastDay === null || day > accumulator.lastDay) accumulator.lastDay = day;
@@ -176,13 +198,24 @@ const toProviderUsage = (
   accumulator: ProviderAccumulator,
 ): CliProviderUsage => {
   const models: Array<CliUsageModelTotals> = [...accumulator.models.entries()]
-    .map(([model, entry]) => ({ model, priced: entry.priced, totals: freeze(entry.totals) }))
+    .map(([model, entry]) => ({
+      model,
+      priced: entry.priced,
+      totals: freeze(entry.totals),
+      last30Days: freeze(entry.last30Days),
+    }))
     .sort(
       (left, right) =>
         right.totals.costUsd - left.totals.costUsd ||
         right.totals.messages - left.totals.messages ||
         left.model.localeCompare(right.model),
     );
+
+  // Ascending, so a renderer can lay the bars out left to right without
+  // sorting; `YYYY-MM-DD` compares correctly as a string.
+  const days: Array<CliUsageDayTotals> = [...accumulator.days.entries()]
+    .map(([day, totals]) => ({ day, costUsd: totals.costUsd, messages: totals.messages }))
+    .sort((left, right) => left.day.localeCompare(right.day));
 
   return {
     provider,
@@ -191,6 +224,7 @@ const toProviderUsage = (
     last7Days: freeze(accumulator.last7Days),
     today: freeze(accumulator.today),
     models,
+    days,
     firstDay: accumulator.firstDay,
     lastDay: accumulator.lastDay,
     sessionFiles: accumulator.files,

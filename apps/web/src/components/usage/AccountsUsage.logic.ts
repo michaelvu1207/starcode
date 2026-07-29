@@ -21,6 +21,7 @@
 import {
   type CliHistoricalUsage,
   type CliProviderUsage,
+  type CliUsageDayTotals,
   type CliUsageModelTotals,
   type CliUsageProvider,
   type CliUsageScanStatus,
@@ -32,6 +33,7 @@ import {
   type ProviderInstanceUsage,
   type ServerConfig,
   type ServerProvider,
+  type UsageRateLimitStatus,
   type UsageTotals,
 } from "@t3tools/contracts";
 
@@ -128,6 +130,19 @@ export interface CliHistoryProviderRollup {
   readonly windows: CliUsageWindows;
   /** How many machines contributed to this provider's figures. */
   readonly machines: number;
+  /**
+   * Daily spend inside the 30-day window, ascending, every reporting machine
+   * merged by local day. Empty when no machine sent a series, which is what an
+   * older server does — a caller renders no sparkline rather than a flat zero.
+   */
+  readonly days: ReadonlyArray<CliUsageDayTotals>;
+  /**
+   * This provider's models scoped to the 30-day window and re-sorted by that
+   * window's cost, costliest first. Empty when no machine can split a model by
+   * window; never silently backfilled from the all-time figures, which would
+   * put an all-time breakdown under a 30-day heading.
+   */
+  readonly models: ReadonlyArray<CliUsageModelTotals>;
 }
 
 export interface CliHistoryFleetView {
@@ -143,8 +158,10 @@ export interface CliHistoryFleetView {
   readonly machines: number;
   readonly filesScanned: number;
   /**
-   * The all-time cost understates the truth because some models have no
-   * vendored rate. Their tokens are counted, their dollars are not.
+   * The 30-day cost understates the truth because some models have no vendored
+   * rate. Their tokens are counted, their dollars are not. Keyed off the window
+   * the panel actually shows: a floor warning about all-time spend, printed
+   * under a 30-day figure that happens to be fully priced, is a false alarm.
    */
   readonly costIsFloor: boolean;
 }
@@ -188,6 +205,27 @@ export interface AccountsUsageEnvironmentGroup {
   readonly cliHistory: CliHistoryMachineView;
 }
 
+/**
+ * One account's headroom, flattened out of its machine.
+ *
+ * The condensed panel shows spend aggregated across accounts, so this is the
+ * only place accounts stay individually visible: a limit belongs to one
+ * account and cannot be summed with another's.
+ */
+export interface AccountLimitRow {
+  readonly instanceId: string;
+  readonly displayName: string;
+  /** Which machine it runs on; rendered only when the fleet has more than one. */
+  readonly machineLabel: string;
+  readonly driver: string;
+  readonly planLabel: string | null;
+  /** Null when the provider has never reported a limit for this account. */
+  readonly status: UsageRateLimitStatus | null;
+  readonly peakUsedPercent: number | null;
+  /** When the window behind `peakUsedPercent` resets, if the provider said. */
+  readonly resetsAt: string | null;
+}
+
 export interface AccountsUsageView {
   readonly groups: ReadonlyArray<AccountsUsageEnvironmentGroup>;
   readonly today: UsageTotals;
@@ -204,6 +242,14 @@ export interface AccountsUsageView {
   /** Set when the machines disagree about which local day "today" is. */
   readonly mixedDays: boolean;
   readonly cliHistory: CliHistoryFleetView;
+  /** Every account's headroom, closest to its limit first. */
+  readonly limitRows: ReadonlyArray<AccountLimitRow>;
+  /**
+   * The latest local day any machine reports, which is the right edge of the
+   * daily series. Null when no machine has answered yet — a sparkline drawn
+   * against a guessed edge would slide the whole shape.
+   */
+  readonly latestDay: string | null;
 }
 
 function addTotals(left: UsageTotals, right: UsageTotals): UsageTotals {
@@ -291,6 +337,66 @@ export function buildCliHistoryView(
 }
 
 /**
+ * Merges every machine's daily series into one, keyed by local day.
+ *
+ * Machines in different zones cut their days at different instants, so a day
+ * here is the union of up to N slightly-offset local days. That is the same
+ * approximation the cumulative windows already make, and `mixedDays` on the
+ * view is what tells a caller to say so.
+ */
+function mergeCliDays(
+  series: Iterable<ReadonlyArray<CliUsageDayTotals>>,
+): ReadonlyArray<CliUsageDayTotals> {
+  const byDay = new Map<string, { costUsd: number; messages: number }>();
+  for (const days of series) {
+    for (const entry of days) {
+      const existing = byDay.get(entry.day);
+      byDay.set(entry.day, {
+        costUsd: (existing?.costUsd ?? 0) + entry.costUsd,
+        messages: (existing?.messages ?? 0) + entry.messages,
+      });
+    }
+  }
+  return [...byDay.entries()]
+    .map(([day, entry]) => ({ day, costUsd: entry.costUsd, messages: entry.messages }))
+    .sort((left, right) => left.day.localeCompare(right.day));
+}
+
+/**
+ * Every machine's models for one provider, scoped to the 30-day window.
+ *
+ * Models whose entry carries no `last30Days` are dropped rather than folded in
+ * at their all-time figure: a server that cannot split by window contributes
+ * nothing here, and the caller shows no breakdown instead of a mislabelled one.
+ * A model is priced when any machine priced it — an unpriced entry contributes
+ * real tokens and no dollars either way.
+ */
+function mergeCliWindowModels(
+  perMachine: Iterable<ReadonlyArray<CliUsageModelTotals>>,
+): ReadonlyArray<CliUsageModelTotals> {
+  const byModel = new Map<string, { priced: boolean; totals: CliUsageTotals }>();
+  for (const models of perMachine) {
+    for (const entry of models) {
+      const window = entry.last30Days;
+      if (window === undefined) continue;
+      const existing = byModel.get(entry.model);
+      byModel.set(entry.model, {
+        priced: (existing?.priced ?? false) || entry.priced,
+        totals: addCliUsageTotals(existing?.totals ?? EMPTY_CLI_USAGE_TOTALS, window),
+      });
+    }
+  }
+  return [...byModel.entries()]
+    .map(([model, entry]) => ({ model, priced: entry.priced, totals: entry.totals }))
+    .sort(
+      (left, right) =>
+        right.totals.costUsd - left.totals.costUsd ||
+        right.totals.messages - left.totals.messages ||
+        left.model.localeCompare(right.model),
+    );
+}
+
+/**
  * Rolls every machine's history into one fleet figure, per provider and in
  * total. Machines that never reported are skipped rather than counted as zero,
  * which is what keeps `machines` honest when half a fleet runs an old server.
@@ -303,7 +409,13 @@ export function buildCliHistoryFleetView(
   );
   if (reporting.length === 0) return EMPTY_CLI_HISTORY_FLEET_VIEW;
 
-  const byProvider = new Map<CliUsageProvider, { windows: CliUsageWindows; machines: number }>();
+  interface ProviderAccumulator {
+    windows: CliUsageWindows;
+    machines: number;
+    days: Array<ReadonlyArray<CliUsageDayTotals>>;
+    models: Array<ReadonlyArray<CliUsageModelTotals>>;
+  }
+  const byProvider = new Map<CliUsageProvider, ProviderAccumulator>();
   for (const machine of reporting) {
     for (const provider of machine.providers) {
       const existing = byProvider.get(provider.provider);
@@ -313,12 +425,20 @@ export function buildCliHistoryFleetView(
           cliProviderWindows(provider),
         ),
         machines: (existing?.machines ?? 0) + 1,
+        days: [...(existing?.days ?? []), provider.days ?? []],
+        models: [...(existing?.models ?? []), provider.models],
       });
     }
   }
 
   const providers = [...byProvider.entries()]
-    .map(([provider, entry]) => ({ provider, windows: entry.windows, machines: entry.machines }))
+    .map(([provider, entry]) => ({
+      provider,
+      windows: entry.windows,
+      machines: entry.machines,
+      days: mergeCliDays(entry.days),
+      models: mergeCliWindowModels(entry.models),
+    }))
     .sort(
       (left, right) =>
         right.windows.allTime.costUsd - left.windows.allTime.costUsd ||
@@ -336,7 +456,7 @@ export function buildCliHistoryFleetView(
     pending: reporting.every((machine) => machine.pending),
     machines: reporting.length,
     filesScanned: reporting.reduce((files, machine) => files + machine.filesScanned, 0),
-    costIsFloor: windows.allTime.unpricedMessages > 0,
+    costIsFloor: windows.last30Days.unpricedMessages > 0,
   };
 }
 
@@ -507,6 +627,66 @@ function buildEnvironmentGroup(
   };
 }
 
+/**
+ * Flattens every machine's accounts into one headroom list.
+ *
+ * An orphaned instance — spend recorded against a provider entry that is no
+ * longer configured — is carried only when it still reports a limit. A deleted
+ * account with nothing to say about headroom is noise on a page this small,
+ * whereas one that is still rate-limited is exactly what a reader needs.
+ *
+ * Ordering is by how close the account is to being cut off. Accounts the
+ * provider has said nothing about sort last: unknown is not zero, but it is
+ * also not urgent.
+ */
+export function buildAccountLimitRows(
+  groups: ReadonlyArray<AccountsUsageEnvironmentGroup>,
+): ReadonlyArray<AccountLimitRow> {
+  const rows = groups.flatMap((group) =>
+    group.accounts.flatMap((account): Array<AccountLimitRow> => {
+      const rateLimits = account.rateLimits;
+      if (account.orphanedUsage && rateLimits === null) return [];
+      const peak = peakUsedPercent(rateLimits);
+      const windows = rateLimits?.windows ?? [];
+      // The reset that matters is the one on the window driving the peak, not
+      // whichever the provider happened to list first.
+      const peakWindow =
+        peak === null ? undefined : windows.find((window) => window.usedPercent === peak);
+      const resetsAt =
+        peakWindow?.resetsAt ??
+        windows.find((window) => window.resetsAt !== null)?.resetsAt ??
+        null;
+      return [
+        {
+          instanceId: account.instanceId,
+          displayName: account.displayName,
+          machineLabel: group.label,
+          driver: account.driver,
+          planLabel: account.planLabel,
+          status: rateLimits?.status ?? null,
+          peakUsedPercent: peak,
+          resetsAt,
+        },
+      ];
+    }),
+  );
+
+  return rows.sort((left, right) => {
+    if (left.peakUsedPercent === null || right.peakUsedPercent === null) {
+      if (left.peakUsedPercent !== right.peakUsedPercent) {
+        return left.peakUsedPercent === null ? 1 : -1;
+      }
+    } else if (left.peakUsedPercent !== right.peakUsedPercent) {
+      return right.peakUsedPercent - left.peakUsedPercent;
+    }
+    return (
+      left.machineLabel.localeCompare(right.machineLabel) ||
+      left.displayName.localeCompare(right.displayName) ||
+      left.instanceId.localeCompare(right.instanceId)
+    );
+  });
+}
+
 export function buildAccountsUsageView(
   environments: ReadonlyArray<AccountsUsageEnvironmentInput>,
 ): AccountsUsageView {
@@ -537,7 +717,73 @@ export function buildAccountsUsageView(
     accountCount: groups.reduce((count, group) => count + group.accounts.length, 0),
     mixedDays: days.size > 1,
     cliHistory: buildCliHistoryFleetView(groups),
+    limitRows: buildAccountLimitRows(groups),
+    latestDay: [...days].sort().at(-1) ?? null,
   };
+}
+
+/** Days the sparkline spans, matching the 30-day window it sits under. */
+export const CLI_SPARK_DAYS = 30;
+
+export interface CliSparkBar {
+  readonly day: string;
+  readonly costUsd: number;
+  readonly messages: number;
+  /** 0-1 against the tallest bar in the series; 0 when nothing was spent. */
+  readonly share: number;
+}
+
+/**
+ * A dense, fixed-width daily series ending on `latestDay`.
+ *
+ * The wire format omits days with no usage, so they are filled back in here:
+ * a sparkline that silently closes its gaps would turn a week off into a week
+ * of steady spend. Pinning the right edge to the latest day any machine
+ * reports — rather than to the last day that carries usage — is what keeps
+ * "nothing since Tuesday" visible as a run of empty bars.
+ */
+export function buildCliSparkSeries(
+  days: ReadonlyArray<CliUsageDayTotals>,
+  latestDay: string | null,
+  span: number = CLI_SPARK_DAYS,
+): ReadonlyArray<CliSparkBar> {
+  const edge = latestDay ?? days.at(-1)?.day ?? null;
+  if (edge === null || days.length === 0) return [];
+
+  const byDay = new Map(days.map((entry) => [entry.day, entry]));
+  const bars: Array<Omit<CliSparkBar, "share">> = [];
+  for (let offset = span - 1; offset >= 0; offset -= 1) {
+    const day = shiftDay(edge, -offset);
+    if (day === null) continue;
+    const entry = byDay.get(day);
+    bars.push({ day, costUsd: entry?.costUsd ?? 0, messages: entry?.messages ?? 0 });
+  }
+
+  const peak = Math.max(0, ...bars.map((bar) => bar.costUsd));
+  return bars.map((bar) => ({ ...bar, share: peak === 0 ? 0 : bar.costUsd / peak }));
+}
+
+/**
+ * `YYYY-MM-DD` shifted by whole days.
+ *
+ * Parsed and formatted in UTC on purpose: these are calendar labels the
+ * reporting machine already resolved in its own zone, and round-tripping them
+ * through the viewer's zone would move the ends by a day.
+ */
+function shiftDay(day: string, offsetDays: number): string | null {
+  const parsed = parseDay(day);
+  if (parsed === null) return null;
+  const shifted = new Date(
+    Date.UTC(Number(parsed.year), parsed.month - 1, parsed.day + offsetDays),
+  );
+  return Number.isNaN(shifted.getTime()) ? null : shifted.toISOString().slice(0, 10);
+}
+
+/** Every token a CLI window counted, cache traffic included. */
+export function cliTotalTokens(totals: CliUsageTotals): number {
+  return (
+    totals.inputTokens + totals.outputTokens + totals.cacheWriteTokens + totals.cacheReadTokens
+  );
 }
 
 /**
@@ -564,7 +810,10 @@ export function formatUsd(value: number): string {
 export function formatTokens(value: number): string {
   if (value < 1_000) return `${value}`;
   if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
-  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
+  // A 30-day fleet total runs to the billions, and "4200M" is a number a
+  // reader has to stop and count zeros on.
+  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
+  return `${(value / 1_000_000_000).toFixed(value < 10_000_000_000 ? 1 : 0)}B`;
 }
 
 /**

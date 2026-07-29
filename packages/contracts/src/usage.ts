@@ -178,8 +178,31 @@ export const CliUsageModelTotals = Schema.Struct({
   /** False when no vendored rate matched, which forces `costUsd` to 0. */
   priced: Schema.Boolean,
   totals: CliUsageTotals,
+  /**
+   * The same model's share of the last 30 days. Present exactly when the server
+   * knows how to split a model by window; absent — not zeroed — from an older
+   * one, so a client can tell "this model spent nothing recently" from "this
+   * machine cannot say". A breakdown under a 30-day heading must never fall
+   * back to `totals`, which is all time.
+   */
+  last30Days: Schema.optionalKey(CliUsageTotals),
 });
 export type CliUsageModelTotals = typeof CliUsageModelTotals.Type;
+
+/**
+ * One local day's spend, for the sparkline behind a provider's headline figure.
+ *
+ * Carries cost and message count only: a 30-point series exists to show shape,
+ * and shipping six token fields per day per provider per machine would cost
+ * more bytes than the rest of the snapshot put together.
+ */
+export const CliUsageDayTotals = Schema.Struct({
+  /** `YYYY-MM-DD` in the reporting machine's local time zone. */
+  day: TrimmedNonEmptyString,
+  costUsd: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  messages: NonNegativeInt,
+});
+export type CliUsageDayTotals = typeof CliUsageDayTotals.Type;
 
 /**
  * One CLI's history on one machine, in the four windows the panel shows.
@@ -195,6 +218,13 @@ export const CliProviderUsage = Schema.Struct({
   today: CliUsageTotals,
   /** Costliest first, so a truncated render still shows what dominates. */
   models: Schema.Array(CliUsageModelTotals),
+  /**
+   * Per-day spend inside the 30-day window, ascending, days with no usage
+   * omitted. Optional in both directions: an older server sends nothing and a
+   * client renders no sparkline, which is honest — an empty series is not a
+   * flat line at zero.
+   */
+  days: Schema.optionalKey(Schema.Array(CliUsageDayTotals)),
   /** `YYYY-MM-DD` bounds of the days that carry usage; null when none do. */
   firstDay: Schema.NullOr(TrimmedNonEmptyString),
   lastDay: Schema.NullOr(TrimmedNonEmptyString),
