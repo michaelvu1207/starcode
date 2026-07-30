@@ -25,8 +25,8 @@
  * questions and neither substitutes for the other: the dot is *how is it*, and
  * changes; the mark is *which one is it*, and never does.
  */
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { EnvironmentId } from "@starcode/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useMemo, useState } from "react";
 

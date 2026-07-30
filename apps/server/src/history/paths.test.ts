@@ -18,7 +18,7 @@ const withTempTree = async (
   directories: ReadonlyArray<string>,
   use: (root: string) => void | Promise<void>,
 ): Promise<void> => {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-history-paths-"));
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-history-paths-"));
   try {
     for (const directory of directories) {
       await NodeFSP.mkdir(NodePath.join(root, directory), { recursive: true });

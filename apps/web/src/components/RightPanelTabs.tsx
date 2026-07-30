@@ -1,5 +1,5 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import type { ContextMenuItem, PreviewSessionSnapshot } from "@starcode/contracts";
+import { getTerminalLabel } from "@starcode/shared/terminalLabels";
 import {
   Bot,
   ClipboardList,

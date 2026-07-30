@@ -1,12 +1,12 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import {
   EnvironmentId,
   ProjectCategorySlug,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
-import type { FeatureMapEntry } from "@t3tools/contracts";
+} from "@starcode/contracts";
+import type { FeatureMapEntry } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { FeatureFlowFeatureNode, FeatureFlowView } from "./FeatureFlow.model";

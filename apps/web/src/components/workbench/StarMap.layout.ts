@@ -26,7 +26,7 @@
  * owns, which is the one rearrangement that cannot be avoided without letting
  * branches overlap.
  */
-import type { FeatureFlowStage } from "@t3tools/contracts";
+import type { FeatureFlowStage } from "@starcode/contracts";
 
 import { FEATURE_FLOW_STAGES, FEATURE_FLOW_STAGE_LABELS } from "./FeatureFlow.model";
 import type { SkyFeature, SkyModel } from "./StarMap.model";

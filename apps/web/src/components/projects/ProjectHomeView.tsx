@@ -15,13 +15,13 @@
  * left is the mark and the name, which is how you know which project you are
  * looking at.
  */
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
 import {
   EnvironmentId,
   ThreadId,
   type ProjectCategorySlug,
   type ScopedProjectRef,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, type ReactNode } from "react";
 

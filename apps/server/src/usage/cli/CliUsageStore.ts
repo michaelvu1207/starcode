@@ -31,7 +31,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
-import type { CliHistoricalUsage, CliUsageProvider } from "@t3tools/contracts";
+import type { CliHistoricalUsage, CliUsageProvider } from "@starcode/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -225,7 +225,7 @@ export interface CliUsageStoreShape {
 }
 
 export class CliUsageStore extends Context.Service<CliUsageStore, CliUsageStoreShape>()(
-  "t3/usage/cli/CliUsageStore",
+  "starcode/usage/cli/CliUsageStore",
 ) {}
 
 export interface MakeCliUsageStoreOptions {

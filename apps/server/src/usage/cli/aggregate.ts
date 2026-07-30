@@ -19,7 +19,7 @@ import {
   type CliUsageProvider,
   type CliUsageTotals,
   EMPTY_CLI_USAGE_TOTALS,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import type { KeyedMessage, MessageTokens, ParsedFileUsage, UsageBucket } from "./parse.ts";
 import { codexFastMultiplier, costOf, rateFor } from "./pricing.ts";

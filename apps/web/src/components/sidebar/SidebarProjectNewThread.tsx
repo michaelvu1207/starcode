@@ -13,7 +13,7 @@
  * So the machine is the visible structure: one group per connection, headed by
  * that machine's own mark and name, with its folders under it.
  */
-import type { ProjectCategorySlug } from "@t3tools/contracts";
+import type { ProjectCategorySlug } from "@starcode/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 

@@ -25,19 +25,19 @@ function fakeStorage(entries: Record<string, string>): ProjectScopeStorage & {
 
 describe("isPersistedProjectScopeKey", () => {
   it.each([
-    "t3code:sidebar-v2:project-scope",
+    "starcode:sidebar-v2:project-scope",
     "sidebarV2ProjectScope",
     "SIDEBAR_PROJECT_SCOPE",
-    "t3code:sidebar:projectScope:v1",
+    "starcode:sidebar:projectScope:v1",
   ])("matches %s", (key) => {
     expect(isPersistedProjectScopeKey(key)).toBe(true);
   });
 
   it.each([
     "chat_thread_sidebar_width",
-    "t3code:version-mismatch-dismissals:v1",
+    "starcode:version-mismatch-dismissals:v1",
     "sidebar-collapsed-groups",
-    "t3code:command-palette:project-scope",
+    "starcode:command-palette:project-scope",
   ])("leaves %s alone", (key) => {
     expect(isPersistedProjectScopeKey(key)).toBe(false);
   });
@@ -46,13 +46,13 @@ describe("isPersistedProjectScopeKey", () => {
 describe("purgePersistedProjectScope", () => {
   it("removes every persisted scope and nothing else", () => {
     const storage = fakeStorage({
-      "t3code:sidebar-v2:project-scope": "env-1:proj-a",
+      "starcode:sidebar-v2:project-scope": "env-1:proj-a",
       chat_thread_sidebar_width: "256",
       sidebarV2ProjectScope: "env-2:proj-b",
     });
 
     expect(purgePersistedProjectScope(storage)).toEqual([
-      "t3code:sidebar-v2:project-scope",
+      "starcode:sidebar-v2:project-scope",
       "sidebarV2ProjectScope",
     ]);
     expect(storage.entries).toEqual({ chat_thread_sidebar_width: "256" });
@@ -73,13 +73,13 @@ describe("applyAllProjectsScopeGuard", () => {
   });
 
   it("drops a persisted filter so it cannot resurrect the hidden scope", () => {
-    const storage = fakeStorage({ "t3code:sidebar-v2:project-scope": "env-1:proj-a" });
+    const storage = fakeStorage({ "starcode:sidebar-v2:project-scope": "env-1:proj-a" });
 
     const result = applyAllProjectsScopeGuard({ projectScopeKey: null, storage });
 
     expect(result.nextScopeKey).toBeNull();
     expect(result.didReset).toBe(true);
-    expect(result.clearedStorageKeys).toEqual(["t3code:sidebar-v2:project-scope"]);
+    expect(result.clearedStorageKeys).toEqual(["starcode:sidebar-v2:project-scope"]);
     expect(storage.entries).toEqual({});
   });
 

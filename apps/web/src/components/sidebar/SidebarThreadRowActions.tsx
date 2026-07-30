@@ -16,13 +16,13 @@
  * filing and forking sit at the top, and archiving sits alone at the bottom,
  * which is where the entry that takes a thread off the list belongs.
  */
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
+} from "@starcode/client-runtime/state/runtime";
+import type { EnvironmentId, ProjectCategorySlug, ThreadId } from "@starcode/contracts";
 import { useRouter } from "@tanstack/react-router";
 import {
   ArchiveIcon,

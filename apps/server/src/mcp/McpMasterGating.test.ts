@@ -15,7 +15,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ProjectCategoryRecord,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/unstable/http";

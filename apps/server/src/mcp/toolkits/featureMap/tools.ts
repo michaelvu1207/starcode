@@ -20,7 +20,7 @@ import {
   FeaturePlanSetResult,
   FeaturePromoteInput,
   FeatureUpdateInput,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";

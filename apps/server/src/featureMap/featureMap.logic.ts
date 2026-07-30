@@ -14,7 +14,7 @@ import {
   type FeatureMapEntry,
   type FeatureMapEntryId,
   type FeaturePlanEntry,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 /** Ordered, lowest first. The same order the sky reads bottom to top. */
 export const FEATURE_STAGE_ORDER = [

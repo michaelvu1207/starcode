@@ -14,8 +14,8 @@
  * its activity alone. Ordering within a band is last real activity, newest
  * first, matching the timestamp the auto-settle window already runs on.
  */
-import { threadLastActivityAt } from "@t3tools/client-runtime/state/thread-activity";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import { threadLastActivityAt } from "@starcode/client-runtime/state/thread-activity";
+import type { OrchestrationThreadShell } from "@starcode/contracts";
 
 import {
   firstValidTimestampMs,

@@ -8,7 +8,7 @@
  * deliberately not among them: it moves for bookkeeping writes that are not the
  * thread doing anything.
  */
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell } from "@starcode/contracts";
 
 export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
   const candidates = [

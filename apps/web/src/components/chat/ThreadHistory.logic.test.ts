@@ -4,7 +4,7 @@ import type {
   HistorySessionId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

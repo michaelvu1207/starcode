@@ -14,9 +14,9 @@
  * Nothing subscribes yet. Dispatching before phase 4 lands is a no-op, which is
  * the intended state — the seam is real and typed, the destination is not built.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@starcode/contracts";
 
-const EVENT_NAME = "t3code:open-import-picker";
+const EVENT_NAME = "starcode:open-import-picker";
 
 export interface ImportPickerOpenDetail {
   /**

@@ -3,8 +3,8 @@ import {
   type FilesystemBrowseEntry,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   isListableThread,
-} from "@t3tools/contracts";
-import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+} from "@starcode/contracts";
+import type { SidebarThreadSortOrder } from "@starcode/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";

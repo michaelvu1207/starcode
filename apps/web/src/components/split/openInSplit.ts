@@ -23,8 +23,8 @@
  *
  * @module openInSplit
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@starcode/client-runtime/environment";
+import type { ScopedThreadRef } from "@starcode/contracts";
 
 import { splitFitsContainer } from "./Split.logic";
 import { useSplitStore } from "./splitStore";

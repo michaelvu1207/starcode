@@ -22,7 +22,7 @@
  */
 import { useState } from "react";
 
-import type { CliUsageProvider } from "@t3tools/contracts";
+import type { CliUsageProvider } from "@starcode/contracts";
 
 import { cn } from "../../lib/utils";
 import { formatCount, formatTokens, formatUsd } from "./AccountsUsage.logic";

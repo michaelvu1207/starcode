@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/shared",
+  "name": "@starcode/shared",
   "private": true,
   "type": "module",
   "exports": {
@@ -99,9 +99,9 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
-    "./t3ProjectFile": {
-      "types": "./src/t3ProjectFile.ts",
-      "import": "./src/t3ProjectFile.ts"
+    "./starcodeProjectFile": {
+      "types": "./src/starcodeProjectFile.ts",
+      "import": "./src/starcodeProjectFile.ts"
     },
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
@@ -215,7 +215,7 @@
   "dependencies": {
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
-    "@t3tools/contracts": "workspace:*",
+    "@starcode/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
     "yaml": "catalog:"

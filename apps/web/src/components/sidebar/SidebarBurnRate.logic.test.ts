@@ -1,4 +1,4 @@
-import { EMPTY_USAGE_TOTALS, type UsageTotals } from "@t3tools/contracts";
+import { EMPTY_USAGE_TOTALS, type UsageTotals } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { type BurnRateInput, buildBurnRateView } from "./SidebarBurnRate.logic";

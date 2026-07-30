@@ -9,7 +9,7 @@
  *
  * @module threadTaskProgress
  */
-import type { OrchestrationThreadPlanSummary } from "@t3tools/contracts";
+import type { OrchestrationThreadPlanSummary } from "@starcode/contracts";
 
 /**
  * Past this many tasks, individual segments are thinner than the gaps between

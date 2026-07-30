@@ -301,7 +301,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
     // Stored as text so the schema-driven provider settings form (text /
     // password / textarea / switch only) can edit it; parsed and clamped by
-    // `resolveClaudeContextLimitTokens` in @t3tools/shared/claudeContextLimit.
+    // `resolveClaudeContextLimitTokens` in @starcode/shared/claudeContextLimit.
     // Fork: this seeds the composer's per-thread Context selector — it is the
     // choice a new thread starts on, not a ceiling over the one it picks.
     contextLimitTokens: TrimmedString.pipe(

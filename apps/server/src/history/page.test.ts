@@ -11,7 +11,7 @@ const withFixture = async (
   contents: string,
   use: (path: string) => Promise<void>,
 ): Promise<void> => {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-history-page-"));
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-history-page-"));
   const path = NodePath.join(root, "session.jsonl");
   try {
     await NodeFSP.writeFile(path, contents, "utf8");

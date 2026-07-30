@@ -23,7 +23,7 @@ import {
   type HistoryImportAttempt,
   type HistorySessionsKey,
   type HistoryPreviewKey,
-} from "@t3tools/client-runtime/state/terminal-history";
+} from "@starcode/client-runtime/state/terminal-history";
 import type {
   EnvironmentId,
   HistoryForkRequest,
@@ -34,7 +34,7 @@ import type {
   HistorySessionsPage,
   HistoryTranscriptPage,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";

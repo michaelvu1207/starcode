@@ -17,7 +17,7 @@ import {
   type FeatureFlowTrunkStage,
   type ProjectId,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 /**
  * Most-promoted first. Containment is transitive in practice — work in

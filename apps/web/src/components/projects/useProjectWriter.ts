@@ -18,7 +18,7 @@ import {
   type ProjectCategoryDisplayPatch,
   type ProjectCategorySlug,
   type ProjectId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useCallback, useMemo } from "react";
 
 import { useEnvironments } from "../../state/environments";

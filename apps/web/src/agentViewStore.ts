@@ -12,8 +12,8 @@
  * `task.*` activity carries; the tool-use id is resolved from the shell's
  * subagent rollup at the point of use.
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@starcode/client-runtime/environment";
+import type { ScopedThreadRef } from "@starcode/contracts";
 import { create } from "zustand";
 
 interface AgentViewStoreState {

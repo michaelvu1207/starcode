@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { SPLIT_DEFAULT_RATIO } from "./Split.logic";

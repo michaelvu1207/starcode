@@ -9,13 +9,13 @@
  *
  * So there is one concept now, chosen per thread beside the model: Context,
  * one of 200k / 600k / 1M. The server derives the API window and the
- * compaction point from it (see `@t3tools/shared/claudeContextLimit`), and
+ * compaction point from it (see `@starcode/shared/claudeContextLimit`), and
  * nothing else caps what the user picked. This module decides only what the
  * row shows when the model offers no choice to make.
  *
  * @module composerContext
  */
-import { formatClaudeContextLimitLabel } from "@t3tools/shared/claudeContextLimit";
+import { formatClaudeContextLimitLabel } from "@starcode/shared/claudeContextLimit";
 
 export interface ComposerContextRowInput {
   /** Whether the selected model exposes a context option to pick from. */

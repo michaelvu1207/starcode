@@ -18,8 +18,8 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type UnifiedSettings,
-} from "@t3tools/contracts";
-import { resolveClaudeContextLimitTokens } from "@t3tools/shared/claudeContextLimit";
+} from "@starcode/contracts";
+import { resolveClaudeContextLimitTokens } from "@starcode/shared/claudeContextLimit";
 
 const CLAUDE_DRIVER_KIND = "claudeAgent";
 

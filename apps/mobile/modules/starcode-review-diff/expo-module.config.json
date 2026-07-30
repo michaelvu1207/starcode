@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["StarcodeReviewDiffModule"],
+    "podspecPath": "StarcodeReviewDiffNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.starcodereviewdiff.StarcodeReviewDiffModule"]
+  }
+}

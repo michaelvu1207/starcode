@@ -22,7 +22,7 @@
  *
  * @module ClientRuntimeTerminalHistory
  */
-import { HistoryForkRefusedError, HistoryImportRefusedError } from "@t3tools/contracts";
+import { HistoryForkRefusedError, HistoryImportRefusedError } from "@starcode/contracts";
 import type {
   EnvironmentId,
   HistoryForkRefusalReason,
@@ -38,7 +38,7 @@ import type {
   HistoryPreview,
   HistoryTranscriptPage,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -507,7 +507,7 @@ export class TerminalHistoryLoader extends Context.Service<
       readonly request: HistoryForkRequest;
     }) => Effect.Effect<HistoryForkAttempt>;
   }
->()("@t3tools/client-runtime/state/terminalHistory/TerminalHistoryLoader") {}
+>()("@starcode/client-runtime/state/terminalHistory/TerminalHistoryLoader") {}
 
 export const terminalHistoryLoaderLayer: Layer.Layer<
   TerminalHistoryLoader,

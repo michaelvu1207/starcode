@@ -32,8 +32,8 @@ import {
   HistoryImportRecord,
   type HistorySessionId,
   type ThreadId,
-} from "@t3tools/contracts";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+} from "@starcode/contracts";
+import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -111,7 +111,7 @@ export interface HistoryImportRegistryShape {
 export class HistoryImportRegistry extends Context.Service<
   HistoryImportRegistry,
   HistoryImportRegistryShape
->()("t3/history/importRegistry/HistoryImportRegistry") {}
+>()("starcode/history/importRegistry/HistoryImportRegistry") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

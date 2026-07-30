@@ -14,7 +14,7 @@ import type {
   CliUsageModelAliasCatalog,
   EnvironmentId,
   EnvironmentUsageSnapshot,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -161,7 +161,7 @@ export class UsageSnapshotLoader extends Context.Service<
       readonly aliases: ReadonlyArray<CliUsageModelAlias>;
     }) => Effect.Effect<ModelAliasWriteAttempt>;
   }
->()("@t3tools/client-runtime/state/usage/UsageSnapshotLoader") {}
+>()("@starcode/client-runtime/state/usage/UsageSnapshotLoader") {}
 
 /**
  * A write's two endings, both values.

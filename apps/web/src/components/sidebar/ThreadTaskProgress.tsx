@@ -8,7 +8,7 @@
  *
  * @module ThreadTaskProgress
  */
-import type { OrchestrationThreadPlanSummary } from "@t3tools/contracts";
+import type { OrchestrationThreadPlanSummary } from "@starcode/contracts";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";

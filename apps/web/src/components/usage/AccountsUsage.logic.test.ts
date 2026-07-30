@@ -12,7 +12,7 @@ import {
   type UsageRateLimitSnapshot,
   type UsageRateLimitWindow,
   type UsageTotals,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

@@ -19,7 +19,7 @@ import {
   PROJECT_CATEGORY_ICON_MAX_LENGTH,
   PROJECT_CATEGORY_ICON_TARGET_SIZE,
   validateProjectCategoryIcon,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 /**
  * The largest file worth decoding.

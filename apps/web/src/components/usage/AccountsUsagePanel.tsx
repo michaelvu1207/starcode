@@ -32,7 +32,7 @@
 import { CircleAlertIcon, InfoIcon, LoaderIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import type { CliUsageProvider, CliUsageTotals, EnvironmentId } from "@t3tools/contracts";
+import type { CliUsageProvider, CliUsageTotals, EnvironmentId } from "@starcode/contracts";
 
 import { cn } from "../../lib/utils";
 import {

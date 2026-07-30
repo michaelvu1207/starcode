@@ -38,8 +38,8 @@
  * A loose thread is not a category, and sorting one into the middle of the list
  * under "U" for Unfiled made it look like one.
  */
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { ProjectCategorySlug } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { ProjectCategorySlug } from "@starcode/contracts";
 
 import {
   projectThreadKey,

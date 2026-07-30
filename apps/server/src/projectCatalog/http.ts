@@ -20,7 +20,7 @@ import {
   type ProjectCatalogLocation,
   type ProjectCatalogLocationsPage,
   type ProjectCatalogSnapshot,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";

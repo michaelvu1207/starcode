@@ -5,7 +5,7 @@ import {
   ProjectId,
   ThreadId,
   type ProjectCatalogUpsertRequest,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,7 +24,7 @@ const makeLayer = () =>
   projectCatalogRegistryLayer.pipe(
     Layer.provideMerge(
       Layer.fresh(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3code-project-catalog-test-" }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "starcode-project-catalog-test-" }),
       ),
     ),
     Layer.provideMerge(NodeServices.layer),

@@ -1,6 +1,11 @@
-import type { EnvironmentId, OrchestrationThreadShell, ThreadId, TurnId } from "@t3tools/contracts";
-import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type {
+  EnvironmentId,
+  OrchestrationThreadShell,
+  ThreadId,
+  TurnId,
+} from "@starcode/contracts";
+import type { SupervisorConnectionState } from "@starcode/client-runtime/connection";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveDiscordPresenceSummary, discordPresenceSummaryEquals } from "./discordPresence";

@@ -1,7 +1,23 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { readHostedPairingRequest } from "@starcode/shared/remote";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
+
+/**
+ * Every scheme this app registers (see `app.config.ts`), old token included: a
+ * QR code printed or screenshotted before the rename still says `t3code://`,
+ * and refusing it here would read as an unscannable code rather than a rename.
+ * `-preview` and `-dev` are here too so a QR minted by one variant scans in
+ * another, which is how these get tested.
+ */
+const PAIRING_DEEP_LINK_PROTOCOLS = new Set([
+  "starcode:",
+  "starcode-dev:",
+  "starcode-preview:",
+  "t3code:",
+  "t3code-dev:",
+  "t3code-preview:",
+]);
 
 export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
@@ -63,7 +79,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
 
   try {
     const url = new URL(trimmed);
-    if (url.protocol === "t3code:") {
+    if (PAIRING_DEEP_LINK_PROTOCOLS.has(url.protocol)) {
       const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;

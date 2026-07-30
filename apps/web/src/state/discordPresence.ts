@@ -13,9 +13,9 @@ import type {
   DiscordPresenceState,
   DiscordPresenceSummary,
   EnvironmentId,
-} from "@t3tools/contracts";
-import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+} from "@starcode/contracts";
+import type { SupervisorConnectionState } from "@starcode/client-runtime/connection";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import { useEffect, useRef, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 

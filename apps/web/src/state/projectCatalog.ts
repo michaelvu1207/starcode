@@ -21,14 +21,14 @@ import {
   createEnvironmentProjectCatalogLocationsAtom,
   createEnvironmentProjectCatalogSnapshotsAtom,
   type ProjectCatalogWriteOutcome,
-} from "@t3tools/client-runtime/state/project-catalog";
+} from "@starcode/client-runtime/state/project-catalog";
 import type {
   EnvironmentId,
   ProjectCatalogFileThreadRequest,
   ProjectCategoryDisplayPatch,
   ProjectCategoryLocalPatch,
   ProjectCategorySlug,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";

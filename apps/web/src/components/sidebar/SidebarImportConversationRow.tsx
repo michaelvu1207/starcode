@@ -11,7 +11,7 @@
  * nothing here. Styled as the same dashed affordance as "Show N more" — both
  * are "there is more, go get it" rather than content.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@starcode/contracts";
 import { DownloadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 

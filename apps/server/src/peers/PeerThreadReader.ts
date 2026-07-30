@@ -23,7 +23,7 @@ import {
   type PeerThreadsOrder,
   type ProjectCategorySlug,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -70,7 +70,7 @@ export interface PeerThreadReaderShape {
 }
 
 export class PeerThreadReader extends Context.Service<PeerThreadReader, PeerThreadReaderShape>()(
-  "t3/peers/PeerThreadReader",
+  "starcode/peers/PeerThreadReader",
 ) {}
 
 const clampLimit = (value: number | undefined, fallback: number, max: number): number =>

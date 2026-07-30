@@ -17,7 +17,7 @@
  *
  * @module SidebarBurnRateLogic
  */
-import { type UsageTotals, USAGE_RATE_WINDOW_MINUTES } from "@t3tools/contracts";
+import { type UsageTotals, USAGE_RATE_WINDOW_MINUTES } from "@starcode/contracts";
 
 import { formatTokens, formatUsd } from "../usage/AccountsUsage.logic";
 

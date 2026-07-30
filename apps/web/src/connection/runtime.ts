@@ -1,13 +1,13 @@
-import { Connection } from "@t3tools/client-runtime/connection";
+import { Connection } from "@starcode/client-runtime/connection";
 import {
   featureFlowSnapshotLoaderLayer,
   featureMapSnapshotLoaderLayer,
-} from "@t3tools/client-runtime/state/feature-flow";
-import { projectCatalogLoaderLayer } from "@t3tools/client-runtime/state/project-catalog";
-import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
-import { terminalHistoryLoaderLayer } from "@t3tools/client-runtime/state/terminal-history";
-import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
-import { usageSnapshotLoaderLayer } from "@t3tools/client-runtime/state/usage";
+} from "@starcode/client-runtime/state/feature-flow";
+import { projectCatalogLoaderLayer } from "@starcode/client-runtime/state/project-catalog";
+import { shellSnapshotLoaderLayer } from "@starcode/client-runtime/state/shell";
+import { terminalHistoryLoaderLayer } from "@starcode/client-runtime/state/terminal-history";
+import { threadSnapshotLoaderLayer } from "@starcode/client-runtime/state/threads";
+import { usageSnapshotLoaderLayer } from "@starcode/client-runtime/state/usage";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 

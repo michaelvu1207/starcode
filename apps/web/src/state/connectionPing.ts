@@ -17,10 +17,10 @@
  * short idle TTL stops it shortly after it closes. A dropdown nobody opened
  * costs no traffic.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@starcode/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
-import { runInEnvironment } from "@t3tools/client-runtime/state/runtime";
+import { EnvironmentSupervisor } from "@starcode/client-runtime/connection";
+import { runInEnvironment } from "@starcode/client-runtime/state/runtime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

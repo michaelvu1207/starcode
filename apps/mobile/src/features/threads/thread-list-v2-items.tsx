@@ -1,9 +1,9 @@
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+} from "@starcode/client-runtime/state/shell";
 import type { MenuAction } from "@react-native-menu/menu";
-import type { OrchestrationThreadSubagent } from "@t3tools/contracts";
+import type { OrchestrationThreadSubagent } from "@starcode/contracts";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -203,7 +203,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         <Text
           className={cn(
-            "flex-1 text-sm font-t3-medium",
+            "flex-1 text-sm font-starcode-medium",
             selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
           )}
           numberOfLines={1}
@@ -221,7 +221,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </View>
       <Text
         className={cn(
-          "mt-1 text-base font-t3-medium",
+          "mt-1 text-base font-starcode-medium",
           selected ? "text-user-bubble-foreground" : "text-foreground",
         )}
         numberOfLines={2}

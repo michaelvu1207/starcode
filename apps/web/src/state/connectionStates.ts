@@ -11,9 +11,9 @@
  * Fans out inside an atom, mirroring `environmentUsageSnapshotsAtom`, so the
  * number of machines can change without any component changing its hook count.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@starcode/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
+import type { SupervisorConnectionState } from "@starcode/client-runtime/connection";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 

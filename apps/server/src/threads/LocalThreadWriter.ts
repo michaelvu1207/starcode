@@ -52,7 +52,7 @@ import {
   ThreadCreateResult,
   ThreadId,
   ThreadToolError,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -178,7 +178,7 @@ export interface LocalThreadWriterShape {
 }
 
 export class LocalThreadWriter extends Context.Service<LocalThreadWriter, LocalThreadWriterShape>()(
-  "t3/threads/LocalThreadWriter",
+  "starcode/threads/LocalThreadWriter",
 ) {}
 
 const failure = (

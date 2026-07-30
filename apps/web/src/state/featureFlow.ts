@@ -4,7 +4,7 @@ import {
   createEnvironmentFeatureFlowSnapshotsAtom,
   createEnvironmentFeatureMapAtoms,
   createEnvironmentFeatureMapSnapshotsAtom,
-} from "@t3tools/client-runtime/state/feature-flow";
+} from "@starcode/client-runtime/state/feature-flow";
 import { useMemo } from "react";
 
 import {

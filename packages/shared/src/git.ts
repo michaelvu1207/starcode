@@ -5,19 +5,38 @@ import type {
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
-export const WORKTREE_BRANCH_PREFIX = "t3code";
-// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
-// via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
-// that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
-// eligible for branch regeneration without loosening beyond what was ever generated.
+export const WORKTREE_BRANCH_PREFIX = "starcode";
+/**
+ * What the prefix was before the rename. Unlike most renamed identifiers these
+ * are written into the *user's own repositories*, so any repo worked in before
+ * the rename still carries `t3/<token>` worktree branches. Recognising only the
+ * new prefix would quietly reclassify all of them as real branches: they would
+ * stop being eligible for cleanup and start being offered as somewhere to
+ * commit. Reading accepts both; only writing uses the new one.
+ */
+const LEGACY_WORKTREE_BRANCH_PREFIX = "t3";
+const WORKTREE_BRANCH_PREFIXES = [WORKTREE_BRANCH_PREFIX, LEGACY_WORKTREE_BRANCH_PREFIX];
+// Canonical form is `<prefix>/<8 hex>`. Older mobile builds generated
+// `<prefix>/<uuid>` via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also
+// accepts exactly that shape — version nibble `4`, variant nibble `[89ab]` — to keep
+// those threads eligible for branch regeneration without loosening beyond what was
+// ever generated.
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
-  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
+  `^(?:${WORKTREE_BRANCH_PREFIXES.join("|")})\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
 );
+
+/** Strips either worktree-branch prefix, leaving the token. */
+export function stripWorktreeBranchPrefix(refName: string): string {
+  for (const prefix of WORKTREE_BRANCH_PREFIXES) {
+    if (refName.startsWith(`${prefix}/`)) return refName.slice(`${prefix}/`.length);
+  }
+  return refName;
+}
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.

@@ -4,7 +4,7 @@ import {
   MAILBOX_ENVELOPE_PREFIX,
   ThreadId,
   type ThreadMailboxEntry,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { applyMailboxToPrompt, renderMailboxBlock, renderMailboxMessage } from "./envelope.ts";
 

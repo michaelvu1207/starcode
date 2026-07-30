@@ -19,13 +19,13 @@
  * machines is one click, which a wizard page would have cost a round trip and
  * a back button.
  */
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
 import type {
   EnvironmentId,
   HistorySessionId,
   ScopedThreadRef,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";

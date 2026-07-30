@@ -25,7 +25,7 @@ import {
   USAGE_WEEK_DAYS,
   UsageRateLimitSnapshot,
   type UsageTotals,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,7 +64,7 @@ export interface UsageStoreShape {
 }
 
 export class UsageStore extends Context.Service<UsageStore, UsageStoreShape>()(
-  "t3/usage/UsageStore",
+  "starcode/usage/UsageStore",
 ) {}
 
 /** The aggregate columns every rollup query selects, whatever it groups by. */

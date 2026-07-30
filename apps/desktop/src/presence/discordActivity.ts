@@ -1,4 +1,4 @@
-import type { DiscordPresenceSummary } from "@t3tools/contracts";
+import type { DiscordPresenceSummary } from "@starcode/contracts";
 
 /**
  * The presence payload Discord renders under your name.

@@ -23,8 +23,8 @@ import {
   type FeaturePlanSetInput,
   type FeaturePromoteInput,
   type FeatureUpdateInput,
-} from "@t3tools/contracts";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+} from "@starcode/contracts";
+import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -68,7 +68,7 @@ export interface FeatureMapRegistryShape {
 export class FeatureMapRegistry extends Context.Service<
   FeatureMapRegistry,
   FeatureMapRegistryShape
->()("t3/featureMap/FeatureMapRegistry") {}
+>()("starcode/featureMap/FeatureMapRegistry") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

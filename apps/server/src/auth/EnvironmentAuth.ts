@@ -16,8 +16,8 @@ import {
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
-} from "@t3tools/contracts";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+} from "@starcode/contracts";
+import { encodeOAuthScope } from "@starcode/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -489,7 +489,7 @@ export class EnvironmentAuth extends Context.Service<
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
   }
->()("t3/auth/EnvironmentAuth") {}
+>()("starcode/auth/EnvironmentAuth") {}
 
 type BootstrapExchangeResult = {
   readonly response: AuthBrowserSessionResult;
@@ -826,7 +826,7 @@ export const make = Effect.gen(function* () {
           deviceType: "bot",
         },
         // `deviceType: "bot"` is the whole argument: this is the token a
-        // machine holds, minted by `t3 auth session issue` and pasted into a
+        // machine holds, minted by `starcode auth session issue` and pasted into a
         // peer registration. An explicit ttl still wins for a caller that wants
         // a short-lived one.
         ttl: input?.ttl ?? SessionStore.MACHINE_SESSION_TTL,

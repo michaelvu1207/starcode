@@ -23,7 +23,7 @@ import {
   type OrchestrationThread,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -97,7 +97,7 @@ const withHarness = <A, E>(
 ): Effect.Effect<A, E | PlatformError.PlatformError> =>
   Effect.gen(function* () {
     const home = yield* Effect.promise(() =>
-      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-history-fork-")),
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-history-fork-")),
     );
     const workspace = NodePath.join(home, "work", "alpha");
     const sourceSessionPath = NodePath.join(
@@ -171,7 +171,7 @@ const withHarness = <A, E>(
       historyImportRegistryLayer,
     ).pipe(
       Layer.provideMerge(
-        Layer.fresh(ServerConfig.layerTest(home, { prefix: "t3code-history-fork-test-" })),
+        Layer.fresh(ServerConfig.layerTest(home, { prefix: "starcode-history-fork-test-" })),
       ),
       Layer.provideMerge(NodeServices.layer),
     );

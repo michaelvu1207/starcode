@@ -4,14 +4,14 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-} from "@t3tools/shared/model";
-import { CLAUDE_CONTEXT_OPTION_ID } from "@t3tools/shared/claudeContextLimit";
+} from "@starcode/shared/model";
+import { CLAUDE_CONTEXT_OPTION_ID } from "@starcode/shared/claudeContextLimit";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";

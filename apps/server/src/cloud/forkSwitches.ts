@@ -18,7 +18,7 @@
  *    serverSelfUpdate capability. The banner fires on any version-string
  *    inequality, including every dev build, so that click is always one stray
  *    tap away.
- * 2. `t3 service install` / `t3 service update` and the onboarding prompt,
+ * 2. `starcode service install` / `starcode service update` and the onboarding prompt,
  *    when the CLI itself was launched from an ephemeral npx/dlx/bunx cache.
  *
  * With this on, the capability resolves to null (client degrades to "Copy

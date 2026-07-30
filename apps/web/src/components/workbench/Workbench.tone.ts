@@ -12,7 +12,7 @@
  * reports — so a thread does not change colour when it moves from the board to
  * the flow panel.
  */
-import type { FeatureFlowMergeabilityState, PeerThreadStatus } from "@t3tools/contracts";
+import type { FeatureFlowMergeabilityState, PeerThreadStatus } from "@starcode/contracts";
 
 import type { SidebarV2Status } from "../Sidebar.logic";
 

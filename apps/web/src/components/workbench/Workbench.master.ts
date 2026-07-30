@@ -19,7 +19,7 @@
  * activities. That makes it exactly as durable as the master's transcript, and
  * it is the only client-visible signal that exists today.
  */
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@starcode/contracts";
 
 export interface WorkbenchMasterCandidate {
   readonly environmentId: string;

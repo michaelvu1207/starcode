@@ -7,13 +7,13 @@
  * usable. `ChatView` takes its identity entirely from props, so embedding it
  * here costs one readiness gate, copied from the thread route.
  */
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
 import {
   EnvironmentId,
   ThreadId,
   type ScopedProjectRef,
   type ScopedThreadRef,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 

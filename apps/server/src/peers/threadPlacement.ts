@@ -20,14 +20,14 @@
  *
  * @module PeerProjectPlacement
  */
-import { DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
+import { DEFAULT_RUNTIME_MODE } from "@starcode/contracts";
 import type {
   ModelSelection,
   ProjectCategoryRecord,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 /** What the caller asked for explicitly. Absent means "use the peer's answer". */
 export interface PeerThreadCreateOverrides {

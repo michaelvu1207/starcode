@@ -22,7 +22,7 @@ import {
   type EnvironmentInternalError,
   type EnvironmentRequestInvalidError,
   type EnvironmentResourceNotFoundError,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 

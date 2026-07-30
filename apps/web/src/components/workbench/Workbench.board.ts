@@ -11,10 +11,10 @@
  * a few hundred pixels to the left, and a card that duplicates it would be the
  * one card on the board that opening does nothing useful.
  */
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentConnectionPresentation } from "@starcode/client-runtime/connection";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
+import type { EnvironmentId } from "@starcode/contracts";
 
 import {
   buildSidebarConnectionGroups,

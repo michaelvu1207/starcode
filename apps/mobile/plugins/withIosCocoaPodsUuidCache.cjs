@@ -3,7 +3,11 @@ const path = require("node:path");
 
 const { withDangerousMod } = require("expo/config-plugins");
 
-const MARKER = "# t3code: repair cached CocoaPods UUID allocation before SPM integration";
+const MARKER = "# starcode: repair cached CocoaPods UUID allocation before SPM integration";
+// The pre-rename marker. `ios/` survives between prebuilds, so a Podfile
+// patched by an older checkout still carries the old spelling — without this
+// the guard below misses it and the block gets injected a second time.
+const LEGACY_MARKER = "# t3code: repair cached CocoaPods UUID allocation before SPM integration";
 const UUID_REPAIR = `${MARKER}
     pods_project = installer.pods_project
     existing_uuids = pods_project.objects.map(&:uuid)
@@ -22,7 +26,7 @@ const UUID_REPAIR = `${MARKER}
     pods_project.instance_variable_set(:@generated_uuids, Array.new(next_index))
     pods_project.instance_variable_set(:@available_uuids, [])
     pods_project.generate_available_uuid_list(1_000)
-    Pod::UI.puts "T3Code: reset CocoaPods UUID allocator at #{next_index} (#{existing_uuids.length} existing objects)"
+    Pod::UI.puts "Starcode: reset CocoaPods UUID allocator at #{next_index} (#{existing_uuids.length} existing objects)"
 `;
 
 module.exports = function withIosCocoaPodsUuidCache(config) {
@@ -32,7 +36,7 @@ module.exports = function withIosCocoaPodsUuidCache(config) {
       const podfilePath = path.join(nextConfig.modRequest.platformProjectRoot, "Podfile");
       const podfile = fs.readFileSync(podfilePath, "utf8");
 
-      if (podfile.includes(MARKER)) {
+      if (podfile.includes(MARKER) || podfile.includes(LEGACY_MARKER)) {
         return nextConfig;
       }
 

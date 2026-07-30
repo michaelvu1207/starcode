@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError } from "@starcode/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
@@ -50,7 +50,7 @@ layer("GitLabCli.layer", (it) => {
               source_project_id: 101,
               target_project_id: 100,
               source_project: {
-                path_with_namespace: "octocat/t3code",
+                path_with_namespace: "octocat/starcode",
               },
             }),
           ),
@@ -73,7 +73,7 @@ layer("GitLabCli.layer", (it) => {
         headRefName: "feature/mr-threads",
         state: "open",
         isCrossRepository: true,
-        headRepositoryNameWithOwner: "octocat/t3code",
+        headRepositoryNameWithOwner: "octocat/starcode",
         headRepositoryOwnerLogin: "octocat",
       });
       expect(mockedRun).toHaveBeenCalledWith(
@@ -159,10 +159,10 @@ layer("GitLabCli.layer", (it) => {
           processOutput(
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
-              path_with_namespace: "octocat/t3code",
-              web_url: "https://gitlab.com/octocat/t3code",
-              http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
-              ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
+              path_with_namespace: "octocat/starcode",
+              web_url: "https://gitlab.com/octocat/starcode",
+              http_url_to_repo: "https://gitlab.com/octocat/starcode.git",
+              ssh_url_to_repo: "git@gitlab.com:octocat/starcode.git",
             }),
           ),
         ),
@@ -172,14 +172,14 @@ layer("GitLabCli.layer", (it) => {
         const glab = yield* GitLabCli.GitLabCli;
         return yield* glab.getRepositoryCloneUrls({
           cwd: "/repo",
-          repository: "octocat/t3code",
+          repository: "octocat/starcode",
         });
       });
 
       assert.deepStrictEqual(result, {
-        nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code",
-        sshUrl: "git@gitlab.com:octocat/t3code.git",
+        nameWithOwner: "octocat/starcode",
+        url: "https://gitlab.com/octocat/starcode",
+        sshUrl: "git@gitlab.com:octocat/starcode.git",
       });
     }),
   );
@@ -194,7 +194,7 @@ layer("GitLabCli.layer", (it) => {
         baseBranch: "main",
         headSelector: "owner:feature/provider",
         title: "Provider MR",
-        bodyFile: "/tmp/t3-mr-body.md",
+        bodyFile: "/tmp/starcode-mr-body.md",
       });
 
       expect(mockedRun).toHaveBeenCalledWith(
@@ -213,7 +213,7 @@ layer("GitLabCli.layer", (it) => {
             "--raw-field",
             "title=Provider MR",
             "--field",
-            "description=@/tmp/t3-mr-body.md",
+            "description=@/tmp/starcode-mr-body.md",
           ],
         }),
       );
@@ -237,10 +237,10 @@ layer("GitLabCli.layer", (it) => {
             processOutput(
               // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify({
-                path_with_namespace: "octocat/t3code",
-                web_url: "https://gitlab.com/octocat/t3code",
-                http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
-                ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
+                path_with_namespace: "octocat/starcode",
+                web_url: "https://gitlab.com/octocat/starcode",
+                http_url_to_repo: "https://gitlab.com/octocat/starcode.git",
+                ssh_url_to_repo: "git@gitlab.com:octocat/starcode.git",
               }),
             ),
           ),
@@ -249,14 +249,14 @@ layer("GitLabCli.layer", (it) => {
       const glab = yield* GitLabCli.GitLabCli;
       const result = yield* glab.createRepository({
         cwd: "/repo",
-        repository: "octocat/t3code",
+        repository: "octocat/starcode",
         visibility: "public",
       });
 
       assert.deepStrictEqual(result, {
-        nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code",
-        sshUrl: "git@gitlab.com:octocat/t3code.git",
+        nameWithOwner: "octocat/starcode",
+        url: "https://gitlab.com/octocat/starcode",
+        sshUrl: "git@gitlab.com:octocat/starcode.git",
       });
       expect(mockedRun).toHaveBeenNthCalledWith(
         1,
@@ -277,9 +277,9 @@ layer("GitLabCli.layer", (it) => {
             "POST",
             "projects",
             "--raw-field",
-            "path=t3code",
+            "path=starcode",
             "--raw-field",
-            "name=t3code",
+            "name=starcode",
             "--raw-field",
             "visibility=public",
             "--raw-field",

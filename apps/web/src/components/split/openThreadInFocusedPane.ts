@@ -9,7 +9,7 @@
  *
  * @module openThreadInFocusedPane
  */
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@starcode/contracts";
 
 import { resolveSidebarOpenTarget } from "./Split.logic";
 import { useSplitStore } from "./splitStore";

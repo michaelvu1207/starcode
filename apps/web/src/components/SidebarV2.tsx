@@ -1,12 +1,12 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+} from "@starcode/client-runtime/environment";
+import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@starcode/contracts";
 import {
   CircleAlertIcon,
   CopyIcon,
@@ -34,7 +34,7 @@ import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,

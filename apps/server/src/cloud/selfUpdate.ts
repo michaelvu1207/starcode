@@ -7,13 +7,13 @@ import {
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
   type ServerSelfUpdateResult,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   HostProcessArguments,
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+} from "@starcode/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -136,7 +136,7 @@ export const resolveHostServerSelfUpdateCapability = Effect.fn(
       Effect.orElseSucceed(() => false),
     );
     // INVOCATION_ID only proves that some systemd unit launched us. The
-    // explicit marker written into t3code.service identifies this unit as the
+    // explicit marker written into starcode.service identifies this unit as the
     // supervisor that will replace the current process when restarted.
     if (
       unitReferencesEntry &&
@@ -168,7 +168,7 @@ export class ServerSelfUpdate extends Context.Service<
       input: ServerSelfUpdateInput,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
   }
->()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
+>()("starcode/cloud/selfUpdate/ServerSelfUpdate") {}
 
 export const make = Effect.fn("cloud.server_self_update.make")(function* (options?: {
   readonly host?: Partial<ServerSelfUpdateHost>;
@@ -260,7 +260,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
     const activeMethod = capability;
     const targetVersion = input.targetVersion.trim();
     if (!EXACT_VERSION_PATTERN.test(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+      return yield* failWith(`'${targetVersion}' is not an exact starcode version.`);
     }
 
     const alreadyRunning = yield* Ref.getAndSet(inFlight, true);
@@ -276,7 +276,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         path,
         runner,
       }).pipe(
-        Effect.mapError((error) => failWith("Could not install the requested t3 version.", error)),
+        Effect.mapError((error) =>
+          failWith("Could not install the requested starcode version.", error),
+        ),
       );
 
       // A broken artifact (failed native build, incompatible node) must be
@@ -328,7 +330,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         // still recognize the unit as current.
         const unit = renderBootServiceUnit({
           nodePath: host.execPath,
-          t3EntryPath: runtimePaths.entryPath,
+          starcodeEntryPath: runtimePaths.entryPath,
           baseDir: serverConfig.baseDir,
           logPath: path.join(serverConfig.logsDir, "boot-service.log"),
           unitPath,
@@ -411,21 +413,21 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           .spawnDetached("/bin/sh", [
             "-c",
             'sleep 3; exec "$@"',
-            "t3-self-update",
+            "starcode-self-update",
             host.execPath,
             runtimePaths.entryPath,
             ...host.cliArgs,
           ])
           .pipe(
             Effect.mapError((cause) =>
-              failWith("Could not start the replacement t3 process.", cause),
+              failWith("Could not start the replacement starcode process.", cause),
             ),
           );
         yield* Effect.logInfo("Server self-update installed; respawning.", { targetVersion });
         yield* scheduleRestart(
           Effect.try({
             try: () => host.exitProcess(),
-            catch: (cause) => failWith("Could not exit the replaced t3 process.", cause),
+            catch: (cause) => failWith("Could not exit the replaced starcode process.", cause),
           }).pipe(
             Effect.catch((error) =>
               Effect.logError("Server self-update could not exit the replaced process.").pipe(

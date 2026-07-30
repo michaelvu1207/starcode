@@ -15,10 +15,10 @@
  * busiest component upstream touches, so a fork diff inside it re-conflicts on
  * every rebase; here the call site stays one line and this module is ours.
  */
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { SidebarV2ThreadSortOrder } from "@t3tools/contracts";
-import { isListableThread } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
+import type { SidebarV2ThreadSortOrder } from "@starcode/contracts";
+import { isListableThread } from "@starcode/contracts";
 
 import { sortThreadsForSidebarV2 } from "./Sidebar.logic";
 import { rankThreadsForSidebarV2 } from "./SidebarV2.activity";

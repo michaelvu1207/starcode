@@ -2,12 +2,12 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentUsageAtoms,
   createEnvironmentUsageSnapshotsAtom,
-} from "@t3tools/client-runtime/state/usage";
+} from "@starcode/client-runtime/state/usage";
 import type {
   CliUsageModelAlias,
   CliUsageModelAliasCatalog,
   EnvironmentId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useCallback, useMemo } from "react";
 
 import {

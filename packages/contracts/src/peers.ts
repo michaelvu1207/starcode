@@ -1,7 +1,7 @@
 /**
  * Peers - cross-machine thread federation contracts.
  *
- * A peer is another t3 environment this environment holds a credential for.
+ * A peer is another starcode environment this environment holds a credential for.
  * Peers are registered by redeeming a pairing token minted on the peer, and the
  * credential is narrowed during the token exchange to exactly what its class
  * allows.
@@ -109,7 +109,7 @@ export type PeerEnvironment = typeof PeerEnvironment.Type;
  * Two ways to hand this environment a peer credential.
  *
  * `token` is the v1 path for a small fixed fleet: run
- * `t3 auth session issue --token-only --read-only` on the peer and paste the
+ * `starcode auth session issue --token-only --read-only` on the peer and paste the
  * result. Nothing is redeemed — the token is verified against the peer's own
  * session endpoint and stored.
  *

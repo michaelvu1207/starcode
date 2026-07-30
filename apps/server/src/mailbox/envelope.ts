@@ -23,7 +23,7 @@
  *
  * @module MailboxEnvelope
  */
-import { MAILBOX_ENVELOPE_PREFIX, type ThreadMailboxEntry } from "@t3tools/contracts";
+import { MAILBOX_ENVELOPE_PREFIX, type ThreadMailboxEntry } from "@starcode/contracts";
 
 /**
  * Everything the envelope actually reads.

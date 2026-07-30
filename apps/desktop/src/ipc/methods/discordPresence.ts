@@ -1,4 +1,4 @@
-import { DiscordPresenceStateSchema, DiscordPresenceSummarySchema } from "@t3tools/contracts";
+import { DiscordPresenceStateSchema, DiscordPresenceSummarySchema } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

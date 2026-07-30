@@ -11,7 +11,7 @@
  * would buy nothing while adding a second scroll-anchoring implementation to
  * keep in step with the first.
  */
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@starcode/contracts";
 import { ArrowLeftIcon, BotIcon, PauseIcon, WrenchIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 

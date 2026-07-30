@@ -12,20 +12,20 @@ import {
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
-} from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+} from "@starcode/contracts";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import { safeErrorLogAttributes } from "@starcode/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   MAX_GLASS_OPACITY,
   MIN_GLASS_OPACITY,
-} from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@starcode/contracts/settings";
+import { createModelSelection } from "@starcode/shared/model";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";

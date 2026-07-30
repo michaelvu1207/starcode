@@ -1,6 +1,6 @@
 import * as React from "react";
-import { type ContextMenuItem, isListableThread } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { type ContextMenuItem, isListableThread } from "@starcode/contracts";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@starcode/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,

@@ -12,8 +12,8 @@
  * `attempt`, `retryAt`, and `stage`, and "reconnecting, retrying in 8s" is
  * precisely the sentence this dropdown exists to say.
  */
-import type { EnvironmentUsageSnapshot } from "@t3tools/contracts";
-import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
+import type { EnvironmentUsageSnapshot } from "@starcode/contracts";
+import type { SupervisorConnectionState } from "@starcode/client-runtime/connection";
 
 import { peakUsedPercent } from "../usage/AccountsUsage.logic";
 

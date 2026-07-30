@@ -13,7 +13,7 @@
  * most days (a category you named), where connections is the one you reach for
  * when you care where something is running.
  */
-import type { SidebarV2ThreadSortOrder, SidebarV2ViewMode } from "@t3tools/contracts";
+import type { SidebarV2ThreadSortOrder, SidebarV2ViewMode } from "@starcode/contracts";
 import { SlidersHorizontalIcon } from "lucide-react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";

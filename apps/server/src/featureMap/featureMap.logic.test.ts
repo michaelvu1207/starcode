@@ -1,4 +1,4 @@
-import type { FeatureMapEntry, FeatureMapEntryId } from "@t3tools/contracts";
+import type { FeatureMapEntry, FeatureMapEntryId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { nextStage, pruneDanglingLinks, resolvePlan, wouldCycle } from "./featureMap.logic.ts";

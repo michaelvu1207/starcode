@@ -5,7 +5,7 @@
  *
  * @module composerRuntimeModes
  */
-import type { RuntimeMode } from "@t3tools/contracts";
+import type { RuntimeMode } from "@starcode/contracts";
 import { LockIcon, LockOpenIcon, PenLineIcon, SparklesIcon, type LucideIcon } from "lucide-react";
 
 export const runtimeModeConfig: Record<

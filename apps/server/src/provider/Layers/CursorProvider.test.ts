@@ -8,8 +8,8 @@ import * as Path from "effect/Path";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import type { CursorSettings } from "@starcode/contracts";
+import { createModelCapabilities } from "@starcode/shared/model";
 
 import {
   buildCursorProviderSnapshot,
@@ -153,7 +153,7 @@ const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: st
   return {
     exitLogPath,
     wrapperPath: yield* makeMockAgentWrapper({
-      T3_ACP_EXIT_LOG_PATH: exitLogPath,
+      STARCODE_ACP_EXIT_LOG_PATH: exitLogPath,
     }),
   };
 });
@@ -305,7 +305,7 @@ const cursorAcpDiscoveryFailedMessage = [
   "See https://cursor.com/docs/cli/installation.",
   "Check server logs for ACP details.",
 ].join(" ");
-const missingCursorBinaryPath = "/definitely/not/installed/t3-cursor-agent";
+const missingCursorBinaryPath = "/definitely/not/installed/starcode-cursor-agent";
 const cursorCliCommandMissingMessage = [
   `Cursor CLI command \`${missingCursorBinaryPath}\` was not found.`,
   `Install or enable the Cursor CLI, make sure \`${missingCursorBinaryPath}\` is on PATH, then restart starcode.`,
@@ -459,7 +459,7 @@ describe("checkCursorProviderStatus", () => {
         },
         {
           ...process.env,
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          STARCODE_ACP_REQUEST_LOG_PATH: requestLogPath,
         },
       ),
     );

@@ -10,7 +10,7 @@
  *
  * @module threadPlanSummary
  */
-import type { OrchestrationThreadPlanSummary } from "@t3tools/contracts";
+import type { OrchestrationThreadPlanSummary } from "@starcode/contracts";
 
 type PlanStepStatus = "pending" | "inProgress" | "completed";
 

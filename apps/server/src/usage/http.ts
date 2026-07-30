@@ -18,7 +18,7 @@ import {
   type CliUsageModelAliasCatalog,
   type CliUsageProvider,
   EnvironmentHttpApi,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 

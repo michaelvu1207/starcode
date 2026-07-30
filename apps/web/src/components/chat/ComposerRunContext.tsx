@@ -17,7 +17,7 @@
  *
  * @module ComposerRunContext
  */
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { memo } from "react";
 
 import type { DraftId } from "~/composerDraftStore";

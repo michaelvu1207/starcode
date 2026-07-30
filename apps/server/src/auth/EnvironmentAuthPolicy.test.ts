@@ -21,7 +21,9 @@ const makeEnvironmentAuthPolicyLayer = (
           } satisfies ServerConfig.ServerConfig["Service"];
         }),
       ).pipe(
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-policy-test-" })),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "starcode-auth-policy-test-" }),
+        ),
       ),
     ),
   );

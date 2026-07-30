@@ -1,4 +1,4 @@
-import type { HistoryImportAttempt } from "@t3tools/client-runtime/state/terminal-history";
+import type { HistoryImportAttempt } from "@starcode/client-runtime/state/terminal-history";
 import type {
   EnvironmentId,
   HistoryImportRecord,
@@ -9,7 +9,7 @@ import type {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

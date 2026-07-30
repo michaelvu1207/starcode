@@ -26,7 +26,7 @@ import {
   HISTORY_PAGE_MAX_ENTRIES,
   type HistoryProvider,
   type HistoryTranscriptEntry,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { readSessionTail } from "./tailReader.ts";
 

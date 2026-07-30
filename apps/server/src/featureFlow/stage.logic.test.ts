@@ -4,7 +4,7 @@ import type {
   FeatureFlowTrunkStage,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import {
   inferDependencies,

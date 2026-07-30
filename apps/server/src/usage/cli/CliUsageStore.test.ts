@@ -14,7 +14,7 @@ import { makeCliUsageStore } from "./CliUsageStore.ts";
 /** A home directory laid out the way the two CLIs lay theirs out. */
 const makeHome = (): Effect.Effect<{ homeDir: string; cachePath: string }> =>
   Effect.promise(async () => {
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cli-usage-store-"));
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-cli-usage-store-"));
     return { homeDir: NodePath.join(root, "home"), cachePath: NodePath.join(root, "cache.json") };
   });
 

@@ -1,4 +1,4 @@
-import { EMPTY_DISCORD_PRESENCE_SUMMARY, type DiscordPresenceSummary } from "@t3tools/contracts";
+import { EMPTY_DISCORD_PRESENCE_SUMMARY, type DiscordPresenceSummary } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { discordActivityEquals, renderDiscordActivity } from "./discordActivity.ts";

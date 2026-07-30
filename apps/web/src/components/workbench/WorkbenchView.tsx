@@ -7,14 +7,14 @@
  * an agent how it is doing.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
 import {
   DEFAULT_RUNTIME_MODE,
   EnvironmentId,
   ThreadId,
   type ScopedProjectRef,
   type ServerSettingsPatch,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 

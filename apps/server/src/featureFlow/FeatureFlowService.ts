@@ -22,7 +22,7 @@ import {
   type FeatureFlowTrunkStage,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -56,7 +56,7 @@ export interface FeatureFlowServiceShape {
 export class FeatureFlowService extends Context.Service<
   FeatureFlowService,
   FeatureFlowServiceShape
->()("t3/featureFlow/FeatureFlowService") {}
+>()("starcode/featureFlow/FeatureFlowService") {}
 
 export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;

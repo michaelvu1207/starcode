@@ -20,7 +20,7 @@
  */
 import { CheckIcon, TagIcon } from "lucide-react";
 
-import type { CliUsageProvider } from "@t3tools/contracts";
+import type { CliUsageProvider } from "@starcode/contracts";
 
 import { cn } from "../../lib/utils";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";

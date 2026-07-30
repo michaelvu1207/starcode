@@ -19,7 +19,7 @@ import type {
   HistoryProvider,
   HistorySessionId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { formatShortDate } from "../history/ImportConversationDialog.logic";
 import { historyProviderLabel } from "../sidebar/HistoryProviderIcon";

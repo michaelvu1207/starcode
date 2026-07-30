@@ -4,9 +4,9 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
-} from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+} from "@starcode/contracts";
+import { parseScopedThreadKey } from "@starcode/client-runtime/environment";
+import { resolveChatListAnchoredEndSpace } from "@starcode/shared/chatList";
 import {
   createContext,
   Fragment,
@@ -29,7 +29,7 @@ import {
   activityPhrase,
   formatActivityPhrase,
   type ActivityPhrase,
-} from "@t3tools/shared/activityPhrasing";
+} from "@starcode/shared/activityPhrasing";
 import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
@@ -102,7 +102,7 @@ import {
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { type TimestampFormat } from "@starcode/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 
 import {
@@ -115,7 +115,7 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   parseMailboxMessageSegments,
   type MailboxMessageEntry,
-} from "@t3tools/client-runtime/messages";
+} from "@starcode/client-runtime/messages";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,

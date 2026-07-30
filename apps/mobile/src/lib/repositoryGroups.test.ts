@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@starcode/contracts";
 
 import { groupProjectsByRepository } from "./repositoryGroups";
-import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentProject, EnvironmentThreadShell } from "@starcode/client-runtime/state/shell";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -53,20 +53,20 @@ describe("groupProjectsByRepository", () => {
       provider: "github",
       owner: "t3tools",
       name: "t3code",
-      displayName: "T3 Code",
+      displayName: "starcode",
     };
 
     const projects = [
       makeProject({
         environmentId: EnvironmentId.make("env-local"),
         id: ProjectId.make("project-local"),
-        title: "T3 Code",
+        title: "starcode",
         repositoryIdentity: repoIdentity,
       }),
       makeProject({
         environmentId: EnvironmentId.make("env-staging"),
         id: ProjectId.make("project-staging"),
-        title: "T3 Code",
+        title: "starcode",
         repositoryIdentity: repoIdentity,
       }),
     ];
@@ -95,7 +95,7 @@ describe("groupProjectsByRepository", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
       key: "github.com/t3tools/t3code",
-      title: "T3 Code",
+      title: "starcode",
       subtitle: "t3tools/t3code",
       projectCount: 2,
       threadCount: 2,

@@ -1,5 +1,5 @@
 /**
- * `t3 peers` - pairing this environment with the other machines in the fleet.
+ * `starcode peers` - pairing this environment with the other machines in the fleet.
  *
  * This exists because the registry had no operator surface at all. The routes
  * were there and nothing called them: no button in the web app, no command
@@ -21,7 +21,7 @@ import {
   PeerName,
   type PeerEnvironment,
   type PeerRegisterInput,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -110,7 +110,7 @@ const addCommand = Command.make("add", {
   ),
   token: Flag.string("token").pipe(
     Flag.withDescription(
-      "Bearer token minted on the peer with `t3 auth session issue --token-only`. Use --pairing-token instead for a one-time pairing credential.",
+      "Bearer token minted on the peer with `starcode auth session issue --token-only`. Use --pairing-token instead for a one-time pairing credential.",
     ),
     Flag.optional,
   ),
@@ -132,7 +132,7 @@ const addCommand = Command.make("add", {
   ),
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Register another t3 environment as a peer of this one."),
+  Command.withDescription("Register another starcode environment as a peer of this one."),
   Command.withHandler((flags) =>
     runWithPeerRegistry(
       flags,
@@ -146,7 +146,7 @@ const addCommand = Command.make("add", {
             return yield* Console.error(
               Option.isSome(flags.token)
                 ? "Pass --token or --pairing-token, not both."
-                : "Pass --token (from `t3 auth session issue --token-only` on the peer) or --pairing-token.",
+                : "Pass --token (from `starcode auth session issue --token-only` on the peer) or --pairing-token.",
             );
           }
 
@@ -186,7 +186,7 @@ const listCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag 
           }
           yield* Console.log(
             peers.length === 0
-              ? "No peers registered. Add one with `t3 peers add <name> <url> --token ...`.\n"
+              ? "No peers registered. Add one with `starcode peers add <name> <url> --token ...`.\n"
               : `${peers.map(describePeer).join("\n\n")}\n`,
           );
         }),

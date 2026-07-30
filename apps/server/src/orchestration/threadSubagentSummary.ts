@@ -18,7 +18,7 @@
  *
  * @module threadSubagentSummary
  */
-import type { OrchestrationThreadSubagent } from "@t3tools/contracts";
+import type { OrchestrationThreadSubagent } from "@starcode/contracts";
 
 type FoldStatus = "running" | "paused" | "completed" | "failed" | "stopped";
 

@@ -19,7 +19,7 @@
  * failures: removing a slug a machine no longer has is a no-op, and a fan-out
  * with one code path is worth more than one that saves three requests.
  */
-import type { EnvironmentId, ProjectCategorySlug } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectCategorySlug } from "@starcode/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { ProjectCatalogFanOutResult } from "../../state/projectCatalog";

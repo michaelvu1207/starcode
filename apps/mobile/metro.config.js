@@ -32,6 +32,9 @@ config.resolver = {
       : config.resolver?.blockList
         ? [config.resolver.blockList]
         : []),
+    // Both state-dir names: a worktree created before the rename still has
+    // `.t3`, and Metro crawling either one picks up a second copy of the repo.
+    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.starcode[/\\\\].*`),
     new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
   ],
   extraNodeModules: {

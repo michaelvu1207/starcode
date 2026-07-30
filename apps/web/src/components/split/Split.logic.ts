@@ -49,7 +49,7 @@ export const SPLIT_CLOSE_DISARM_FRACTION = 0.85;
 export const SPLIT_RATIO_KEY_STEP = 0.02;
 export const SPLIT_RATIO_KEY_STEP_COARSE = 0.1;
 
-export const SPLIT_STORAGE_KEY = "t3code:split-view:v1";
+export const SPLIT_STORAGE_KEY = "starcode:split-view:v1";
 
 /**
  * Render state of the split, resolved from the store plus the live viewport.

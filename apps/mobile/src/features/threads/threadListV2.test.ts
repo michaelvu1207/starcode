@@ -1,5 +1,5 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/shell";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -186,6 +186,7 @@ describe("live subagents", () => {
         title: "t",
         subagents: [agent("a")],
         session: {
+          threadId: ThreadId.make("t"),
           status: "running",
           providerName: "claude",
           providerInstanceId: ProviderInstanceId.make("claude"),

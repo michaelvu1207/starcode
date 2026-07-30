@@ -24,8 +24,8 @@ import {
   type ProjectCategorySlug,
   type ProjectId,
   type ThreadId,
-} from "@t3tools/contracts";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+} from "@starcode/contracts";
+import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -302,7 +302,7 @@ export interface ProjectCatalogRegistryShape {
 export class ProjectCatalogRegistry extends Context.Service<
   ProjectCatalogRegistry,
   ProjectCatalogRegistryShape
->()("t3/projectCatalog/ProjectCatalogRegistry") {}
+>()("starcode/projectCatalog/ProjectCatalogRegistry") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

@@ -1,5 +1,5 @@
 /**
- * PeerEnvironmentClient - typed HTTP access to another t3 environment.
+ * PeerEnvironmentClient - typed HTTP access to another starcode environment.
  *
  * Every call goes through the same `EnvironmentHttpApi` contract this server
  * serves, so peer reads stay schema-checked end to end and cannot drift from
@@ -19,8 +19,8 @@ import {
   type PeerCredentialClass,
   type ThreadId,
   type ThreadMailboxSendInput,
-} from "@t3tools/contracts";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+} from "@starcode/contracts";
+import { encodeOAuthScope } from "@starcode/shared/oauthScope";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";

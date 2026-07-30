@@ -1,5 +1,5 @@
-import type { AuthSessionState } from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { AuthSessionState } from "@starcode/contracts";
+import { squashAtomCommandFailure } from "@starcode/client-runtime/state/runtime";
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
 import { PairingSky } from "../brand/PairingSky";

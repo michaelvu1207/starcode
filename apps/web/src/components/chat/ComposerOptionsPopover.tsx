@@ -14,7 +14,7 @@
  *
  * @module ComposerOptionsPopover
  */
-import { type RuntimeMode } from "@t3tools/contracts";
+import { type RuntimeMode } from "@starcode/contracts";
 import { memo, type ReactNode } from "react";
 import { ChevronUpIcon } from "lucide-react";
 

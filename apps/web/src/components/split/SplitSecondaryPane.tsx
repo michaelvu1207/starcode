@@ -9,8 +9,8 @@
  *
  * @module SplitSecondaryPane
  */
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@starcode/contracts";
 import { useParams } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { useCallback } from "react";

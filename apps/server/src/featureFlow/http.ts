@@ -3,7 +3,7 @@
  *
  * @module FeatureFlowHttp
  */
-import { AuthOrchestrationReadScope, EnvironmentHttpApi } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, EnvironmentHttpApi } from "@starcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";

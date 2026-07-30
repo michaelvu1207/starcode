@@ -32,11 +32,11 @@ import type {
   ProjectCategorySlug,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   DEFAULT_PROJECT_CATEGORY_MASTER_DEFAULTS,
   toProjectCategorySlug,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import type { WorkbenchMasterCandidate } from "../workbench/Workbench.master";
 

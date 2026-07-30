@@ -12,7 +12,7 @@
  *
  * @module UsageIngest
  */
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 
 import { normalizeRateLimits, normalizeTurnCostUsd, normalizeTurnTokens } from "./normalize.ts";

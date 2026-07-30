@@ -7,7 +7,7 @@
  * by path — so all that is wanted here is the mark, using the same icons the
  * rest of the app uses so Claude and Codex read identically everywhere.
  */
-import type { HistoryProvider } from "@t3tools/contracts";
+import type { HistoryProvider } from "@starcode/contracts";
 import type { ReactNode } from "react";
 
 import { ClaudeAI, OpenAI } from "../Icons";

@@ -1,12 +1,12 @@
 import type {
   ModelCapabilities,
   ModelSelection,
-  ServerConfig as T3ServerConfig,
-} from "@t3tools/contracts";
+  ServerConfig as StarcodeServerConfig,
+} from "@starcode/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+} from "@starcode/shared/model";
 
 export type ModelOption = {
   readonly key: string;
@@ -59,7 +59,7 @@ function normalizeSelectionOptions(
 }
 
 export function buildModelOptions(
-  config: T3ServerConfig | null | undefined,
+  config: StarcodeServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();

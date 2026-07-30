@@ -52,7 +52,7 @@ import {
   type RuntimeMode,
   ThreadId,
   type ThreadMailboxOrigin,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -127,7 +127,7 @@ export interface PeerThreadWriterShape {
 }
 
 export class PeerThreadWriter extends Context.Service<PeerThreadWriter, PeerThreadWriterShape>()(
-  "t3/peers/PeerThreadWriter",
+  "starcode/peers/PeerThreadWriter",
 ) {}
 
 const failure = (

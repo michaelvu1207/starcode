@@ -1,6 +1,6 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { EnvironmentConnectionPresentation } from "@starcode/client-runtime/connection";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

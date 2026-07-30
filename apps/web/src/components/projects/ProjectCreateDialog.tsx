@@ -11,7 +11,7 @@
  * collision is a thing to see before pressing the button rather than discover
  * afterwards.
  */
-import { toProjectCategorySlug } from "@t3tools/contracts";
+import { toProjectCategorySlug } from "@starcode/contracts";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";

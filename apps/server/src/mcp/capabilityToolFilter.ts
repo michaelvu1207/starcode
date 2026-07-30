@@ -12,7 +12,7 @@
  * `McpServer.toolkit(...)` registers globally and Effect's own per-client
  * filter (`EnabledWhen`) only receives the MCP client's `initialize` payload —
  * the adapter's name and version, identical for every session on the machine.
- * It cannot see which t3 thread the bearer belongs to, which is the only thing
+ * It cannot see which starcode thread the bearer belongs to, which is the only thing
  * that decides this. So the seam has to be somewhere the resolved invocation is
  * in hand, and the auth middleware is the first such place.
  *

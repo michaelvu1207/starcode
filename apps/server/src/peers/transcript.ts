@@ -23,7 +23,7 @@ import {
   type ProjectCategoryRecord,
   type ProjectCategorySlug,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 const TOOL_CALL_NAME_MAX_CHARS = 80;
 

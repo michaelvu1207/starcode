@@ -30,7 +30,7 @@
  * the answer to "I am done with this for now" and seeing it beside delete is
  * what makes that obvious.
  */
-import type { ProjectCategoryDisplayPatch } from "@t3tools/contracts";
+import type { ProjectCategoryDisplayPatch } from "@starcode/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ArchiveIcon, ImagePlusIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";

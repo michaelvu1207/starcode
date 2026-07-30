@@ -1,6 +1,6 @@
 "use client";
 
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@starcode/contracts";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 

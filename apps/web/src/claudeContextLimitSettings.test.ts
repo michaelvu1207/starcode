@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type UnifiedSettings } from "@t3tools/contracts";
+import { ProviderInstanceId, type UnifiedSettings } from "@starcode/contracts";
 
 import {
   readClaudeContextLimitSetting,

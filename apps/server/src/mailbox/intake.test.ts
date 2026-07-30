@@ -4,7 +4,7 @@ import {
   type OrchestrationThreadShell,
   ThreadId,
   type ThreadMailboxOrigin,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 

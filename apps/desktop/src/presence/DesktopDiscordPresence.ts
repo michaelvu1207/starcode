@@ -2,7 +2,7 @@ import {
   EMPTY_DISCORD_PRESENCE_SUMMARY,
   type DiscordPresenceState,
   type DiscordPresenceSummary,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,7 +25,7 @@ import { connectDiscordRpc, type DiscordRpcConnection } from "./discordRpcConnec
  * The fork's own Discord application id, if one has been registered and baked
  * in. Empty by default: presence publishes under whatever application the id
  * names, so an inherited id would put someone else's name and artwork on your
- * status. `T3CODE_DISCORD_APP_ID` overrides it without a rebuild.
+ * status. `STARCODE_DISCORD_APP_ID` overrides it without a rebuild.
  *
  * See docs/fork/DISCORD-PRESENCE.md for the five-minute portal setup.
  */
@@ -63,7 +63,7 @@ const UNCONFIGURED_STATE: DiscordPresenceState = {
   enabled: true,
   status: "unconfigured",
   accountName: null,
-  detail: "Set T3CODE_DISCORD_APP_ID to a Discord application id to publish presence.",
+  detail: "Set STARCODE_DISCORD_APP_ID to a Discord application id to publish presence.",
 };
 
 /**
@@ -97,7 +97,7 @@ export class DesktopDiscordPresence extends Context.Service<
     /** The publish loop. Never returns; fork it once at bootstrap. */
     readonly run: Effect.Effect<never>;
   }
->()("@t3tools/desktop/presence/DesktopDiscordPresence") {}
+>()("@starcode/desktop/presence/DesktopDiscordPresence") {}
 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;

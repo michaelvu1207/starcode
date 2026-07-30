@@ -17,7 +17,7 @@
  * the heading is a target you hit constantly, and the one action that cannot be
  * undone does not belong on it.
  */
-import type { ProjectCategoryDisplayPatch } from "@t3tools/contracts";
+import type { ProjectCategoryDisplayPatch } from "@starcode/contracts";
 import { PencilIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 

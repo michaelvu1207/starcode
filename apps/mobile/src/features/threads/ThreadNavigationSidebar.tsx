@@ -2,7 +2,7 @@ import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+} from "@starcode/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -981,7 +981,7 @@ function ThreadNavigationSidebarPane(
           </Svg>
         </View>
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
-          <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
+          <Text className="flex-1 text-[34px] font-starcode-bold text-foreground" numberOfLines={1}>
             Threads
           </Text>
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>

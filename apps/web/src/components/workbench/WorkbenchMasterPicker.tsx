@@ -10,9 +10,9 @@ import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@t3tools/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+} from "@starcode/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { EnvironmentId, ScopedProjectRef } from "@starcode/contracts";
 import { ServerIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 

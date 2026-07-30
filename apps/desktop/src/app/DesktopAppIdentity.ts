@@ -14,7 +14,7 @@ const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 
 const AppPackageMetadata = Schema.Struct({
-  t3codeCommitHash: Schema.optional(Schema.String),
+  starcodeCommitHash: Schema.optional(Schema.String),
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
@@ -36,7 +36,7 @@ export class DesktopAppIdentity extends Context.Service<
     readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
     readonly configure: Effect.Effect<void>;
   }
->()("@t3tools/desktop/app/DesktopAppIdentity") {}
+>()("@starcode/desktop/app/DesktopAppIdentity") {}
 
 const normalizeCommitHash = (value: string): Option.Option<string> => {
   const trimmed = value.trim();
@@ -60,7 +60,9 @@ export const make = Effect.gen(function* () {
       onSome: (value) =>
         decodeAppPackageMetadata(value).pipe(
           Effect.map((parsed) =>
-            Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
+            Option.fromNullishOr(parsed.starcodeCommitHash).pipe(
+              Option.flatMap(normalizeCommitHash),
+            ),
           ),
           Effect.orElseSucceed(() => Option.none<string>()),
         ),
@@ -91,22 +93,61 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveUserDataPath = Effect.gen(function* () {
-    const legacyPath = environment.path.join(
+    const userDataPath = environment.path.join(
       environment.appDataDirectory,
-      environment.legacyUserDataDirName,
+      environment.userDataDirName,
     );
-    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+    const userDataPathExists = yield* fileSystem.exists(userDataPath).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopUserDataPathResolutionError({
-            legacyPath,
+            legacyPath: userDataPath,
             cause,
           }),
       ),
     );
-    return legacyPathExists
-      ? legacyPath
-      : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+    if (userDataPathExists) {
+      return userDataPath;
+    }
+
+    let legacyPath = Option.none<string>();
+    for (const legacyUserDataDirName of environment.legacyUserDataDirNames) {
+      const candidatePath = environment.path.join(
+        environment.appDataDirectory,
+        legacyUserDataDirName,
+      );
+      const candidatePathExists = yield* fileSystem.exists(candidatePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopUserDataPathResolutionError({
+              legacyPath: candidatePath,
+              cause,
+            }),
+        ),
+      );
+      if (candidatePathExists) {
+        legacyPath = Option.some(candidatePath);
+        break;
+      }
+    }
+
+    if (Option.isNone(legacyPath)) {
+      return userDataPath;
+    }
+
+    // Copying keeps the legacy directory as an intentional rollback boundary;
+    // returning an empty destination after a failed copy would instead hide a
+    // migration failure behind an apparently clean first launch.
+    yield* fileSystem.copy(legacyPath.value, userDataPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopUserDataPathResolutionError({
+            legacyPath: legacyPath.value,
+            cause,
+          }),
+      ),
+    );
+    return userDataPath;
   }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
   const configure = Effect.gen(function* () {

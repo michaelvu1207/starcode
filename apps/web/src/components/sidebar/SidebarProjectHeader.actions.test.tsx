@@ -13,7 +13,7 @@
  * still where this is *seen*, this is where the next person to touch it finds
  * out.
  */
-import type { ProjectCategorySlug } from "@t3tools/contracts";
+import type { ProjectCategorySlug } from "@starcode/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 

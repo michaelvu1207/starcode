@@ -3,7 +3,7 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -38,7 +38,7 @@ export interface McpInvocationScope {
 export class McpInvocationContext extends Context.Service<
   McpInvocationContext,
   McpInvocationScope
->()("t3/mcp/McpInvocationContext") {}
+>()("starcode/mcp/McpInvocationContext") {}
 
 // Preview-specific: its failure type names the preview capability, so other
 // capabilities carry their own guard rather than widening this error contract.

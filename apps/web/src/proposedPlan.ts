@@ -1,7 +1,7 @@
 // Imported rather than defined here: the server picks thread titles with the
 // same function, and the sidebar name has to match the plan's own heading.
 // Re-exported because this module is where the web app already looks for it.
-import { proposedPlanTitle } from "@t3tools/shared/proposedPlanTitle";
+import { proposedPlanTitle } from "@starcode/shared/proposedPlanTitle";
 
 export { proposedPlanTitle };
 

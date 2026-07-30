@@ -6,9 +6,9 @@
  * on the first is an id the API rejects. So every model is asserted here
  * rather than a representative sample.
  */
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@starcode/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection } from "@starcode/shared/model";
 
 import {
   resolveClaudeApiModelId,

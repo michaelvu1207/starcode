@@ -43,7 +43,7 @@ import {
   ProjectSetIconToolInput,
   ProjectSetIconToolResult,
   ProjectToolError,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";

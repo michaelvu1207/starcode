@@ -17,7 +17,7 @@ import {
   ThreadId,
   type FeatureMapEntry,
   type OrchestrationShellSnapshot,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -81,7 +81,9 @@ const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapabilit
     Layer.provideMerge(projectCatalogRegistryLayer),
     Layer.provideMerge(projectionLayer),
     Layer.provideMerge(
-      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-feature-tools-test-" })),
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), { prefix: "starcode-feature-tools-test-" }),
+      ),
     ),
     Layer.provideMerge(NodeServices.layer),
   );

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test starcode Mobile"
+  short_description: "Test starcode on iOS or Android"
+  default_prompt: "Use $test-starcode-mobile to launch starcode against an isolated backend and verify the affected flow on an available simulator or emulator."

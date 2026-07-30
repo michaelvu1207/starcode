@@ -28,7 +28,7 @@ import {
   type ThreadId,
   type ThreadMailboxEntry,
   type ThreadMailboxOrigin,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -87,7 +87,7 @@ export interface ThreadMailboxShape {
 }
 
 export class ThreadMailbox extends Context.Service<ThreadMailbox, ThreadMailboxShape>()(
-  "t3/mailbox/ThreadMailbox",
+  "starcode/mailbox/ThreadMailbox",
 ) {}
 
 interface MailboxRow {

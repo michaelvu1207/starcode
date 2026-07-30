@@ -6,8 +6,8 @@ import {
   ThreadId,
   type ScopedProjectRef,
   type ScopedThreadRef,
-} from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+} from "@starcode/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/shell";
 import * as Option from "effect/Option";
 
 import { useProject, useThreadShell } from "../state/entities";

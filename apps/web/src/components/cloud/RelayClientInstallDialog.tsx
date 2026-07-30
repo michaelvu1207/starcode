@@ -1,6 +1,6 @@
 import { DownloadIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
-import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
+import type { RelayClientInstallProgressStage } from "@starcode/contracts";
 
 import {
   completeRelayClientInstallDialogClose,
@@ -69,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "starcode is preparing this environment for secure access through T3 Connect."
-              : "starcode needs the relay client to make this environment available through T3 Connect."}
+              ? "starcode is preparing this environment for secure access through starcode Connect."
+              : "starcode needs the relay client to make this environment available through starcode Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>

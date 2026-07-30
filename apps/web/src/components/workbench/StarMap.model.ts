@@ -28,8 +28,8 @@ import type {
   OrchestrationThreadPlanSummary,
   ProjectCategorySlug,
   ThreadId,
-} from "@t3tools/contracts";
-import { featureMapEntryInProject } from "@t3tools/contracts";
+} from "@starcode/contracts";
+import { featureMapEntryInProject } from "@starcode/contracts";
 
 import type { FeatureFlowFeatureNode, FeatureFlowView } from "./FeatureFlow.model";
 import type { WorkbenchBoard, WorkbenchBoardCard } from "./Workbench.board";

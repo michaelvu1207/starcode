@@ -4,7 +4,7 @@ import {
   type ModelSelection,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,9 +17,9 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+} from "@starcode/shared/model";
+import { resolveSpawnCommand } from "@starcode/shared/shell";
+import { compareSemverVersions } from "@starcode/shared/semver";
 import {
   CLAUDE_CONTEXT_CHOICES,
   CLAUDE_CONTEXT_OPTION_ID,
@@ -30,7 +30,7 @@ import {
   DEFAULT_CLAUDE_CONTEXT_LIMIT_TOKENS,
   isClaudeContextChoice,
   resolveClaudeInstanceContextDefault,
-} from "@t3tools/shared/claudeContextLimit";
+} from "@starcode/shared/claudeContextLimit";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,

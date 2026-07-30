@@ -5,7 +5,7 @@ import type {
   ProjectCategorySlug,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveWorkbenchMaster } from "../workbench/Workbench.master";

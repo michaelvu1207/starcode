@@ -19,8 +19,8 @@
  * measured pane, so the whole of it is on screen at once. Panning would buy
  * room nobody needs at the price of hiding work off the edge of a void.
  */
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 

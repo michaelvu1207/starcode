@@ -1,5 +1,5 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { EventId } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@starcode/contracts";
+import { EventId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { collectMasterCreatedThreadIds, resolveWorkbenchMaster } from "./Workbench.master";
@@ -21,7 +21,7 @@ const claudeCreate = (threadId: string, isError = false) =>
   activity({
     itemType: "file_change",
     data: {
-      toolName: "mcp__t3-code__peer_thread_create",
+      toolName: "mcp__starcode__peer_thread_create",
       input: { peer: "laptop", projectId: "project-1", title: "Feature" },
       result: {
         type: "tool_result",
@@ -42,7 +42,7 @@ const codexCreate = (threadId: string) =>
     data: {
       item: {
         type: "mcpToolCall",
-        server: "t3-code",
+        server: "starcode",
         tool: "peer_thread_create",
         result: { content: [], structuredContent: { peer: "mac", threadId } },
       },
@@ -111,10 +111,10 @@ describe("collectMasterCreatedThreadIds", () => {
     const ids = collectMasterCreatedThreadIds([
       claudeCreate("thread-failed", true),
       activity({
-        data: { toolName: "mcp__t3-code__peer_thread_send", result: { content: [] } },
+        data: { toolName: "mcp__starcode__peer_thread_send", result: { content: [] } },
       }),
-      activity({ data: { toolName: "mcp__t3-code__peer_thread_create" } }),
-      activity({ data: { toolName: "mcp__t3-code__peer_thread_create", result: "not-json" } }),
+      activity({ data: { toolName: "mcp__starcode__peer_thread_create" } }),
+      activity({ data: { toolName: "mcp__starcode__peer_thread_create", result: "not-json" } }),
       activity({ data: { toolName: "x" } }, { tone: "info" }),
       activity(null),
     ]);

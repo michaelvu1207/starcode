@@ -1,5 +1,11 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { partitionSidebarV2Threads, type SidebarV2PartitionInput } from "./Sidebar.partition";

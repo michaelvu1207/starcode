@@ -51,7 +51,7 @@ export function formatServiceStatus(
     return "starcode service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
   }
   if (!status.installed) {
-    return "starcode service\n  Status: not installed\n  Next: Run `t3 service install`.";
+    return "starcode service\n  Status: not installed\n  Next: Run `starcode service install`.";
   }
   return [
     "starcode service",
@@ -157,7 +157,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
       message: installed
         ? "The installed starcode service needs an update or repair. Update it now?"
         : "Run starcode in the background whenever this machine boots? " +
-          "It stays reachable through T3 Connect even after you log out.",
+          "It stays reachable through starcode Connect even after you log out.",
       initial: true,
     }),
   );

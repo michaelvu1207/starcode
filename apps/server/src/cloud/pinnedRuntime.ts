@@ -37,6 +37,10 @@ export function pinnedRuntimePaths(
   const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
   return {
     versionDir,
+    // `t3`, not `starcode`: this is upstream's package as published on the public
+    // npm registry, not this workspace's. The rename to starcode stopped here on
+    // purpose — pointing it at `starcode` would resolve to a package that does
+    // not exist, and would only ever be reached with FORK_DISABLE_SELF_UPDATE off.
     entryPath: path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
@@ -62,7 +66,7 @@ export class PinnedRuntimeInstallError extends Schema.TaggedErrorClass<PinnedRun
 /**
  * The one place `t3@<version>` is fetched from the public npm registry, and so
  * the one place this fork has to refuse — see FORK_DISABLE_SELF_UPDATE. Every
- * caller (server self-update, `t3 service install|update`, the onboarding
+ * caller (server self-update, `starcode service install|update`, the onboarding
  * prompt) funnels through here, and refusing before the already-pinned check
  * matters: a runtime installed earlier is still upstream's build, so handing
  * back its paths would point a systemd unit at upstream code without touching
@@ -83,7 +87,7 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
       // catch-all BootServiceInstallError (which does not).
       return yield* new PinnedRuntimeInstallError({
         step:
-          `installing the pinned t3 runtime, which this fork disables: ` +
+          `installing the pinned starcode runtime, which this fork disables: ` +
           `\`npm install t3@${input.version}\` would replace this server with upstream's ` +
           `published build. Update by pulling and rebuilding the fork checkout instead`,
       });
@@ -135,7 +139,7 @@ export const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.install")(fu
         ),
       );
 
-      const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+      const installStep = "installing the pinned starcode runtime (this can take a few minutes)";
       yield* runner
         .run({
           command: "npm",

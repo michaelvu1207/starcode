@@ -34,7 +34,7 @@ import {
   type ServerProvider,
   type UsageRateLimitStatus,
   type UsageTotals,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 export interface AccountsUsageEnvironmentInput {
   readonly environmentId: EnvironmentId;

@@ -1,5 +1,8 @@
 import * as Equal from "effect/Equal";
-import { activityKindFromItemType, summarizeActivityGroup } from "@t3tools/shared/activityPhrasing";
+import {
+  activityKindFromItemType,
+  summarizeActivityGroup,
+} from "@starcode/shared/activityPhrasing";
 import {
   formatDuration,
   workEntryIndicatesToolNeutralStatus,
@@ -8,7 +11,7 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@starcode/contracts";
 
 /**
  * How many consecutive activities render as their own lines before the run

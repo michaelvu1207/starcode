@@ -38,7 +38,7 @@ import {
   type HistoryProvider,
   type HistorySessionId,
   type HistorySessionSummary,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -121,7 +121,7 @@ export interface HistoryIndexShape {
 }
 
 export class HistoryIndex extends Context.Service<HistoryIndex, HistoryIndexShape>()(
-  "t3/history/HistoryIndex",
+  "starcode/history/HistoryIndex",
 ) {}
 
 const compareEntries = (left: HistoryIndexEntry, right: HistoryIndexEntry): number => {

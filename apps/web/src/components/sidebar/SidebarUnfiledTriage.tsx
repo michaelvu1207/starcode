@@ -19,8 +19,8 @@
  * means nothing on any other machine — so this writes to one environment and
  * refreshes that one.
  */
-import type { ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { ProjectCategorySlug, ThreadId } from "@starcode/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import { ChevronLeftIcon, FolderInputIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 

@@ -6,7 +6,7 @@ import {
   ThreadId,
   type HistoryForkRecord,
   type HistoryImportRecord,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,7 +19,7 @@ const makeLayer = () =>
   historyImportRegistryLayer.pipe(
     Layer.provideMerge(
       Layer.fresh(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3code-history-imports-test-" }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "starcode-history-imports-test-" }),
       ),
     ),
     Layer.provideMerge(NodeServices.layer),

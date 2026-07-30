@@ -19,7 +19,7 @@
  * not have the same answer. `describeImportRefusal` is where each becomes
  * something a person can act on.
  */
-import type { HistoryImportAttempt } from "@t3tools/client-runtime/state/terminal-history";
+import type { HistoryImportAttempt } from "@starcode/client-runtime/state/terminal-history";
 import type {
   EnvironmentId,
   HistoryImportRecord,
@@ -29,7 +29,7 @@ import type {
   HistorySessionId,
   HistorySessionSummary,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { historyProviderLabel } from "../sidebar/HistoryProviderIcon";
 

@@ -1,0 +1,17 @@
+{
+  "name": "@starcode/mobile-terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "StarcodeTerminalModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.starcodeterminal.StarcodeTerminalModule"
+      ]
+    }
+  }
+}

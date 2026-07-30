@@ -24,8 +24,8 @@ import {
   type ProjectToolSummary,
   type ProjectToolThread,
   type ThreadId,
-} from "@t3tools/contracts";
-import { HostProcessHostname } from "@t3tools/shared/hostProcess";
+} from "@starcode/contracts";
+import { HostProcessHostname } from "@starcode/shared/hostProcess";
 import * as Effect from "effect/Effect";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";

@@ -18,7 +18,7 @@
  *
  * @module ComposerPaneMenu
  */
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { EllipsisIcon } from "lucide-react";
 import { memo } from "react";
 

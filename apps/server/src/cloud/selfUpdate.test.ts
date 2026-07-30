@@ -13,7 +13,7 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+} from "@starcode/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -54,7 +54,7 @@ const makeRecordingRunnerLayer = (
           return {
             stdout:
               options?.stdoutFor?.(input.command, input.args) ??
-              (versionFromPath === undefined ? "" : `t3 v${versionFromPath}\n`),
+              (versionFromPath === undefined ? "" : `starcode v${versionFromPath}\n`),
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -125,19 +125,22 @@ it.layer(NodeServices.layer)("FORK_DISABLE_SELF_UPDATE", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-self-update-test-" });
       const commands: Array<RecordedCommand> = [];
       const service = yield* SelfUpdate.make().pipe(
         Effect.provide(
           Layer.mergeAll(
             makeRecordingRunnerLayer(commands),
-            ServerConfig.layerTest(home, path.join(home, ".t3")),
+            ServerConfig.layerTest(home, path.join(home, ".starcode")),
           ),
         ),
         provideHostRefs({
           platform: "darwin",
           env: { HOME: home },
-          entryPath: path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs"),
+          entryPath: path.join(
+            home,
+            ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs",
+          ),
         }),
       );
 
@@ -153,7 +156,7 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
   const makeHome = Effect.fn("test.makeHome")(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-self-update-test-" });
     return { fs, path, home };
   });
 
@@ -166,13 +169,13 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
     const unitDir = path.join(home, ".config", "systemd", "user");
     yield* fs.makeDirectory(unitDir, { recursive: true });
     yield* fs.writeFileString(
-      path.join(unitDir, "t3code.service"),
+      path.join(unitDir, "starcode.service"),
       renderBootServiceUnit({
         nodePath: NODE_PATH,
-        t3EntryPath: entryPath,
-        baseDir: path.join(home, ".t3"),
-        logPath: path.join(home, ".t3", "userdata", "logs", "boot-service.log"),
-        unitPath: path.join(unitDir, "t3code.service"),
+        starcodeEntryPath: entryPath,
+        baseDir: path.join(home, ".starcode"),
+        logPath: path.join(home, ".starcode", "userdata", "logs", "boot-service.log"),
+        unitPath: path.join(unitDir, "starcode.service"),
       }),
     );
   });
@@ -180,7 +183,10 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
   it.effect("reports boot-service for the systemd-spawned unit process", () =>
     Effect.gen(function* () {
       const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      const entryPath = path.join(
+        home,
+        ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs",
+      );
       yield* writeUnitReferencing(home, entryPath);
       const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
@@ -202,7 +208,10 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
   it.effect("does not claim a systemd process owned by another unit", () =>
     Effect.gen(function* () {
       const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      const entryPath = path.join(
+        home,
+        ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs",
+      );
       yield* writeUnitReferencing(home, entryPath);
       const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: false,
@@ -220,7 +229,10 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
   it.effect("reports respawn for a manual run of the pinned artifact", () =>
     Effect.gen(function* () {
       const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      const entryPath = path.join(
+        home,
+        ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs",
+      );
       yield* writeUnitReferencing(home, entryPath);
       // Same unit on disk, but no INVOCATION_ID: restarting the unit would
       // not replace this process, so it must respawn itself instead.
@@ -252,7 +264,10 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
       const { home, path } = yield* makeHome();
       // Desktop ownership wins over every process-shape heuristic: even a
       // systemd-looking pinned artifact belongs to the app that spawned it.
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      const entryPath = path.join(
+        home,
+        ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs",
+      );
       yield* writeUnitReferencing(home, entryPath);
       const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
         desktopManaged: true,
@@ -323,11 +338,11 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
-    const baseDir = path.join(home, ".t3");
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-self-update-test-" });
+    const baseDir = path.join(home, ".starcode");
     const entryPath =
       options?.entryPath ??
-      path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      path.join(home, ".starcode/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
     const env: NodeJS.ProcessEnv =
       options?.bootService === true
         ? {
@@ -340,13 +355,13 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
       const unitDir = path.join(home, ".config", "systemd", "user");
       yield* fs.makeDirectory(unitDir, { recursive: true });
       yield* fs.writeFileString(
-        path.join(unitDir, "t3code.service"),
+        path.join(unitDir, "starcode.service"),
         renderBootServiceUnit({
           nodePath: NODE_PATH,
-          t3EntryPath: entryPath,
+          starcodeEntryPath: entryPath,
           baseDir,
           logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
-          unitPath: path.join(unitDir, "t3code.service"),
+          unitPath: path.join(unitDir, "starcode.service"),
         }),
       );
     }
@@ -415,7 +430,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
     Effect.gen(function* () {
       const context = yield* makeContext();
       const error = yield* context.service.update({ targetVersion: "latest" }).pipe(Effect.flip);
-      assert.include(error.reason, "not an exact t3 version");
+      assert.include(error.reason, "not an exact starcode version");
       assert.lengthOf(context.commands, 0);
     }),
   );
@@ -445,7 +460,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
     Effect.gen(function* () {
       const context = yield* makeContext({ failWhen: (command) => command === "npm" });
       const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.equal(error.reason, "Could not install the requested t3 version.");
+      assert.equal(error.reason, "Could not install the requested starcode version.");
       yield* TestClock.adjust(Duration.seconds(10));
       assert.lengthOf(context.spawns, 0);
       assert.equal(context.exitCount(), 0);
@@ -490,7 +505,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
     Effect.gen(function* () {
       const context = yield* makeContext({
         stdoutFor: (command, args) =>
-          command === NODE_PATH && args[1] === "--version" ? "t3 v0.0.28\n" : undefined,
+          command === NODE_PATH && args[1] === "--version" ? "starcode v0.0.28\n" : undefined,
       });
       const versionDir = context.path.join(context.baseDir, "runtime", "versions", "0.0.29");
 
@@ -564,7 +579,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
         "runtime/versions/0.0.29/node_modules/t3/dist/bin.mjs",
       );
       const unit = yield* context.fs.readFileString(
-        context.path.join(context.home, ".config", "systemd", "user", "t3code.service"),
+        context.path.join(context.home, ".config", "systemd", "user", "starcode.service"),
       );
       assert.include(unit, `ExecStart=${NODE_PATH} ${pinnedEntry} serve`);
       assert.deepEqual(
@@ -575,7 +590,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (baseIt) => {
 
       assert.deepEqual(context.commands[3], {
         command: "systemctl",
-        args: ["--user", "restart", "t3code.service"],
+        args: ["--user", "restart", "starcode.service"],
       });
       assert.lengthOf(context.spawns, 0);
       // systemd replaces the process; the server must not exit itself.

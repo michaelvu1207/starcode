@@ -33,7 +33,7 @@
  *
  * @module HistoryForkFacts
  */
-import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import type { ProviderDriverKind, ThreadId } from "@starcode/contracts";
 
 /**
  * The drivers whose sessions can be forked without touching the original.

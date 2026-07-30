@@ -1,5 +1,9 @@
-import type { FeatureFlowFeature, FeatureFlowSnapshot, FeatureFlowStage } from "@t3tools/contracts";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  FeatureFlowFeature,
+  FeatureFlowSnapshot,
+  FeatureFlowStage,
+} from "@starcode/contracts";
+import { ProjectId, ThreadId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

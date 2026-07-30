@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { MAILBOX_PENDING_MAX, ThreadId, type ThreadMailboxOrigin } from "@t3tools/contracts";
+import { MAILBOX_PENDING_MAX, ThreadId, type ThreadMailboxOrigin } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 

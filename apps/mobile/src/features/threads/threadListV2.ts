@@ -1,5 +1,5 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, OrchestrationThreadSubagent, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/shell";
+import type { EnvironmentId, OrchestrationThreadSubagent, ProjectId } from "@starcode/contracts";
 
 /**
  * Thread List v2 model, ported from the web sidebar v2

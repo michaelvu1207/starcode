@@ -27,8 +27,8 @@
  * Membership arrives resolved from the F16 fold, the same answer `/projects`
  * shows, and the machine a thread runs on stays a detail on the row.
  */
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { ProjectCategorySlug } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { ProjectCategorySlug } from "@starcode/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, MapIcon } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";

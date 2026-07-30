@@ -12,7 +12,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
-import type { HistoryProvider, HistorySessionId } from "@t3tools/contracts";
+import type { HistoryProvider, HistorySessionId } from "@starcode/contracts";
 
 /** Where each CLI keeps its sessions, relative to the user's home directory. */
 export const CLAUDE_PROJECTS_DIRNAME = NodePath.join(".claude", "projects");

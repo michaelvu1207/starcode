@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { CliProviderUsage, CliUsageProvider, CliUsageTotals } from "@t3tools/contracts";
-import { EMPTY_CLI_USAGE_TOTALS, EMPTY_USAGE_TOTALS } from "@t3tools/contracts";
+import type { CliProviderUsage, CliUsageProvider, CliUsageTotals } from "@starcode/contracts";
+import { EMPTY_CLI_USAGE_TOTALS, EMPTY_USAGE_TOTALS } from "@starcode/contracts";
 
 import type { AccountsUsageEnvironmentGroup } from "./AccountsUsage.logic";
 import { EMPTY_CLI_HISTORY_MACHINE_VIEW, EMPTY_CLI_USAGE_WINDOWS } from "./AccountsUsage.logic";

@@ -24,7 +24,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type { CliUsageProvider } from "@t3tools/contracts";
+import type { CliUsageProvider } from "@starcode/contracts";
 
 import { CLAUDE_PROJECTS_DIRNAME, isSessionFileName } from "../../history/paths.ts";
 

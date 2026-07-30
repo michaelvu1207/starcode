@@ -29,7 +29,7 @@
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type { HistoryProvider } from "@t3tools/contracts";
+import type { HistoryProvider } from "@starcode/contracts";
 
 /** Title budget. Long enough to be recognisable, short enough for a sidebar row. */
 export const IMPORT_TITLE_MAX_CHARS = 80;

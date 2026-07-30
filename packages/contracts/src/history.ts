@@ -4,7 +4,7 @@
  * This is a *reader*, not an importer. Claude Code and Codex each keep their
  * own append-only jsonl session logs under the user's home directory; this
  * contract exposes them as paginated, lossy previews so the hub can show what
- * a machine has been doing outside t3 without copying any of it into t3's
+ * a machine has been doing outside starcode without copying any of it into t3's
  * database. Nothing here is persisted server-side: the index is in memory and
  * the transcript is read straight off the file on demand.
  *
@@ -518,7 +518,7 @@ export type HistoryImportsPage = typeof HistoryImportsPage.Type;
  * Forking a thread's conversation.
  *
  * The import above binds a *new* thread to a session the CLI already has on
- * disk. This binds a new thread to the session a *running t3 thread* is
+ * disk. This binds a new thread to the session a *running starcode thread* is
  * already using — the same seam, reached from the other side, and addressed by
  * thread id rather than by session id.
  *

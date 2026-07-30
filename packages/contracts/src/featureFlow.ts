@@ -101,7 +101,7 @@ export type FeatureFlowMergeability = typeof FeatureFlowMergeability.Type;
  * tip and A is not yet in a trunk, so B literally contains A's work and cannot
  * land cleanly before it.
  *
- * `annotated` is reserved for an operator-declared dependency. t3 has no
+ * `annotated` is reserved for an operator-declared dependency. starcode has no
  * free-form thread metadata field to carry one today, so nothing emits this
  * variant yet; it exists in the contract so adding the annotation later is a
  * server-only change and no client has to widen its parser under version skew.

@@ -3,7 +3,7 @@ import {
   ProjectId,
   type ProjectCategoryLocal,
   type ProjectCategorySlug,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProjectCategoryView } from "./ProjectCatalog.model";

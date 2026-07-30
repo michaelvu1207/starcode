@@ -22,7 +22,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "~/lib/storage";
 import { normalizeConnectionAlias, sanitizeConnectionAliases } from "./connectionAlias";
 
-export const CONNECTION_ALIAS_STORAGE_KEY = "t3code:connection-aliases:v1";
+export const CONNECTION_ALIAS_STORAGE_KEY = "starcode:connection-aliases:v1";
 
 interface ConnectionAliasStoreState {
   /** `environmentId -> alias`. An environment with no entry uses its server label. */

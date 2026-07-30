@@ -12,7 +12,7 @@ import {
   HostProcessArguments,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+} from "@starcode/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -72,7 +72,7 @@ const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
 const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-boot-service-test-" });
   // A real file for the stable-entry cases so status can confirm the entry
   // point exists.
   const stableEntry = path.join(root, "bin.mjs");
@@ -82,8 +82,8 @@ const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
     path,
     dirs: {
       home: root,
-      baseDir: path.join(root, ".t3"),
-      logsDir: path.join(root, ".t3", "userdata", "logs"),
+      baseDir: path.join(root, ".starcode"),
+      logsDir: path.join(root, ".starcode", "userdata", "logs"),
       stableEntry,
     },
   };
@@ -92,10 +92,10 @@ const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
 it("renders a systemd unit with absolute paths and append-mode logging", () => {
   const unit = BootService.renderBootServiceUnit({
     nodePath: "/usr/local/bin/node",
-    t3EntryPath: "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
-    baseDir: "/home/theo/.t3",
-    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    starcodeEntryPath: "/home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
+    baseDir: "/home/theo/.starcode",
+    logPath: "/home/theo/.starcode/userdata/logs/boot-service.log",
+    unitPath: "/home/theo/.config/systemd/user/starcode.service",
   });
 
   assert.equal(
@@ -109,13 +109,13 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
       "[Service]",
       "Type=simple",
       "WorkingDirectory=%h",
-      "Environment=T3CODE_HOME=/home/theo/.t3",
-      "Environment=T3_BOOT_SERVICE_UNIT=t3code.service",
-      "ExecStart=/usr/local/bin/node /home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
+      "Environment=STARCODE_HOME=/home/theo/.starcode",
+      "Environment=STARCODE_BOOT_SERVICE_UNIT=starcode.service",
+      "ExecStart=/usr/local/bin/node /home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
       "Restart=always",
       "RestartSec=5",
-      "StandardOutput=append:/home/theo/.t3/userdata/logs/boot-service.log",
-      "StandardError=append:/home/theo/.t3/userdata/logs/boot-service.log",
+      "StandardOutput=append:/home/theo/.starcode/userdata/logs/boot-service.log",
+      "StandardError=append:/home/theo/.starcode/userdata/logs/boot-service.log",
       "",
       "[Install]",
       "WantedBy=default.target",
@@ -126,18 +126,18 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
 
 it("quotes systemd values containing spaces and escapes percent specifiers", () => {
   assert.equal(BootService.quoteSystemdValue("/plain/path"), "/plain/path");
-  assert.equal(BootService.quoteSystemdValue("/home/me/T3 Data"), '"/home/me/T3 Data"');
+  assert.equal(BootService.quoteSystemdValue("/home/me/starcode Data"), '"/home/me/starcode Data"');
   assert.equal(BootService.quoteSystemdValue("/opt/100%cpu"), "/opt/100%%cpu");
 
   const unit = BootService.renderBootServiceUnit({
     nodePath: "/home/me/my tools/node",
-    t3EntryPath: "/home/me/T3 Data/bin.mjs",
-    baseDir: "/home/me/T3 Data",
+    starcodeEntryPath: "/home/me/starcode Data/bin.mjs",
+    baseDir: "/home/me/starcode Data",
     logPath: "/home/me/100%logs/boot.log",
-    unitPath: "/home/me/.config/systemd/user/t3code.service",
+    unitPath: "/home/me/.config/systemd/user/starcode.service",
   });
-  assert.include(unit, 'ExecStart="/home/me/my tools/node" "/home/me/T3 Data/bin.mjs" serve');
-  assert.include(unit, 'Environment=T3CODE_HOME="/home/me/T3 Data"');
+  assert.include(unit, 'ExecStart="/home/me/my tools/node" "/home/me/starcode Data/bin.mjs" serve');
+  assert.include(unit, 'Environment=STARCODE_HOME="/home/me/starcode Data"');
   // append: paths take the rest of the line literally (spaces are fine,
   // quoting is not), but % still goes through specifier expansion.
   assert.include(unit, "StandardOutput=append:/home/me/100%%logs/boot.log");
@@ -167,7 +167,7 @@ it("flags package-manager cache entry points as ephemeral", () => {
   );
   assert.isFalse(
     BootService.isEphemeralCacheEntry(
-      "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
+      "/home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
     ),
   );
 });
@@ -214,23 +214,23 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const plan = yield* service.install;
 
       // A stable entry point is reused directly — no npm install.
-      assert.equal(plan.t3EntryPath, dirs.stableEntry);
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
       assert.deepEqual(
         commands.map((entry) => [entry.command, ...entry.args].join(" ")),
         [
           "systemctl --user daemon-reload",
-          "systemctl --user enable t3code.service",
+          "systemctl --user enable starcode.service",
           // restart (not enable --now) so repairing a stale unit replaces a
           // running process instead of leaving the old one until reboot.
-          "systemctl --user restart t3code.service",
+          "systemctl --user restart starcode.service",
           "loginctl enable-linger",
         ],
       );
 
-      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "t3code.service");
+      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "starcode.service");
       const unit = yield* fs.readFileString(unitPath);
       assert.include(unit, `ExecStart=/usr/local/bin/node ${dirs.stableEntry} serve`);
-      assert.include(unit, `Environment=T3CODE_HOME=${dirs.baseDir}`);
+      assert.include(unit, `Environment=STARCODE_HOME=${dirs.baseDir}`);
 
       const status = yield* service.status;
       assert.isTrue(status.supported);
@@ -268,7 +268,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
         const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
         assert.equal(
-          plan.t3EntryPath,
+          plan.starcodeEntryPath,
           path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
         );
         assert.deepEqual(commands[0], {
@@ -294,9 +294,9 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
 
         const plan = yield* service.install;
-        yield* fs.makeDirectory(path.dirname(plan.t3EntryPath), { recursive: true });
-        yield* fs.writeFileString(plan.t3EntryPath, "#!/usr/bin/env node\n");
-        yield* fs.remove(plan.t3EntryPath);
+        yield* fs.makeDirectory(path.dirname(plan.starcodeEntryPath), { recursive: true });
+        yield* fs.writeFileString(plan.starcodeEntryPath, "#!/usr/bin/env node\n");
+        yield* fs.remove(plan.starcodeEntryPath);
         commands.length = 0;
 
         yield* service.install;
@@ -322,7 +322,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
       const plan = yield* service.install;
       assert.equal(plan.nodePath, "/opt/node/bin/node");
-      assert.equal(plan.t3EntryPath, dirs.stableEntry);
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
     }),
   );
 
@@ -362,7 +362,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
-        // What `npx t3 service update` looks like: the entry point lives in an
+        // What `npx starcode service update` looks like: the entry point lives in an
         // ephemeral cache, so upstream would npm-install t3@0.0.27 and point
         // the unit at that tree.
         host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
@@ -380,7 +380,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.deepEqual(commands, []);
       assert.isFalse(yield* fs.exists(path.join(dirs.baseDir, "runtime", "versions", "0.0.27")));
       assert.isFalse(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
     }),
   );
@@ -399,8 +399,8 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const unitDir = path.join(dirs.home, ".config", "systemd", "user");
       yield* fs.makeDirectory(unitDir, { recursive: true });
       yield* fs.writeFileString(
-        path.join(unitDir, "t3code.service"),
-        "[Service]\nExecStart=/old/node /old/t3 serve\n",
+        path.join(unitDir, "starcode.service"),
+        "[Service]\nExecStart=/old/node /old/starcode serve\n",
       );
 
       const status = yield* service.status;
@@ -451,7 +451,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.isTrue(isUnsupportedError(error));
       assert.lengthOf(commands, 0);
       assert.isFalse(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
 
       const status = yield* service.status;
@@ -479,14 +479,14 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       // A leftover unit would make status report "installed" even though
       // linger never happened.
       assert.isFalse(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
       const status = yield* service.status;
       assert.isFalse(status.installed);
       assert.isTrue(
         commands.some(
           ({ command, args }) =>
-            command === "systemctl" && args.join(" ") === "--user disable --now t3code.service",
+            command === "systemctl" && args.join(" ") === "--user disable --now starcode.service",
         ),
       );
     }),
@@ -507,7 +507,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       );
       yield* initialService.install;
 
-      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "t3code.service");
+      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "starcode.service");
       const previousUnit = yield* fs.readFileString(unitPath);
       const replacementEntry = path.join(dirs.home, "replacement-bin.mjs");
       yield* fs.writeFileString(replacementEntry, "#!/usr/bin/env node\n");
@@ -529,7 +529,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.isTrue(
         repairCommands.some(
           ({ command, args }) =>
-            command === "systemctl" && args.join(" ") === "--user restart t3code.service",
+            command === "systemctl" && args.join(" ") === "--user restart starcode.service",
         ),
       );
     }),
@@ -570,7 +570,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
       assert.isTrue(isCommandError(error));
       assert.isTrue(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
     }),
   );

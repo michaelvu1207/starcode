@@ -21,8 +21,8 @@
  *
  * @module SidePanelThread
  */
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import type { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { useMemo } from "react";
 
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../../state/entities";

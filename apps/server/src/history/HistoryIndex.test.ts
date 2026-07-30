@@ -43,7 +43,7 @@ const withHome = <A, E>(
 ): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const home = yield* Effect.promise(() =>
-      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-history-home-")),
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-history-home-")),
     );
     const path = (relative: string) => NodePath.join(home, relative);
 

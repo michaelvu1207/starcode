@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/scripts",
+  "name": "@starcode/scripts",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@starcode/contracts": "workspace:*",
+    "@starcode/shared": "workspace:*",
     "effect": "catalog:",
     "pngjs": "7.0.0",
     "yaml": "catalog:"

@@ -17,7 +17,7 @@
  */
 import * as NodeFSP from "node:fs/promises";
 
-import { type HistoryProvider, type HistoryTranscriptEntry } from "@t3tools/contracts";
+import { type HistoryProvider, type HistoryTranscriptEntry } from "@starcode/contracts";
 
 import {
   isDefinitelyUnrenderable,

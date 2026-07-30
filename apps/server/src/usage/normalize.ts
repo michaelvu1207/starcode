@@ -13,7 +13,7 @@ import type {
   ProviderDriverKind,
   UsageRateLimitSnapshot,
   UsageRateLimitWindow,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 

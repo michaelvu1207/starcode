@@ -1,11 +1,11 @@
-import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
+import type { SupervisorConnectionState } from "@starcode/client-runtime/connection";
 import {
   type CliHistoricalUsage,
   type CliUsageTotals,
   EMPTY_CLI_USAGE_TOTALS,
   type EnvironmentUsageSnapshot,
   type UsageTotals,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

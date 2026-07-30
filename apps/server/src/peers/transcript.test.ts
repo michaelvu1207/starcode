@@ -12,7 +12,7 @@ import {
   type PeerThreadCursor,
   type PeerThreadSummary,
   type ProjectCategoryRecord,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import {
   applyPeerThreadCursor,

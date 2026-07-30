@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
+import { ProjectCategorySlug, ThreadId } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,7 +15,7 @@ import {
 const makeLayer = () =>
   featureMapRegistryLayer.pipe(
     Layer.provideMerge(
-      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-feature-map-test-" })),
+      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "starcode-feature-map-test-" })),
     ),
     Layer.provideMerge(NodeServices.layer),
   );

@@ -20,7 +20,7 @@ import {
   HISTORY_SESSIONS_DEFAULT_LIMIT,
   HISTORY_SESSIONS_DEFAULT_WINDOW_DAYS,
   HISTORY_SESSIONS_MAX_LIMIT,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import type { HistoryIndexEntry } from "./HistoryIndex.ts";
 

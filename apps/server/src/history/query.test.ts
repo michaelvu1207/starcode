@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { HistorySessionId } from "@t3tools/contracts";
+import type { HistorySessionId } from "@starcode/contracts";
 
 import type { HistoryIndexEntry } from "./HistoryIndex.ts";
 import {

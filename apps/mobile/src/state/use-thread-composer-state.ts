@@ -9,9 +9,9 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
-} from "@t3tools/contracts";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+} from "@starcode/contracts";
+import { safeErrorLogAttributes } from "@starcode/client-runtime/errors";
+import { deriveActiveWorkStartedAt } from "@starcode/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {

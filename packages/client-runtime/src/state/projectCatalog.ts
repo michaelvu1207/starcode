@@ -29,7 +29,7 @@ import type {
   ProjectCatalogUpsertRequest,
   ProjectCatalogUpsertResult,
   ProjectCategorySlug,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -231,7 +231,7 @@ export interface ProjectCatalogLoaderShape {
 export class ProjectCatalogLoader extends Context.Service<
   ProjectCatalogLoader,
   ProjectCatalogLoaderShape
->()("@t3tools/client-runtime/state/projectCatalog/ProjectCatalogLoader") {}
+>()("@starcode/client-runtime/state/projectCatalog/ProjectCatalogLoader") {}
 
 export const projectCatalogLoaderLayer: Layer.Layer<
   ProjectCatalogLoader,

@@ -18,7 +18,7 @@ import {
   HISTORY_PREVIEW_TAIL_ENTRIES,
   type HistoryProvider,
   type HistoryTranscriptEntry,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { readSessionOpening, readSessionTail } from "./tailReader.ts";
 

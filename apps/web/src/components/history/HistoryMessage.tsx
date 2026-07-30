@@ -13,7 +13,7 @@
  * through `ChatMarkdown` for the same reason — the CLIs write markdown, and a
  * rendering that showed literal asterisks would look broken rather than lossy.
  */
-import type { HistoryTranscriptEntry } from "@t3tools/contracts";
+import type { HistoryTranscriptEntry } from "@starcode/contracts";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";

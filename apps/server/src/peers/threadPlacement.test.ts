@@ -14,7 +14,7 @@ import {
   type ModelSelection,
   type ProjectCategoryDefaults,
   type ProjectCategoryRecord,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

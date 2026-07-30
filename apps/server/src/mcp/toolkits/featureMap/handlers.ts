@@ -10,7 +10,7 @@ import {
   type FeatureMapOperation,
   type ProjectCategorySlug,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";

@@ -13,7 +13,7 @@
  * button that opens a popover carries base UI's own trigger attributes, and a
  * button that acts immediately must not.
  */
-import { EnvironmentId, ProjectId, type ProjectCategorySlug } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type ProjectCategorySlug } from "@starcode/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 

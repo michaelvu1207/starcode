@@ -11,7 +11,7 @@
  * that vanished mid-read would be jarring, so the thread view keeps showing a
  * selected agent's transcript after its row disappears — see `ChatView`.
  */
-import type { OrchestrationThreadSubagent } from "@t3tools/contracts";
+import type { OrchestrationThreadSubagent } from "@starcode/contracts";
 import { BotIcon, PauseIcon } from "lucide-react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 

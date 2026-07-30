@@ -19,7 +19,7 @@
  * element**, unchanged by this: every "should this appear, and as what?"
  * decision lives here rather than in the repo's hottest file.
  */
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@starcode/contracts";
 import type { ReactNode } from "react";
 
 import { useEnvironments } from "~/state/environments";

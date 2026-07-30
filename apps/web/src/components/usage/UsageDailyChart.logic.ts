@@ -25,7 +25,7 @@
  *
  * @module UsageDailyChartLogic
  */
-import type { CliUsageProvider, CliUsageTotals } from "@t3tools/contracts";
+import type { CliUsageProvider, CliUsageTotals } from "@starcode/contracts";
 
 import type { AccountsUsageEnvironmentGroup } from "./AccountsUsage.logic";
 

@@ -1,6 +1,6 @@
-# t3code recon map — hub features
+# starcode recon map — hub features
 
-Date: 2026-07-24. Source: `~/Documents/Programming/agent-hub/t3code` @ `hub` (fork of
+Date: 2026-07-24. Source: `~/Documents/Programming/agent-hub/starcode` @ `hub` (fork of
 `pingdotgg/t3code`, upstream `41a430a88`). Companion to `PLAN.md`.
 
 All paths below are relative to the repo root unless absolute.
@@ -170,7 +170,7 @@ The t3 server **is** an MCP server at `POST /mcp`
 auth (`apps/server/src/mcp/McpSessionRegistry.ts:105`) that binds each tool call to
 `{environmentId, threadId, providerSessionId, providerInstanceId, capabilities}`.
 
-All five adapters already mount that single `t3-code` server:
+All five adapters already mount that single `starcode` server:
 
 | Provider | File:line                                        |
 | -------- | ------------------------------------------------ |
@@ -284,7 +284,7 @@ thread/instance gives real per-turn spend from data already flowing.
 Client-side direct fetch is wrong here for three concrete reasons: the browser often isn't
 on the sidecar's machine (relay-managed environments); CORS allows only
 `authorization, b3, traceparent, content-type, dpop` with a credentialed origin allowlist
-including custom scheme `t3code://app` (`apps/server/src/httpCors.ts:1-14`,
+including custom scheme `starcode://app` (`apps/server/src/httpCors.ts:1-14`,
 `http.ts:43-59`); and the sidecar would be unauthenticated on the LAN.
 
 Recommended shape:
@@ -315,12 +315,12 @@ reads `~/.codex/auth.json` and `~/.claude.json` — but only to hash an identity
 
 ### 3.5 The semantic landmine — settle this before writing code
 
-t3code keys accounts by **provider instance** (a config entry with its own
+starcode keys accounts by **provider instance** (a config entry with its own
 `CLAUDE_CONFIG_DIR`). `claude-swap` keys them by **credential rotated into one home**.
 
 If a sidecar swaps credentials underneath a home, then `ServerProvider.auth.email` for that
 instance changes silently while `continuation.groupKey` (`claude:home:<path>`) does **not**.
-t3code will then happily continue an existing thread on a different account — exactly what
+starcode will then happily continue an existing thread on a different account — exactly what
 its own design intends to prevent (the model picker filters candidates by group key,
 `ModelPickerContent.tsx:169-173`).
 

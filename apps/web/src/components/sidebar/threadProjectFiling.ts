@@ -29,7 +29,7 @@ import type {
   ProjectCatalogFileThreadRequest,
   ProjectCategorySlug,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import {
   projectThreadKey,

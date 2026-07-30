@@ -27,7 +27,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
-import type { CliUsageProvider } from "@t3tools/contracts";
+import type { CliUsageProvider } from "@starcode/contracts";
 import * as DateTime from "effect/DateTime";
 
 /** Tokens for one message, split the way the rate table prices them. */

@@ -8,7 +8,7 @@
  *
  * @module ComposerModeControls
  */
-import { type ProviderInteractionMode } from "@t3tools/contracts";
+import { type ProviderInteractionMode } from "@starcode/contracts";
 import { memo } from "react";
 import { BotIcon, ListTodoIcon, PencilRulerIcon } from "lucide-react";
 

@@ -17,7 +17,7 @@
  *
  * @module ClientRuntimeFeatureFlow
  */
-import type { EnvironmentId, FeatureFlowSnapshot, FeatureMapSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, FeatureFlowSnapshot, FeatureMapSnapshot } from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -87,7 +87,7 @@ export class FeatureFlowSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
     ) => Effect.Effect<Option.Option<FeatureFlowSnapshot>>;
   }
->()("@t3tools/client-runtime/state/featureFlow/FeatureFlowSnapshotLoader") {}
+>()("@starcode/client-runtime/state/featureFlow/FeatureFlowSnapshotLoader") {}
 
 export const featureFlowSnapshotLoaderLayer: Layer.Layer<
   FeatureFlowSnapshotLoader,
@@ -254,7 +254,7 @@ export class FeatureMapSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
     ) => Effect.Effect<Option.Option<FeatureMapSnapshot>>;
   }
->()("@t3tools/client-runtime/state/featureFlow/FeatureMapSnapshotLoader") {}
+>()("@starcode/client-runtime/state/featureFlow/FeatureMapSnapshotLoader") {}
 
 export const featureMapSnapshotLoaderLayer: Layer.Layer<
   FeatureMapSnapshotLoader,

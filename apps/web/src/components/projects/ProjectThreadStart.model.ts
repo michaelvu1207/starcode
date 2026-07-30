@@ -37,7 +37,7 @@
  * every binding drops that way falls back to the defaults above rather than to
  * nothing, for the same reason a hand-made project does.
  */
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@starcode/contracts";
 
 import type { ProjectCategoryView } from "./ProjectCatalog.model";
 

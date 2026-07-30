@@ -380,7 +380,7 @@ export interface EnvironmentSessionPrincipalShape {
 export class EnvironmentAuthenticatedPrincipal extends Context.Service<
   EnvironmentAuthenticatedPrincipal,
   EnvironmentSessionPrincipalShape
->()("@t3tools/contracts/environmentHttp/EnvironmentAuthenticatedPrincipal") {}
+>()("@starcode/contracts/environmentHttp/EnvironmentAuthenticatedPrincipal") {}
 
 export class EnvironmentAuthenticatedAuth extends HttpApiMiddleware.Service<
   EnvironmentAuthenticatedAuth,
@@ -705,7 +705,7 @@ export class EnvironmentUsageHttpApi extends HttpApiGroup.make("usage")
 
 /**
  * Terminal history: the CLI session logs sitting on this machine's disk,
- * outside t3 entirely.
+ * outside starcode entirely.
  *
  * Import-only. There is no route here that returns a conversation — the
  * listing names sessions, the preview shows enough to tell two apart, and
@@ -998,7 +998,7 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   )
   .add(
-    HttpApiEndpoint.post("t3MintCredential", "/api/t3-connect/mint-credential", {
+    HttpApiEndpoint.post("starcodeMintCredential", "/api/t3-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,

@@ -8,7 +8,7 @@
  *
  * @module ThreadHandlers
  */
-import { ThreadToolError } from "@t3tools/contracts";
+import { ThreadToolError } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

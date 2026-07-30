@@ -20,7 +20,7 @@
  *
  * @module CliUsagePricing
  */
-import type { CliUsageProvider } from "@t3tools/contracts";
+import type { CliUsageProvider } from "@starcode/contracts";
 
 /**
  * What one message costs, per token.

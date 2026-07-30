@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS
  * Upstream stores the catalog encrypted through Electron `safeStorage`, which
- * on macOS is backed by a login-keychain item ("t3code Safe Storage"). The
+ * on macOS is backed by a login-keychain item ("starcode Safe Storage"). The
  * keychain ACL binds to the *binary*, so every rebuild of an ad-hoc or
  * self-signed app is a new subject and macOS blocks startup on a password
  * dialog until a human answers it. For a fork we rebuild several times a day
@@ -11,8 +11,8 @@
  * window, `waitForHttpReady` timing out.
  *
  * The trade is deliberate: at-rest encryption of the catalog is worth less than
- * a desktop app that boots. `T3CODE_HOME` is already a private per-user
- * directory, and `~/.t3` stores the same class of data (bearer tokens for
+ * a desktop app that boots. `STARCODE_HOME` is already a private per-user
+ * directory, and `~/.starcode` stores the same class of data (bearer tokens for
  * machines the user owns) as plain files, so this does not lower the bar the
  * product already sets — it matches it.
  *
@@ -22,7 +22,7 @@
  * because only the store holds `safeStorage`. Keeping the fork's logic here
  * means the upstream file's diff is the call sites and nothing else.
  */
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { fromLenientJson } from "@starcode/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

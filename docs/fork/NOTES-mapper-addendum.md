@@ -1,6 +1,6 @@
 # NOTES.md addendum — mapper agent
 
-Date: 2026-07-24. Source: `~/Documents/Programming/agent-hub/t3code` @ `hub` (upstream `41a430a88`).
+Date: 2026-07-24. Source: `~/Documents/Programming/agent-hub/starcode` @ `hub` (upstream `41a430a88`).
 
 **This file is a delta, not a map.** It contains only findings that are _not_ in `NOTES.md`
 (written by t3-fork-build). Read `NOTES.md` first — it is accurate and I independently verified its
@@ -197,7 +197,7 @@ Plain trimmed string equality — not semver, not a range. Missing on either sid
 build (`APP_VERSION` unset → `"0.0.0"`, `apps/web/src/branding.ts:27`) **always** trips it. On
 mismatch nothing breaks: a dismissible warning renders at `ChatView.tsx:1812-1906` and
 `ConnectionsSettings.tsx:1391,1836,2983-3001`, dismissals in localStorage key
-`t3code:version-mismatch-dismissals:v1` (`versionSkew.ts:13,82-133`).
+`starcode:version-mismatch-dismissals:v1` (`versionSkew.ts:13,82-133`).
 
 `packages/shared/src/semver.ts` is **not** used for client/server compat — `compareSemverVersions`
 (`:92-136`) gates external agent CLI versions, `satisfiesSemverRange` (`:148+`) gates remote Node
@@ -230,11 +230,11 @@ There is no `t3 update` command — the CLI surface is `bin.ts:42-56`
 installs `packageJson.version`.
 
 Desktop auto-update is safe by construction: the feed comes from an `app-update.yml` baked in at
-build time from `T3CODE_DESKTOP_UPDATE_REPOSITORY` → `GITHUB_REPOSITORY`
+build time from `STARCODE_DESKTOP_UPDATE_REPOSITORY` → `GITHUB_REPOSITORY`
 (`scripts/build-desktop-artifact.ts:1302-1326`), so inside our fork's Actions it auto-points at our
 repo with zero code change. ⚠️ Trap: building locally with `GITHUB_REPOSITORY=pingdotgg/t3code`
 exported, or reusing a prebuilt upstream `app-update.yml`. Kill switch:
-`T3CODE_DISABLE_AUTO_UPDATE` (`apps/desktop/src/app/DesktopConfig.ts:51`).
+`STARCODE_DISABLE_AUTO_UPDATE` (`apps/desktop/src/app/DesktopConfig.ts:51`).
 
 ### 7.7 Build / release — one hard blocker
 
@@ -253,11 +253,11 @@ To ship our own build, in order of blocking severity:
 2. Rename the npm package (`t3` is taken) — see §7.6.
 3. Register an npm Trusted Publisher for our repo (publish uses OIDC, `release.yml:614-616`; there is
    no `NPM_TOKEN` in the repo) or switch to a token.
-4. Desktop identity in `scripts/build-desktop-artifact.ts`: `DESKTOP_APP_ID = "com.t3tools.t3code"`
+4. Desktop identity in `scripts/build-desktop-artifact.ts`: `DESKTOP_APP_ID = "com.starcode.starcode"`
    (`:37`), artifact name (`:1392`), mac URL schemes (`:1432`), linux `executableName` (`:1451`),
    plus `apps/desktop/src/app/DesktopEnvironment.ts:203-204`.
 5. Cloud coupling to decide on: `packages/shared/src/connectAuth.ts:15` (`https://app.t3.codes`),
-   `packages/contracts/src/t3ProjectFile.ts:10,86`, `apps/mobile/app.config.ts:61-87` (bundle ids,
+   `packages/contracts/src/starcodeProjectFile.ts:10,86`, `apps/mobile/app.config.ts:61-87` (bundle ids,
    `appleTeamId`, `owner: "pingdotgg"`).
 
 Suggested seam: extract the identity constants to a fork-owned `scripts/lib/fork-identity.ts` so the
@@ -424,7 +424,7 @@ peer registry can be a config file of `{ label, baseUrl, token }`.
 | Feature               | Risk      | Why                                                                                                                                                                                          |
 | --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **F1 dashboard**      | 🟢 Low    | Runtime spine exists; `apps/web/src/routes/**` is the coldest dir (28/500). Watch: the `SidebarV2.tsx` refactor lands in a 21/500 file (§7.2), and activity sort has no index (§0).          |
-| **F2 federation**     | 🟡 Medium | Cheap on HTTP + the existing `t3-code` MCP server. Becomes expensive the moment it needs a WS RPC method (§7.3).                                                                             |
+| **F2 federation**     | 🟡 Medium | Cheap on HTTP + the existing `starcode` MCP server. Becomes expensive the moment it needs a WS RPC method (§7.3).                                                                            |
 | **F3 accounts/usage** | 🔴 High   | The §3.5 landmine must be settled first; per-thread pinning has two hidden cache keys (§9); `contracts/src/settings.ts` is hot (23/90d); and the account-_action_ path likely forces an RPC. |
 
 **Top three fork-level risks, independent of feature:**

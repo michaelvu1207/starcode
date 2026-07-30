@@ -12,7 +12,7 @@
  *
  * @module ThreadTools
  */
-import { ThreadCreateInput, ThreadCreateResult, ThreadToolError } from "@t3tools/contracts";
+import { ThreadCreateInput, ThreadCreateResult, ThreadToolError } from "@starcode/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

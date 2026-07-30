@@ -117,7 +117,7 @@ export const tweets = [
   {
     handle: "uwunetes",
     content:
-      "claude code make me go *whine whine whine* and t3 code make me go woof woof awooooo!!!",
+      "claude code make me go *whine whine whine* and starcode code make me go woof woof awooooo!!!",
     link: "https://x.com/uwunetes/status/2054683356022120640",
   },
 ] satisfies Tweet[];

@@ -29,8 +29,8 @@
  * it back keeps `useHandleNewThread` — a hook every new-thread path in the app
  * goes through — out of this feature entirely.
  */
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ProjectCategorySlug, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef } from "@starcode/client-runtime/environment";
+import type { ProjectCategorySlug, ThreadId } from "@starcode/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback } from "react";
 

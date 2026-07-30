@@ -24,7 +24,7 @@ branding on your status — so register one:
    (`DISCORD_LARGE_IMAGE_KEY` in `apps/desktop/src/presence/discordActivity.ts`). Skipping this is
    fine — Discord silently omits unknown asset keys and the text presence still works.
 4. Make the id available to the desktop app, either by:
-   - setting `T3CODE_DISCORD_APP_ID` in the environment the app launches from, or
+   - setting `STARCODE_DISCORD_APP_ID` in the environment the app launches from, or
    - filling in `BUNDLED_DISCORD_APPLICATION_ID` in
      `apps/desktop/src/presence/DesktopDiscordPresence.ts` and rebuilding.
 5. Launch starcode → **Settings → General → Discord presence** and turn it on.

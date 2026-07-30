@@ -61,7 +61,13 @@ interface Channel {
 }
 
 const CHANNELS: ReadonlyArray<Channel> = [
-  { directory: "prod", field: "#12141f", moon: "#f0d9a0", prefix: "black", icoPrefix: "t3-black" },
+  {
+    directory: "prod",
+    field: "#12141f",
+    moon: "#f0d9a0",
+    prefix: "black",
+    icoPrefix: "starcode-black",
+  },
   {
     directory: "dev",
     field: "#12141f",

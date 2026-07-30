@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@starcode/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {

@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import { describe, expect, it } from "vite-plus/test";
 
 import actionsSource from "./SidebarThreadRowActions.tsx?raw";

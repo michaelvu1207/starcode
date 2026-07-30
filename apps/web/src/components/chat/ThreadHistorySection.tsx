@@ -24,7 +24,7 @@
  * everything below it is live and the two must not compete for the same
  * attention.
  */
-import type { EnvironmentId, HistorySessionId, HistoryTranscriptEntry } from "@t3tools/contracts";
+import type { EnvironmentId, HistorySessionId, HistoryTranscriptEntry } from "@starcode/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 

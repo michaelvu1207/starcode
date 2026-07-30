@@ -15,10 +15,10 @@
  * renameable in place from this very header, and ordering by it would slide
  * the group away the instant the rename lands.
  */
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, SidebarV2ViewMode } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
+import type { EnvironmentConnectionPresentation } from "@starcode/client-runtime/connection";
+import { scopeThreadRef, scopedThreadKey } from "@starcode/client-runtime/environment";
+import type { EnvironmentId, SidebarV2ViewMode } from "@starcode/contracts";
 
 /** How many rows a group shows before it asks. Groups are collapsible and a
     hub sees every machine's history at once, so the cap is per group. */

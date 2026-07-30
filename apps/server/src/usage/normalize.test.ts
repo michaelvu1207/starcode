@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { ProviderDriverKind } from "@t3tools/contracts";
+import type { ProviderDriverKind } from "@starcode/contracts";
 
 import {
   epochToIso,

@@ -15,7 +15,7 @@ const withSessionFile = async <A>(
   lines: ReadonlyArray<string>,
   use: (path: string) => Promise<A>,
 ): Promise<A> => {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cli-usage-"));
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-cli-usage-"));
   const path = NodePath.join(directory, "session.jsonl");
   await NodeFSP.writeFile(path, `${lines.join("\n")}\n`, "utf8");
   try {

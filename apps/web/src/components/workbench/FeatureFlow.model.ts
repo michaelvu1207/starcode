@@ -19,7 +19,7 @@ import type {
   FeatureFlowMergeability,
   OrchestrationThreadPlanSummary,
   PeerThreadStatus,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 /** The order work flows. Index is the stage's height in the sky. */
 export const FEATURE_FLOW_STAGES = [

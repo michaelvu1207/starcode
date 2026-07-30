@@ -27,7 +27,7 @@ export * from "./featureMap.ts";
 export * from "./usage.ts";
 export * from "./history.ts";
 export * from "./projectCatalog.ts";
-export * from "./t3ProjectFile.ts";
+export * from "./starcodeProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";

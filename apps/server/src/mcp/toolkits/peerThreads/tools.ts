@@ -10,7 +10,7 @@ import {
   PeerThreadsListResult,
   PeersListInput,
   PeersListResult,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { PeerName } from "@t3tools/contracts";
+import { PeerName } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -20,7 +20,9 @@ const makePeerRegistryLayer = () =>
   PeerRegistry.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(
-      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-peer-registry-test-" })),
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), { prefix: "starcode-peer-registry-test-" }),
+      ),
     ),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(NodeServices.layer),
@@ -89,7 +91,7 @@ it("normalizes a peer base URL to its origin and rejects other schemes", () => {
   );
   assert.equal(normalizePeerBaseUrl("https://peer.example.com"), "https://peer.example.com");
   assert.equal(normalizePeerBaseUrl("file:///etc/passwd"), null);
-  assert.equal(normalizePeerBaseUrl("t3code://app"), null);
+  assert.equal(normalizePeerBaseUrl("starcode://app"), null);
   assert.equal(normalizePeerBaseUrl("127.0.0.1:14233"), null);
   assert.equal(normalizePeerBaseUrl("not a url"), null);
 });

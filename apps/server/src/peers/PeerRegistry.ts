@@ -1,5 +1,5 @@
 /**
- * PeerRegistry - the set of remote t3 environments this one can read.
+ * PeerRegistry - the set of remote starcode environments this one can read.
  *
  * Persistence mirrors `serverSettings.ts`: a JSON file under the state dir for
  * the metadata, guarded by a write semaphore, with the actual bearer credential
@@ -24,8 +24,8 @@ import {
   type PeerCredentialClass,
   type PeerName,
   type PeerRegisterInput,
-} from "@t3tools/contracts";
-import { parseOAuthScope } from "@t3tools/shared/oauthScope";
+} from "@starcode/contracts";
+import { parseOAuthScope } from "@starcode/shared/oauthScope";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -37,7 +37,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient } from "effect/unstable/http";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
@@ -127,7 +127,7 @@ export interface PeerRegistryShape {
 }
 
 export class PeerRegistry extends Context.Service<PeerRegistry, PeerRegistryShape>()(
-  "t3/peers/PeerRegistry",
+  "starcode/peers/PeerRegistry",
 ) {}
 
 export const make = Effect.gen(function* () {
@@ -261,7 +261,7 @@ export const make = Effect.gen(function* () {
     const exchanged = yield* exchangePeerPairingToken({
       baseUrl,
       pairingToken: input.credential.pairingToken,
-      label: `t3 peer ${input.name}`,
+      label: `starcode peer ${input.name}`,
       credentialClass,
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),

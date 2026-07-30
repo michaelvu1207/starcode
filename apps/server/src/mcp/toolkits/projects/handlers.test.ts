@@ -24,7 +24,7 @@ import {
   type ProjectListResult,
   type ProjectFileThreadToolResult,
   type ProjectSetIconToolResult,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -142,7 +142,9 @@ const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapabilit
     Layer.provideMerge(projectCatalogRegistryLayer),
     Layer.provideMerge(featureMapRegistryLayer),
     Layer.provideMerge(
-      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-project-tools-test-" })),
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), { prefix: "starcode-project-tools-test-" }),
+      ),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
