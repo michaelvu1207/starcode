@@ -329,7 +329,7 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
-  it.effect("accepts launch JSON after remote shell startup noise", () => {
+  it.effect("accepts the final launch JSON after noisy output containing earlier JSON", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -337,7 +337,9 @@ describe("ssh tunnel scripts", () => {
       port: 2222,
     } as const;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
+      Effect.succeed(
+        makeSuccessfulProcess('Selecting build tools\n{"pluginProgress":1}\n{"remotePort":3774}\n'),
+      ),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);

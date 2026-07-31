@@ -189,6 +189,13 @@ const decodeRemoteJsonOutput = <A, E>(
   decode(stdout).pipe(
     Effect.catch((error) =>
       Effect.gen(function* () {
+        const lastLine = getLastNonEmptyOutputLine(stdout);
+        if (lastLine !== null && lastLine !== stdout.trim()) {
+          const lastLineExit = yield* Effect.exit(decode(lastLine));
+          if (Exit.isSuccess(lastLineExit)) {
+            return lastLineExit.value;
+          }
+        }
         const jsonObject = extractJsonObject(stdout);
         if (jsonObject === stdout.trim()) {
           return yield* Effect.fail(error);
