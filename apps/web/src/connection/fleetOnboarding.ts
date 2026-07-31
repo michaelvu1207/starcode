@@ -12,16 +12,18 @@ import {
   EnvironmentSupervisor,
   type PreparedConnection,
 } from "@starcode/client-runtime/connection";
-import { createThread, startThreadTurn } from "@starcode/client-runtime/operations";
+import { createProject, createThread, startThreadTurn } from "@starcode/client-runtime/operations";
 import { ShellSnapshotLoader } from "@starcode/client-runtime/state/shell";
 import { ThreadSnapshotLoader } from "@starcode/client-runtime/state/threads";
 import {
   MessageId,
+  ProjectId,
   ThreadId,
   type DesktopBridge,
   type EnvironmentId,
   type FleetClientBootstrapResult,
   type ModelSelection,
+  type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
 } from "@starcode/contracts";
 import * as Crypto from "effect/Crypto";
@@ -34,6 +36,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { PrimaryEnvironmentHttpClient } from "../environments/primary/httpClient";
 import { randomUUID } from "../lib/utils";
 import { runPrimaryHttp } from "../lib/runtime";
+import { resolveDefaultProviderModelSelection } from "../providerInstances";
 
 interface PendingFleetCredential {
   readonly pairingToken: string;
@@ -256,6 +259,41 @@ const waitForPreparedConnection = Effect.fn("web.fleetOnboarding.waitForPrepared
   );
   return Option.getOrThrow(Option.flatten(next));
 });
+
+const waitForInitialServerConfig = Effect.fn("web.fleetOnboarding.waitForInitialConfig")(
+  function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    const current = yield* SubscriptionRef.get(supervisor.session);
+    if (Option.isSome(current)) {
+      return yield* current.value.initialConfig;
+    }
+    const next = yield* SubscriptionRef.changes(supervisor.session).pipe(
+      Stream.filter(Option.isSome),
+      Stream.runHead,
+    );
+    return yield* Option.getOrThrow(Option.flatten(next)).initialConfig;
+  },
+);
+
+export function __resolveVerificationProject(input: {
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly fallbackModelSelection: ModelSelection | null;
+}): {
+  readonly project: OrchestrationProjectShell | null;
+  readonly modelSelection: ModelSelection;
+} | null {
+  const configured = input.projects.find((project) => project.defaultModelSelection !== null);
+  if (configured !== undefined && configured.defaultModelSelection !== null) {
+    return { project: configured, modelSelection: configured.defaultModelSelection };
+  }
+  if (input.fallbackModelSelection === null) {
+    return null;
+  }
+  return {
+    project: input.projects[0] ?? null,
+    modelSelection: input.fallbackModelSelection,
+  };
+}
 
 function waitForConnectedEnvironment(
   registry: EnvironmentRegistry["Service"],
@@ -488,26 +526,37 @@ export const makeFleetOnboardingGateway = Effect.gen(function* () {
           Effect.gen(function* () {
             const prepared = yield* waitForPreparedConnection();
             const snapshot = yield* loadShell(prepared, shellLoader);
-            const project = snapshot.projects.find(
-              (candidate) => candidate.defaultModelSelection !== null,
-            );
-            if (project === undefined || project.defaultModelSelection === null) {
+            const config = yield* waitForInitialServerConfig();
+            const target = __resolveVerificationProject({
+              projects: snapshot.projects,
+              fallbackModelSelection: resolveDefaultProviderModelSelection(config.providers, null),
+            });
+            if (target === null) {
               return yield* Effect.fail(
                 operationError(
                   "create-verification-thread",
                   "verification-failed",
-                  "The new node has no project with a configured model.",
-                  "Configure a default model for one project on the new node, then retry verification.",
+                  "The new node has no provider with a selectable default model.",
+                  "Configure a provider on the new node, then retry verification.",
                 ),
               );
+            }
+            const projectId = target.project?.id ?? ProjectId.make(randomUUID());
+            if (target.project === null) {
+              yield* createProject({
+                projectId,
+                title: "Fleet verification",
+                workspaceRoot: config.cwd,
+                defaultModelSelection: target.modelSelection,
+              });
             }
             const threadId = ThreadId.make(randomUUID());
             const title = "Fleet onboarding verification";
             yield* createThread({
               threadId,
-              projectId: project.id,
+              projectId,
               title,
-              modelSelection: project.defaultModelSelection,
+              modelSelection: target.modelSelection,
               runtimeMode: "full-access",
               interactionMode: "default",
               branch: null,
@@ -515,7 +564,7 @@ export const makeFleetOnboardingGateway = Effect.gen(function* () {
             });
             verificationContexts.set(threadId, {
               environmentId: node.environmentId,
-              modelSelection: project.defaultModelSelection,
+              modelSelection: target.modelSelection,
               title,
             });
             return { threadId } satisfies FleetVerificationThread;

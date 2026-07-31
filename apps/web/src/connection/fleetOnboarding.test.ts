@@ -1,4 +1,10 @@
-import type { DesktopBridge, EnvironmentId } from "@starcode/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  type DesktopBridge,
+  type EnvironmentId,
+  type OrchestrationProjectShell,
+} from "@starcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -10,6 +16,7 @@ import {
   __hasCompletedAssistantVerification,
   __networkBaseUrl,
   __reconcileJoinedFleetSnapshot,
+  __resolveVerificationProject,
   __resetFleetOnboardingForTests,
   __rosterContainsExpectedEnvironments,
   makeFleetOnboardingPlatform,
@@ -227,4 +234,47 @@ describe("web fleet onboarding platform", () => {
       expect(error.diagnosis.summary).toContain("client connection was not issued");
     }),
   );
+
+  it("bootstraps a project target on a fresh node with a selectable provider", () => {
+    const fallbackModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    };
+
+    expect(
+      __resolveVerificationProject({
+        projects: [],
+        fallbackModelSelection,
+      }),
+    ).toEqual({
+      project: null,
+      modelSelection: fallbackModelSelection,
+    });
+  });
+
+  it("uses an existing project with the provider fallback when it has no default model", () => {
+    const project = {
+      id: ProjectId.make("project-existing"),
+      title: "Existing",
+      workspaceRoot: "/workspace",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    } satisfies OrchestrationProjectShell;
+    const fallbackModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    };
+
+    expect(
+      __resolveVerificationProject({
+        projects: [project],
+        fallbackModelSelection,
+      }),
+    ).toEqual({
+      project,
+      modelSelection: fallbackModelSelection,
+    });
+  });
 });
