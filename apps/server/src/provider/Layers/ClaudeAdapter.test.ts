@@ -4116,6 +4116,37 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
+  it.effect.each<{ runtimeMode: RuntimeMode }>([
+    { runtimeMode: "full-access" },
+    { runtimeMode: "approval-required" },
+    { runtimeMode: "auto-accept-edits" },
+  ])(
+    "does not redundantly set the initial permission mode for a default turn ($runtimeMode)",
+    ({ runtimeMode }) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode,
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "start in the configured mode",
+          interactionMode: "default",
+          attachments: [],
+        });
+
+        assert.deepEqual(harness.query.setPermissionModeCalls, []);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("does not call setPermissionMode when interactionMode is absent", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
