@@ -168,6 +168,15 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "install --frozen-lockfile");
     assert.include(script, "--ignore-scripts");
     assert.include(script, "rebuild esbuild msgpackr-extract node-pty sharp");
+    assert.include(
+      script,
+      [
+        "--filter @starcode/monorepo \\",
+        "      --filter @starcode/scripts... \\",
+        "      --filter starcode... \\",
+        "      rebuild esbuild msgpackr-extract node-pty sharp",
+      ].join("\n"),
+    );
     assert.isBelow(
       script.indexOf("install --frozen-lockfile --ignore-scripts"),
       script.indexOf("rebuild esbuild msgpackr-extract node-pty sharp"),

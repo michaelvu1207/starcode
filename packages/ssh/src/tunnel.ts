@@ -664,6 +664,9 @@ NODE
       --filter starcode... \\
       install --frozen-lockfile --ignore-scripts --reporter=append-only
     NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes pnpm@@@STARCODE_SOURCE_PACKAGE_MANAGER_VERSION@@ \\
+      --filter @starcode/monorepo \\
+      --filter @starcode/scripts... \\
+      --filter starcode... \\
       rebuild esbuild msgpackr-extract node-pty sharp
     "$STARCODE_SOURCE_STAGING/node_modules/.bin/vp" run --filter starcode build
   )
