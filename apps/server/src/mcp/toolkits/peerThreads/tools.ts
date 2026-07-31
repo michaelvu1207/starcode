@@ -14,12 +14,11 @@ import {
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as PeerThreadReader from "../../../peers/PeerThreadReader.ts";
-import * as PeerThreadWriter from "../../../peers/PeerThreadWriter.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { PeerRegistry } from "../../../peers/PeerRegistry.ts";
 import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadService } from "../../../threads/ThreadService.ts";
 
 /**
  * `peer_threads_list` defaults to the caller's own project, and resolving that
@@ -28,7 +27,7 @@ import { ProjectionSnapshotQuery } from "../../../orchestration/Services/Project
  */
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  PeerThreadReader.PeerThreadReader,
+  ThreadService,
   ProjectCatalogRegistry,
   ProjectionSnapshotQuery,
 ];
@@ -40,8 +39,7 @@ const connectionDependencies = [McpInvocationContext.McpInvocationContext, PeerR
 // the toolkit even though no tool takes them as parameters.
 const writeDependencies = [
   McpInvocationContext.McpInvocationContext,
-  PeerThreadWriter.PeerThreadWriter,
-  PeerThreadReader.PeerThreadReader,
+  ThreadService,
   ServerEnvironment.ServerEnvironment,
   ProjectionSnapshotQuery,
 ];
@@ -57,7 +55,7 @@ const peerReadTool = <T extends Tool.Any>(tool: T): T =>
 export const PeerThreadsListTool = peerReadTool(
   Tool.make("peer_threads_list", {
     description:
-      "List agent threads running on other machines registered as peers of this environment. Returns thread id, title, provider, status, and last activity, most recently active first. Pass peer to scope to one machine; omit it to see every peer. To walk every thread rather than just the active head, pass order=created and follow nextCursor. Use this to find a thread, then read it with peer_thread_read.",
+      "Deprecated compatibility alias for threads_list. Lists agent threads and preserves the old peer-shaped response for one release.",
     parameters: PeerThreadsListInput,
     success: PeerThreadsListResult,
     failure: PeerFederationError,
@@ -68,7 +66,7 @@ export const PeerThreadsListTool = peerReadTool(
 export const PeerThreadReadTool = peerReadTool(
   Tool.make("peer_thread_read", {
     description:
-      "Read a thread's transcript from a peer machine. Returns the newest 30 entries by default with roles, message text, and the tool names used in each turn; tool payloads are never included. Page backwards by passing the previous response's nextBefore as before, and stop when hasMore is false.",
+      "Deprecated compatibility alias for thread_read. The peer argument is accepted for old callers; routing is resolved from the thread id.",
     parameters: PeerThreadReadInput,
     success: PeerThreadReadResult,
     failure: PeerFederationError,
@@ -94,7 +92,7 @@ const peerWriteTool = <T extends Tool.Any>(tool: T): T =>
 export const PeerThreadSendTool = peerWriteTool(
   Tool.make("peer_thread_send", {
     description:
-      "Send a message to another agent thread. It arrives the way a message from your operator would: a thread sitting idle starts working on it right away, and a thread that is already working receives it as part of what it is doing. This costs that thread a turn, so send it something worth being interrupted for. Omit peer to message a thread on this machine; a thread cannot message itself. Pass queue=true instead to leave the message waiting for whenever that thread next works — free, but an idle thread may not read it for a long time.",
+      "Deprecated compatibility alias for thread_send. The peer argument is accepted for old callers; routing is resolved from the thread id.",
     parameters: PeerThreadSendInput,
     success: PeerThreadSendResult,
     failure: PeerFederationError,
@@ -105,7 +103,7 @@ export const PeerThreadSendTool = peerWriteTool(
 export const PeerThreadCreateTool = peerWriteTool(
   Tool.make("peer_thread_create", {
     description:
-      "Create a new agent thread on a peer machine and start it working on a first message. Pick projectId from the peer's projects; provider instance and model default to that project's own defaults. The new thread begins a turn immediately.",
+      "Deprecated compatibility alias for thread_create. Creates on the peer named by the old input shape.",
     parameters: PeerThreadCreateInput,
     success: PeerThreadCreateResult,
     failure: PeerFederationError,
@@ -122,7 +120,7 @@ export const PeerThreadCreateTool = peerWriteTool(
 export const PeersListTool = peerReadTool(
   Tool.make("peers_list", {
     description:
-      "List the machines this environment is paired with. Returns each connection's name — the name every other peer_* tool takes — plus its label, base URL and credential class. Orchestrator threads additionally get the SSH login: combine sshUser with sshHost to reach a machine directly (ssh user@host) when you need to inspect the box rather than talk to a thread on it. Both are null if this session is not one, which is a statement about this session rather than about the peer. Reads the local registry only, so a machine that is down still appears.",
+      "Deprecated compatibility alias for listing fleet machines. Returns each connection's legacy peer name, label, and base URL. Orchestrator threads additionally get the SSH login: combine sshUser with sshHost to reach a machine directly (ssh user@host) when you need to inspect the box rather than talk to a thread on it. Both are null if this session is not one, which is a statement about this session rather than about the node. Reads the local fleet roster only, so a machine that is down still appears.",
     parameters: PeersListInput,
     success: PeersListResult,
     failure: PeerFederationError,

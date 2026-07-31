@@ -10,8 +10,10 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@starcode/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
@@ -32,6 +34,7 @@ const makeRecordingRunnerLayer = (
   options?: {
     readonly failCommand?: string;
     readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+    readonly stdoutFor?: (command: string, args: ReadonlyArray<string>) => string | undefined;
   },
 ) =>
   Layer.succeed(
@@ -45,7 +48,7 @@ const makeRecordingRunnerLayer = (
             input.command === options?.failCommand ||
             options?.failWhen?.(input.command, input.args) === true;
           return {
-            stdout: "",
+            stdout: options?.stdoutFor?.(input.command, input.args) ?? "",
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -61,10 +64,16 @@ const makeHost = (entry: string): BootService.BootServiceHost => ({
   cliEntryPath: entry,
 });
 
-const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
+const provideHostRefs = (
+  home: string,
+  platform: NodeJS.Platform = "linux",
+  pathEnvironment = "/test/bin:/usr/bin:/bin",
+) =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
+      Layer.succeed(HostProcessEnvironment, { HOME: home, PATH: pathEnvironment }),
+      Layer.succeed(HostProcessUserId, 501),
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
@@ -142,6 +151,47 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
   // quoting is not), but % still goes through specifier expansion.
   assert.include(unit, "StandardOutput=append:/home/me/100%%logs/boot.log");
   assert.include(unit, "StandardError=append:/home/me/100%%logs/boot.log");
+});
+
+it("renders a restartable per-user macOS LaunchAgent", () => {
+  const launchAgent = BootService.renderBootServiceLaunchAgent({
+    nodePath: "/opt/homebrew/bin/node",
+    starcodeEntryPath: "/Users/theo/StarCode & Data/dist/bin.mjs",
+    baseDir: "/Users/theo/StarCode & Data",
+    logPath: "/Users/theo/StarCode & Data/userdata/logs/boot-service.log",
+    unitPath: "/Users/theo/Library/LaunchAgents/com.starcode.server.plist",
+    pathEnvironment: "/opt/homebrew/bin:/usr/bin:/bin",
+  });
+
+  assert.include(launchAgent, "<string>com.starcode.server</string>");
+  assert.include(launchAgent, "<key>RunAtLoad</key>\n  <true/>");
+  assert.include(launchAgent, "<key>KeepAlive</key>\n  <true/>");
+  assert.include(launchAgent, "<string>/Users/theo/StarCode &amp; Data</string>");
+  assert.include(launchAgent, "<string>/Users/theo/StarCode &amp; Data/dist/bin.mjs</string>");
+  assert.include(
+    launchAgent,
+    "<key>STARCODE_BOOT_SERVICE_UNIT</key>\n    <string>com.starcode.server</string>",
+  );
+  assert.include(
+    launchAgent,
+    "<key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin:/bin</string>",
+  );
+});
+
+it("uses typed supervisor context for launchd recovery guidance", () => {
+  assert.include(
+    new BootService.BootServiceCommandError({
+      step: "loading the background service",
+      supervisor: "launchd",
+    }).message,
+    "System Settings > General > Login Items & Extensions",
+  );
+  assert.notInclude(
+    new BootService.BootServiceCommandError({
+      step: "checking the LaunchAgent",
+    }).message,
+    "System Settings",
+  );
 });
 
 it("flags package-manager cache entry points as ephemeral", () => {
@@ -433,7 +483,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("fails on non-Linux platforms without touching the filesystem", () =>
+  it.effect("installs, reports, and removes a stable macOS LaunchAgent", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
@@ -441,10 +491,108 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
-        host: makeHost("/usr/local/lib/node_modules/t3/dist/bin.mjs"),
+        host: makeHost(dirs.stableEntry),
       }).pipe(
         Effect.provide(makeRecordingRunnerLayer(commands)),
         provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const plan = yield* service.install;
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.starcode.server.plist",
+      );
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
+      assert.deepEqual(
+        commands.map((entry) => [entry.command, ...entry.args].join(" ")),
+        [
+          "/bin/launchctl print-disabled gui/501",
+          "/bin/launchctl print gui/501/com.starcode.server",
+          "/bin/launchctl enable gui/501/com.starcode.server",
+          "/bin/launchctl bootout gui/501/com.starcode.server",
+          `/bin/launchctl bootstrap gui/501 ${launchAgentPath}`,
+          "/bin/launchctl print gui/501/com.starcode.server",
+        ],
+      );
+      assert.include(
+        yield* fs.readFileString(launchAgentPath),
+        `<string>${dirs.stableEntry}</string>`,
+      );
+
+      const status = yield* service.status;
+      assert.isTrue(status.supported);
+      assert.isTrue(status.installed);
+      assert.isTrue(status.current);
+
+      assert.isTrue(yield* service.uninstall);
+      assert.isFalse(yield* fs.exists(launchAgentPath));
+    }),
+  );
+
+  it.effect("restores the previous macOS LaunchAgent when a repair cannot activate", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const initialService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer([])), provideHostRefs(dirs.home, "darwin"));
+      yield* initialService.install;
+
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.starcode.server.plist",
+      );
+      const previousDefinition = yield* fs.readFileString(launchAgentPath);
+      const replacementEntry = path.join(dirs.home, "replacement-bin.mjs");
+      yield* fs.writeFileString(replacementEntry, "#!/usr/bin/env node\n");
+
+      const repairCommands: Array<RecordedCommand> = [];
+      const repairService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        host: makeHost(replacementEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(repairCommands, {
+            failWhen: (command, args) => command === "/bin/launchctl" && args.includes("bootstrap"),
+          }),
+        ),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const error = yield* repairService.install.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(launchAgentPath), previousDefinition);
+      assert.isTrue(
+        repairCommands.some(
+          ({ command, args }) =>
+            command === "/bin/launchctl" &&
+            args.join(" ") === `bootstrap gui/501 ${launchAgentPath}`,
+        ),
+      );
+    }),
+  );
+
+  it.effect("fails on unsupported platforms without touching the filesystem", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home, "win32"),
       );
 
       const error = yield* service.install.pipe(Effect.flip);

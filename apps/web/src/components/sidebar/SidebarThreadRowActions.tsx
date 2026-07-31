@@ -51,7 +51,7 @@ import {
 import {
   useForkThreadConversation,
   useHistoryImports,
-  useRefreshHistoryImports,
+  refreshHistoryImports,
 } from "../../state/terminalHistory";
 import { resolveThreadProvenance } from "../chat/ThreadHistory.logic";
 import { threadEnvironment } from "../../state/threads";
@@ -131,7 +131,7 @@ export function ThreadRowFilingActions({
   readonly onRename: () => void;
 }): ReactNode {
   const catalogSupported = useProjectCatalogSupported(thread.environmentId);
-  const forkThread = useForkThread(thread.environmentId);
+  const forkThread = useForkThread();
   // Shared, cached, and already read by the thread view and the picker, so
   // this costs the row nothing. It is here because a thread can carry a
   // conversation it has never spoken a word of — see `canForkConversation`.
@@ -445,14 +445,13 @@ export function canForkConversation(input: {
  * kind they got and why. The one thing that must never happen is a fork that
  * *claims* to carry the conversation and does not.
  */
-function useForkThread(
-  /** The machine whose provenance registry a successful fork invalidates. */
-  environmentId: EnvironmentId,
-): (thread: EnvironmentThreadShell, carriesConversation: boolean) => Promise<void> {
+export function useForkThread(): (
+  thread: EnvironmentThreadShell,
+  carriesConversation: boolean,
+) => Promise<void> {
   const router = useRouter();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const forkConversation = useForkThreadConversation();
-  const refreshProvenance = useRefreshHistoryImports(environmentId);
 
   return useCallback(
     async (thread: EnvironmentThreadShell, carriesConversation: boolean) => {
@@ -476,7 +475,7 @@ function useForkThread(
           // it, the fork we are about to navigate to opens looking like an
           // ordinary empty thread — with the conversation it inherited hidden
           // behind a line that has not arrived yet.
-          refreshProvenance();
+          refreshHistoryImports(thread.environmentId);
           await goTo(attempt.result.threadId);
           toastManager.add({
             type: "success",

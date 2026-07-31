@@ -14,6 +14,15 @@ import { historySessionIdForPath } from "./paths.ts";
 const claudeUser = (text: string, cwd: string): string =>
   JSON.stringify({ type: "user", cwd, message: { role: "user", content: text } });
 
+const claudeSubagentMeta = (toolUseId: string): string =>
+  JSON.stringify({
+    agentType: "Explore",
+    description: "Inspect the implementation",
+    model: "opus",
+    spawnDepth: 1,
+    toolUseId,
+  });
+
 const CODEX_ROLLOUT = `${[
   JSON.stringify({ type: "session_meta", payload: { cwd: "/tmp/beta" } }),
   JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "ship" } }),
@@ -62,6 +71,10 @@ const withHome = <A, E>(
         `${claudeUser("subagent work", "/tmp/alpha")}\n`,
       );
       yield* writeFile(
+        path(".claude/projects/-tmp-alpha/session-two/subagents/agent-aux.meta.json"),
+        claudeSubagentMeta("toolu_aux"),
+      );
+      yield* writeFile(
         path(".codex/sessions/2026/07/20/rollout-2026-07-20T10-00-00-abc.jsonl"),
         CODEX_ROLLOUT,
       );
@@ -91,6 +104,168 @@ describe("HistoryIndex discovery", () => {
         expect(snapshot.entries.filter((entry) => entry.provider === "codex")).toHaveLength(1);
       }),
     ),
+  );
+
+  it.effect("indexes a Claude subagent for resolution without listing it as a session", () =>
+    withHome(({ index, path }) =>
+      Effect.gen(function* () {
+        const agentPath = path(".claude/projects/-tmp-alpha/session-two/subagents/agent-aux.jsonl");
+        const snapshot = yield* index.snapshot();
+        expect(snapshot.entries.some((entry) => entry.path === agentPath)).toBe(false);
+
+        const resolved = yield* index.resolve(historySessionIdForPath(agentPath));
+        expect(resolved).toMatchObject({
+          kind: "subagent",
+          path: agentPath,
+          parentNativeSessionId: "session-two",
+          agentRunId: "aux",
+          claudeSubagentMetadata: {
+            toolUseId: "toolu_aux",
+            agentType: "Explore",
+            description: "Inspect the implementation",
+            model: "opus",
+            spawnDepth: 1,
+          },
+        });
+      }),
+    ),
+  );
+
+  it.effect("links a Claude subagent only when parent, task, and launch tool all match", () =>
+    withHome(({ index }) =>
+      Effect.gen(function* () {
+        const exact = yield* index.findClaudeSubagent({
+          parentNativeSessionId: "session-two",
+          agentRunId: "aux",
+          launchToolUseId: "toolu_aux",
+        });
+        expect(exact?.kind).toBe("subagent");
+
+        for (const mismatch of [
+          {
+            parentNativeSessionId: "another-session",
+            agentRunId: "aux",
+            launchToolUseId: "toolu_aux",
+          },
+          {
+            parentNativeSessionId: "session-two",
+            agentRunId: "another-agent",
+            launchToolUseId: "toolu_aux",
+          },
+          {
+            parentNativeSessionId: "session-two",
+            agentRunId: "aux",
+            launchToolUseId: "toolu_another",
+          },
+        ]) {
+          expect(yield* index.findClaudeSubagent(mismatch)).toBeNull();
+        }
+      }),
+    ),
+  );
+
+  it.effect("refuses missing, malformed, and ambiguous Claude subagent metadata", () =>
+    withHome(({ index, path }) =>
+      Effect.gen(function* () {
+        yield* writeFile(
+          path(".claude/projects/-tmp-alpha/session-two/subagents/agent-missing.jsonl"),
+          `${claudeUser("missing meta", "/tmp/alpha")}\n`,
+        );
+        yield* writeFile(
+          path(".claude/projects/-tmp-alpha/session-two/subagents/agent-malformed.jsonl"),
+          `${claudeUser("bad meta", "/tmp/alpha")}\n`,
+        );
+        yield* writeFile(
+          path(".claude/projects/-tmp-alpha/session-two/subagents/agent-malformed.meta.json"),
+          "{not json",
+        );
+        for (const agentRunId of ["missing", "malformed"]) {
+          expect(
+            yield* index.findClaudeSubagent({
+              parentNativeSessionId: "session-two",
+              agentRunId,
+              launchToolUseId: "toolu_aux",
+            }),
+          ).toBeNull();
+        }
+
+        yield* writeFile(
+          path(".claude/projects/-tmp-copy/session-two/subagents/agent-aux.jsonl"),
+          `${claudeUser("copied transcript", "/tmp/copy")}\n`,
+        );
+        yield* writeFile(
+          path(".claude/projects/-tmp-copy/session-two/subagents/agent-aux.meta.json"),
+          claudeSubagentMeta("toolu_aux"),
+        );
+        expect(
+          yield* index.findClaudeSubagent({
+            parentNativeSessionId: "session-two",
+            agentRunId: "aux",
+            launchToolUseId: "toolu_aux",
+          }),
+        ).toBeNull();
+      }),
+    ),
+  );
+
+  it.effect("revalidates an existing Claude subagent directory", () =>
+    withHome(({ index, path }) =>
+      Effect.gen(function* () {
+        expect(
+          yield* index.findClaudeSubagent({
+            parentNativeSessionId: "session-two",
+            agentRunId: "later",
+            launchToolUseId: "toolu_later",
+          }),
+        ).toBeNull();
+        yield* writeFile(
+          path(".claude/projects/-tmp-alpha/session-two/subagents/agent-later.jsonl"),
+          `${claudeUser("later work", "/tmp/alpha")}\n`,
+        );
+        yield* writeFile(
+          path(".claude/projects/-tmp-alpha/session-two/subagents/agent-later.meta.json"),
+          claudeSubagentMeta("toolu_later"),
+        );
+        expect(
+          yield* index.findClaudeSubagent({
+            parentNativeSessionId: "session-two",
+            agentRunId: "later",
+            launchToolUseId: "toolu_later",
+          }),
+        ).toMatchObject({ kind: "subagent", agentRunId: "later" });
+      }),
+    ),
+  );
+
+  it.effect("uses an explicit Codex home for transcript lookup", () =>
+    Effect.gen(function* () {
+      const home = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-history-home-")),
+      );
+      const codexHome = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-codex-home-")),
+      );
+      const rolloutPath = NodePath.join(
+        codexHome,
+        "sessions/2026/07/20/rollout-2026-07-20T10-00-00-abc.jsonl",
+      );
+
+      yield* Effect.gen(function* () {
+        yield* writeFile(rolloutPath, CODEX_ROLLOUT);
+        const index = makeHistoryIndex({ homeDir: home, codexHome, debounceMs: 0 });
+        const snapshot = yield* index.snapshot();
+        expect(snapshot.byId.get(historySessionIdForPath(rolloutPath))?.path).toEqual(rolloutPath);
+      }).pipe(
+        Effect.ensuring(
+          Effect.promise(() =>
+            Promise.all([
+              NodeFSP.rm(home, { recursive: true, force: true }),
+              NodeFSP.rm(codexHome, { recursive: true, force: true }),
+            ]).then(() => undefined),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("orders newest first", () =>

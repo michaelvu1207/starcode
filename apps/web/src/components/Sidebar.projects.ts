@@ -33,10 +33,10 @@
  * waiting, the rows already say so, each in its own group.
  *
  * Threads no project claims do not become a group among the projects either.
- * They come back separately as `chatsGroup`, for the caller to render at the
- * very bottom under "Chats" — below the archived disclosure, below everything.
- * A loose thread is not a category, and sorting one into the middle of the list
- * under "U" for Unfiled made it look like one.
+ * They come back separately as `chatsGroup`, for the caller to render on the
+ * dedicated Chats surface. A loose thread is not a category, and sorting one
+ * into the middle of the project list under "U" for Unfiled made it look like
+ * one.
  */
 import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/models";
 import type { ProjectCategorySlug } from "@starcode/contracts";
@@ -106,10 +106,23 @@ export interface SidebarProjectGroups {
    */
   readonly archivedGroups: ReadonlyArray<SidebarProjectGroup>;
   /**
-   * Threads no project claims, for the bottom of the view. `null` when every
-   * thread is filed — an empty Chats section is a header saying nothing.
+   * Threads no project claims, for the dedicated Chats surface. `null` when
+   * every thread is filed.
    */
   readonly chatsGroup: SidebarProjectGroup | null;
+}
+
+/**
+ * Restrict the sidebar's interactive row set to the rows the Chats surface
+ * actually renders. Keeping this next to the grouping fold makes the list,
+ * jump shortcuts, and bulk actions share its definition of "chat".
+ */
+export function selectSidebarChatThreads(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  membership: ProjectMembership,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const unfiledThreadKeys = new Set(membership.unfiledThreadKeys);
+  return threads.filter((thread) => unfiledThreadKeys.has(projectThreadKey(thread)));
 }
 
 export function buildSidebarProjectGroups(input: SidebarProjectsInput): SidebarProjectGroups {

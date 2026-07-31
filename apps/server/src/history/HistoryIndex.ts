@@ -10,10 +10,11 @@
  *
  * Three decisions shape everything here.
  *
- * **The index is stat-only.** A build does `readdir` plus `stat` and nothing
- * else — no file is opened. On the local store that is ~4,500 files across two
- * trees, and it is the difference between a cold build measured in
- * milliseconds and one measured in tens of seconds.
+ * **The session index is stat-only.** A build does `readdir` plus `stat` and
+ * nothing else for ordinary sessions. Claude subagent metadata is the one
+ * deliberately small exception: an adjacent `.meta.json` is read when its
+ * `subagents/` directory changes because its `toolUseId` is the ownership
+ * proof. Those hidden entries never join the ordinary session listing.
  *
  * **Snippets are hydrated per page, not per index.** The listing's snippet and
  * project path come from the front of the file, which for Codex means reading
@@ -48,7 +49,6 @@ import * as Layer from "effect/Layer";
 import { resolveSessionTitle, type SessionTitleSource } from "./importFacts.ts";
 import {
   CLAUDE_PROJECTS_DIRNAME,
-  CODEX_SESSIONS_DIRNAME,
   decodeClaudeProjectDirName,
   historySessionIdForPath,
   isHistorySessionId,
@@ -67,8 +67,26 @@ export const HISTORY_INDEX_REVALIDATE_DEBOUNCE_MS = 5_000;
 /** How many hydrated rows to keep. Comfortably more than a few pages of paging. */
 const HYDRATION_CACHE_MAX_ENTRIES = 2_000;
 
+/** Claude's adjacent agent metadata is tiny. Refuse an unexpectedly large file. */
+const CLAUDE_SUBAGENT_META_MAX_BYTES = 64 * 1024;
+
+const CLAUDE_SUBAGENT_FILE_PATTERN = /^agent-(.+)\.jsonl$/;
+
+export interface ClaudeSubagentHistoryMetadata {
+  readonly toolUseId: string;
+  readonly agentType: string | null;
+  readonly description: string | null;
+  readonly model: string | null;
+  readonly spawnDepth: number | null;
+}
+
 /** One session as the index knows it: everything a `stat` can tell us, and no more. */
 export interface HistoryIndexEntry {
+  /**
+   * Subagent entries are resolvable transcripts but never members of
+   * `HistoryIndexSnapshot.entries`, which is the top-level session listing.
+   */
+  readonly kind: "session" | "subagent";
   readonly id: HistorySessionId;
   readonly provider: HistoryProvider;
   readonly path: string;
@@ -76,6 +94,12 @@ export interface HistoryIndexEntry {
   readonly pathDerivedProject: string | null;
   readonly mtimeMs: number;
   readonly sizeBytes: number;
+  /** Claude only, present exactly for `kind=subagent`. */
+  readonly parentNativeSessionId?: string;
+  /** Claude's provider task id, read from `agent-<taskId>.jsonl`. */
+  readonly agentRunId?: string;
+  /** Parsed adjacent metadata. Null means absent, malformed, or oversized. */
+  readonly claudeSubagentMetadata?: ClaudeSubagentHistoryMetadata | null;
 }
 
 interface HydratedFields {
@@ -86,7 +110,11 @@ interface HydratedFields {
 }
 
 export interface HistoryIndexSnapshot {
-  /** Newest first, by mtime then id, matching the listing cursor's ordering. */
+  /**
+   * Top-level sessions only, newest first by mtime then id.
+   *
+   * Hidden Claude subagent transcripts deliberately live only in `byId`.
+   */
   readonly entries: ReadonlyArray<HistoryIndexEntry>;
   readonly byId: ReadonlyMap<string, HistoryIndexEntry>;
   readonly indexedAt: number;
@@ -114,6 +142,16 @@ export interface HistoryIndexShape {
    * name a file the server itself discovered under one of the two known roots.
    */
   readonly resolve: (sessionId: string) => Effect.Effect<HistoryIndexEntry | null>;
+  /**
+   * Resolves one Claude agent transcript only when all native ownership
+   * evidence agrees. Missing metadata and duplicate matches both return null;
+   * neither is safe to guess through.
+   */
+  readonly findClaudeSubagent: (input: {
+    readonly parentNativeSessionId: string;
+    readonly agentRunId: string;
+    readonly launchToolUseId: string;
+  }) => Effect.Effect<HistoryIndexEntry | null>;
   /** Fills in project path and snippet for one page of rows, cached by file identity. */
   readonly hydrate: (
     entries: ReadonlyArray<HistoryIndexEntry>,
@@ -137,6 +175,14 @@ interface ScannedDirectory {
   readonly entries: ReadonlyArray<HistoryIndexEntry>;
 }
 
+interface ClaudeProjectChildren {
+  readonly mtimeMs: number;
+  readonly subagentDirectories: ReadonlyArray<{
+    readonly parentNativeSessionId: string;
+    readonly path: string;
+  }>;
+}
+
 const statOrNull = async (path: string): Promise<NodeFS.Stats | null> => {
   try {
     return await NodeFSP.stat(path);
@@ -155,18 +201,73 @@ const readdirOrEmpty = async (path: string): Promise<ReadonlyArray<NodeFS.Dirent
   }
 };
 
+const nonEmptyString = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const isNotNull = <A>(value: A | null): value is A => value !== null;
+
+const readClaudeSubagentMetadata = async (
+  path: string,
+): Promise<ClaudeSubagentHistoryMetadata | null> => {
+  const stats = await statOrNull(path);
+  if (
+    stats === null ||
+    !stats.isFile() ||
+    stats.size <= 0 ||
+    stats.size > CLAUDE_SUBAGENT_META_MAX_BYTES
+  ) {
+    return null;
+  }
+  try {
+    const decoded: unknown = JSON.parse(await NodeFSP.readFile(path, "utf8"));
+    if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return null;
+    const record = decoded as Record<string, unknown>;
+    const toolUseId = nonEmptyString(record["toolUseId"]);
+    if (toolUseId === null) return null;
+    return {
+      toolUseId,
+      agentType: nonEmptyString(record["agentType"]),
+      description: nonEmptyString(record["description"]),
+      model: nonEmptyString(record["model"]),
+      spawnDepth:
+        typeof record["spawnDepth"] === "number" &&
+        Number.isInteger(record["spawnDepth"]) &&
+        record["spawnDepth"] >= 0
+          ? record["spawnDepth"]
+          : null,
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const makeHistoryIndex = (options?: {
   readonly homeDir?: string;
+  /** Codex config root (`CODEX_HOME`), whose session store is `sessions/`. */
+  readonly codexHome?: string;
   readonly debounceMs?: number;
 }): HistoryIndexShape => {
   const homeDir = options?.homeDir ?? NodeOS.homedir();
   const debounceMs = options?.debounceMs ?? HISTORY_INDEX_REVALIDATE_DEBOUNCE_MS;
   const claudeRoot = NodePath.join(homeDir, CLAUDE_PROJECTS_DIRNAME);
-  const codexRoot = NodePath.join(homeDir, CODEX_SESSIONS_DIRNAME);
+  // Explicit test homes stay self-contained. Production, where no home is
+  // injected, follows the same CODEX_HOME override that launches and rollout
+  // correlation use; otherwise a worker can be linked successfully while its
+  // transcript remains invisible to the history endpoint.
+  const codexHome =
+    options?.codexHome ??
+    (options?.homeDir === undefined ? process.env.CODEX_HOME : undefined) ??
+    NodePath.join(homeDir, ".codex");
+  const codexRoot = NodePath.join(codexHome, "sessions");
 
   // Directory mtime cache, so a revalidation re-reads only what changed. For
   // Codex's YYYY/MM/DD tree that is one directory a day.
   const scannedDirectories = new Map<string, ScannedDirectory>();
+  const scannedClaudeSubagentDirectories = new Map<string, ScannedDirectory>();
+  const claudeProjectChildren = new Map<string, ClaudeProjectChildren>();
   const projectPathCache = new Map<string, string>();
   const hydrationCache = new Map<string, HydratedFields>();
 
@@ -215,6 +316,7 @@ export const makeHistoryIndex = (options?: {
         const fileStats = await statOrNull(path);
         if (fileStats === null) return;
         entries.push({
+          kind: "session",
           id: historySessionIdForPath(path),
           provider,
           path,
@@ -228,19 +330,123 @@ export const makeHistoryIndex = (options?: {
     return entries;
   };
 
-  /** Claude: one directory per project, sessions directly inside it. */
-  const scanClaude = async (): Promise<ReadonlyArray<HistoryIndexEntry>> => {
-    const dirents = await readdirOrEmpty(claudeRoot);
-    const scans = dirents
+  const scanClaudeSubagentDirectory = async (input: {
+    readonly directory: string;
+    readonly parentNativeSessionId: string;
+    readonly pathDerivedProject: string;
+  }): Promise<ReadonlyArray<HistoryIndexEntry>> => {
+    const stats = await statOrNull(input.directory);
+    if (stats === null || !stats.isDirectory()) {
+      scannedClaudeSubagentDirectories.delete(input.directory);
+      return [];
+    }
+    const cached = scannedClaudeSubagentDirectories.get(input.directory);
+    if (cached !== undefined && cached.mtimeMs === stats.mtimeMs) return cached.entries;
+
+    const entries = (
+      await Promise.all(
+        (
+          await readdirOrEmpty(input.directory)
+        ).map(async (dirent) => {
+          if (!dirent.isFile()) return null;
+          const match = CLAUDE_SUBAGENT_FILE_PATTERN.exec(dirent.name);
+          const agentRunId = nonEmptyString(match?.[1]);
+          if (agentRunId === null) return null;
+
+          const path = NodePath.join(input.directory, dirent.name);
+          const fileStats = await statOrNull(path);
+          if (fileStats === null || !fileStats.isFile()) return null;
+          const metaPath = NodePath.join(input.directory, `agent-${agentRunId}.meta.json`);
+          const metadata = await readClaudeSubagentMetadata(metaPath);
+          return {
+            kind: "subagent",
+            id: historySessionIdForPath(path),
+            provider: "claude",
+            path,
+            pathDerivedProject: input.pathDerivedProject,
+            mtimeMs: fileStats.mtimeMs,
+            sizeBytes: fileStats.size,
+            parentNativeSessionId: input.parentNativeSessionId,
+            agentRunId,
+            claudeSubagentMetadata: metadata,
+          } satisfies HistoryIndexEntry;
+        }),
+      )
+    ).filter(isNotNull);
+
+    scannedClaudeSubagentDirectories.set(input.directory, {
+      mtimeMs: stats.mtimeMs,
+      entries,
+    });
+    return entries;
+  };
+
+  const claudeSubagentDirectories = async (
+    projectDirectory: string,
+  ): Promise<ClaudeProjectChildren["subagentDirectories"]> => {
+    const stats = await statOrNull(projectDirectory);
+    if (stats === null || !stats.isDirectory()) {
+      claudeProjectChildren.delete(projectDirectory);
+      return [];
+    }
+    const cached = claudeProjectChildren.get(projectDirectory);
+    if (cached !== undefined && cached.mtimeMs === stats.mtimeMs) {
+      return cached.subagentDirectories;
+    }
+    const subagentDirectories = (await readdirOrEmpty(projectDirectory))
       .filter((dirent) => dirent.isDirectory() && !dirent.name.startsWith("."))
-      .map((dirent) =>
-        scanDirectory(
-          NodePath.join(claudeRoot, dirent.name),
-          "claude",
-          decodeProjectDir(dirent.name),
+      .map((dirent) => ({
+        parentNativeSessionId: dirent.name,
+        path: NodePath.join(projectDirectory, dirent.name, "subagents"),
+      }));
+    claudeProjectChildren.set(projectDirectory, { mtimeMs: stats.mtimeMs, subagentDirectories });
+    return subagentDirectories;
+  };
+
+  /**
+   * Claude: top-level sessions are direct project children. Agent transcripts
+   * are hidden one level below a parent session and are returned separately so
+   * no listing caller can accidentally include them.
+   */
+  const scanClaude = async (): Promise<{
+    readonly sessions: ReadonlyArray<HistoryIndexEntry>;
+    readonly subagents: ReadonlyArray<HistoryIndexEntry>;
+  }> => {
+    const projects = (await readdirOrEmpty(claudeRoot))
+      .filter((dirent) => dirent.isDirectory() && !dirent.name.startsWith("."))
+      .map((dirent) => ({
+        directory: NodePath.join(claudeRoot, dirent.name),
+        pathDerivedProject: decodeProjectDir(dirent.name),
+      }));
+    const sessions = (
+      await Promise.all(
+        projects.map((project) =>
+          scanDirectory(project.directory, "claude", project.pathDerivedProject),
         ),
-      );
-    return (await Promise.all(scans)).flat();
+      )
+    ).flat();
+    const childDirectories = (
+      await Promise.all(
+        projects.map(async (project) =>
+          (await claudeSubagentDirectories(project.directory)).map((child) => ({
+            ...child,
+            pathDerivedProject: project.pathDerivedProject,
+          })),
+        ),
+      )
+    ).flat();
+    const subagents = (
+      await Promise.all(
+        childDirectories.map((child) =>
+          scanClaudeSubagentDirectory({
+            directory: child.path,
+            parentNativeSessionId: child.parentNativeSessionId,
+            pathDerivedProject: child.pathDerivedProject,
+          }),
+        ),
+      )
+    ).flat();
+    return { sessions, subagents };
   };
 
   /**
@@ -276,9 +482,10 @@ export const makeHistoryIndex = (options?: {
 
   const build = async (nowMs: number): Promise<HistoryIndexSnapshot> => {
     const [claude, codex] = await Promise.all([scanClaude(), scanCodex()]);
-    const entries = [...claude, ...codex].sort(compareEntries);
+    const entries = [...claude.sessions, ...codex].sort(compareEntries);
     const byId = new Map<string, HistoryIndexEntry>();
     for (const entry of entries) byId.set(entry.id, entry);
+    for (const entry of claude.subagents) byId.set(entry.id, entry);
     return { entries, byId, indexedAt: nowMs };
   };
 
@@ -380,12 +587,40 @@ export const makeHistoryIndex = (options?: {
         const index = yield* snapshot();
         return index.byId.get(sessionId) ?? null;
       }),
+    findClaudeSubagent: (input) =>
+      Effect.gen(function* () {
+        const parentNativeSessionId = nonEmptyString(input.parentNativeSessionId);
+        const agentRunId = nonEmptyString(input.agentRunId);
+        const launchToolUseId = nonEmptyString(input.launchToolUseId);
+        if (parentNativeSessionId === null || agentRunId === null || launchToolUseId === null) {
+          return null;
+        }
+        const index = yield* snapshot();
+        const matches = Array.from(index.byId.values()).filter(
+          (entry) =>
+            entry.kind === "subagent" &&
+            entry.provider === "claude" &&
+            entry.parentNativeSessionId === parentNativeSessionId &&
+            entry.agentRunId === agentRunId &&
+            entry.claudeSubagentMetadata?.toolUseId === launchToolUseId,
+        );
+        return matches.length === 1 ? (matches[0] ?? null) : null;
+      }),
     hydrate: (entries: ReadonlyArray<HistoryIndexEntry>) =>
       Effect.promise(() =>
         Promise.all(entries.slice(0, HISTORY_SESSIONS_MAX_LIMIT).map(hydrateOne)),
       ),
   };
 };
+
+/**
+ * Shared fail-closed index for agent transcript ownership reconciliation.
+ *
+ * Agent files are short-lived around launch/completion boundaries, so this
+ * instance disables the public listing debounce while retaining the same
+ * directory-mtime caches and in-flight scan coalescing.
+ */
+export const agentTranscriptHistoryIndex = makeHistoryIndex({ debounceMs: 0 });
 
 export const layer: Layer.Layer<HistoryIndex> = Layer.sync(HistoryIndex, () =>
   HistoryIndex.of(makeHistoryIndex()),

@@ -9,7 +9,7 @@
  * fact a render cannot settle — the element is in the markup either way, with
  * identical attributes but for one class — which is why the assertions here read
  * the class strings and the source rather than looking for elements. Same
- * reasoning as `ChatsDock.layout.test.ts`, and the same limit: a browser is
+ * reasoning as `SidebarChatMode.layout.test.ts`, and the same limit: a browser is
  * still where this is *seen*, this is where the next person to touch it finds
  * out.
  */

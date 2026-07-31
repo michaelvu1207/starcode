@@ -485,6 +485,29 @@ describe("history import", () => {
     ),
   );
 
+  it.effect("refuses a hidden Claude subagent transcript as a standalone import", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const subagentPath = NodePath.join(
+          NodePath.dirname(harness.claudeSessionPath),
+          CLAUDE_SESSION_UUID,
+          "subagents",
+          "agent-task-1.jsonl",
+        );
+        yield* writeFile(subagentPath, claudeSessionFixture(harness.workspace));
+
+        const importer = yield* makeHistoryImporter;
+        const error = yield* importer
+          .importSession({ sessionId: sessionId(subagentPath) })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "HistorySessionNotFound");
+        assert.lengthOf(harness.commands, 0);
+        assert.lengthOf(harness.bindings, 0);
+      }),
+    ),
+  );
+
   it.effect("refuses a session that is not in the chosen instance's home", () =>
     withHarness(
       (harness) =>

@@ -13,9 +13,14 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { runtimeContextLayer } from "../lib/runtime";
 import { connectionPlatformLayer } from "./platform";
+import { fleetOnboardingGatewayLayer, fleetOnboardingPlatformLayer } from "./fleetOnboarding";
 
 const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
   Layer.provide(runtimeContextLayer),
+);
+const providedClientPlatformLayer = Layer.merge(
+  providedConnectionPlatformLayer,
+  fleetOnboardingPlatformLayer,
 );
 
 const snapshotLoaderLayer = Layer.mergeAll(
@@ -32,11 +37,14 @@ type ConnectionLayerSource =
   | typeof Connection.layer
   | typeof snapshotLoaderLayer
   | typeof runtimeContextLayer
-  | typeof connectionPlatformLayer;
+  | typeof connectionPlatformLayer
+  | typeof fleetOnboardingPlatformLayer
+  | typeof fleetOnboardingGatewayLayer;
 
-const connectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
-  Layer.provideMerge(Layer.mergeAll(runtimeContextLayer, providedConnectionPlatformLayer)),
+const baseConnectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
+  Layer.provideMerge(Layer.mergeAll(runtimeContextLayer, providedClientPlatformLayer)),
 );
+const connectionLayer = fleetOnboardingGatewayLayer.pipe(Layer.provideMerge(baseConnectionLayer));
 
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,

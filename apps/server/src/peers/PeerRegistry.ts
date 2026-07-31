@@ -1,57 +1,32 @@
 /**
- * PeerRegistry - the set of remote starcode environments this one can read.
+ * One-release compatibility adapter for the former peer registry.
  *
- * Persistence mirrors `serverSettings.ts`: a JSON file under the state dir for
- * the metadata, guarded by a write semaphore, with the actual bearer credential
- * held in `ServerSecretStore` (0600, outside the JSON) so a peers file that
- * leaks carries no authority.
- *
- * Registration reuses the existing RFC 8693 token exchange; there is no second
- * auth scheme here. The exchange requests exactly the scopes the registration's
- * credential class calls for, and the peer's own anti-privilege-escalation
- * check refuses to widen that.
- *
- * Both directions are then re-checked locally against what the peer says it
- * granted, so an entry's stored class and its stored authority cannot diverge:
- * a `read` peer that somehow came back operate-capable is refused rather than
- * silently downgraded in name only.
+ * New state is owned by FleetRegistry and written to fleet.json. The legacy
+ * peer-shaped API remains so running MCP sessions and older clients continue
+ * to work while they move to `/api/fleet`.
  *
  * @module PeerRegistry
  */
-import {
-  AuthEnvironmentScope,
-  PeerEnvironment,
-  type PeerCredentialClass,
-  type PeerName,
-  type PeerRegisterInput,
-} from "@starcode/contracts";
-import { parseOAuthScope } from "@starcode/shared/oauthScope";
-import * as Cause from "effect/Cause";
+import { type PeerEnvironment, type PeerName, type PeerRegisterInput } from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
-import { HttpClient } from "effect/unstable/http";
-import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
-import * as ServerConfig from "../config.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
-  exchangePeerPairingToken,
-  fetchPeerDescriptor,
-  fetchPeerSessionState,
-  judgePeerScopes,
-  normalizePeerBaseUrl,
-  peerCredentialScopes,
-} from "./PeerEnvironmentClient.ts";
+  FleetReconciler,
+  isFleetRegistrationError,
+  type FleetRegistrationFailureReason,
+} from "../fleet/FleetReconciler.ts";
+import {
+  FleetRegistry,
+  FleetRegistryStateError,
+  type ResolvedFleetMember,
+} from "../fleet/FleetRegistry.ts";
 
-const isAuthEnvironmentScope = Schema.is(AuthEnvironmentScope);
+const isFleetRegistryStateError = Schema.is(FleetRegistryStateError);
 
 export class PeerRegistryStateError extends Schema.TaggedErrorClass<PeerRegistryStateError>()(
   "PeerRegistryStateError",
@@ -61,7 +36,7 @@ export class PeerRegistryStateError extends Schema.TaggedErrorClass<PeerRegistry
   },
 ) {
   override get message(): string {
-    return `Failed to ${this.operation} the peer registry.`;
+    return `Failed to ${this.operation} the peer registry compatibility view.`;
   }
 }
 
@@ -89,21 +64,6 @@ export class PeerRegistrationError extends Schema.TaggedErrorClass<PeerRegistrat
   }
 }
 
-const PeerRegistryFile = Schema.Struct({
-  version: Schema.Literal(1),
-  peers: Schema.Array(PeerEnvironment),
-});
-type PeerRegistryFile = typeof PeerRegistryFile.Type;
-
-const decodePeerRegistryFile = Schema.decodeUnknownEffect(fromLenientJson(PeerRegistryFile));
-const encodePeerRegistryFile = Schema.encodeUnknownEffect(fromJsonStringPretty(PeerRegistryFile));
-
-const EMPTY_REGISTRY: PeerRegistryFile = { version: 1, peers: [] };
-
-/** Credentials are keyed by name so removing a peer can drop its secret. */
-const peerSecretName = (name: string): string =>
-  `peer-${Buffer.from(name, "utf8").toString("base64url")}`;
-
 export interface ResolvedPeer {
   readonly peer: PeerEnvironment;
   readonly credential: string;
@@ -115,12 +75,10 @@ export interface PeerRegistryShape {
     input: PeerRegisterInput,
   ) => Effect.Effect<PeerEnvironment, PeerRegistryStateError | PeerRegistrationError>;
   readonly remove: (name: PeerName) => Effect.Effect<boolean, PeerRegistryStateError>;
-  /** Record (or clear, with null) how to log into an already-registered peer. False when it is unknown. */
   readonly setSshUser: (
     name: PeerName,
     sshUser: string | null,
   ) => Effect.Effect<boolean, PeerRegistryStateError>;
-  /** Peer plus its bearer credential. `None` when the peer or secret is gone. */
   readonly resolve: (
     name: PeerName,
   ) => Effect.Effect<Option.Option<ResolvedPeer>, PeerRegistryStateError>;
@@ -130,286 +88,135 @@ export class PeerRegistry extends Context.Service<PeerRegistry, PeerRegistryShap
   "starcode/peers/PeerRegistry",
 ) {}
 
+const endpointOf = (resolved: ResolvedFleetMember) =>
+  resolved.member.node.endpoints.find((endpoint) => endpoint.isDefault === true) ??
+  resolved.member.node.endpoints[0];
+
+const peerFromResolved = (resolved: ResolvedFleetMember): PeerEnvironment | null => {
+  const endpoint = endpointOf(resolved);
+  if (endpoint === undefined) return null;
+  return {
+    name: resolved.member.node.name,
+    baseUrl: endpoint.httpBaseUrl,
+    environmentId: resolved.member.node.environmentId,
+    label: resolved.member.node.label,
+    sshUser: resolved.member.node.sshUser,
+    registeredAt: resolved.member.registeredAt,
+  };
+};
+
+const peerFromMember = (member: ResolvedFleetMember["member"]): PeerEnvironment | null =>
+  peerFromResolved({ member, credential: "" });
+
+const mapFleetStateError = (cause: unknown): PeerRegistryStateError =>
+  new PeerRegistryStateError({
+    operation:
+      isFleetRegistryStateError(cause) && cause.operation === "credential"
+        ? "credential"
+        : isFleetRegistryStateError(cause) && cause.operation === "save"
+          ? "save"
+          : "load",
+    cause,
+  });
+
+const mapRegistrationReason = (
+  reason: FleetRegistrationFailureReason,
+): PeerRegistrationFailureReason => {
+  switch (reason) {
+    case "invalid_base_url":
+    case "duplicate_name":
+    case "exchange_rejected":
+    case "token_rejected":
+      return reason;
+    case "node_unreachable":
+      return "peer_unreachable";
+    case "administrative_scope_required":
+      return "scope_not_granted";
+  }
+};
+
 export const make = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const httpClient = yield* HttpClient.HttpClient;
-  const writeSemaphore = yield* Semaphore.make(1);
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
+  const fleetRegistry = yield* FleetRegistry;
+  const reconciler = yield* FleetReconciler;
 
-  const readFile: Effect.Effect<PeerRegistryFile, PeerRegistryStateError> = fs
-    .readFileString(config.peersPath)
-    .pipe(
-      Effect.map(Option.some),
-      // A missing peers file is the unregistered steady state, not a fault.
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none<string>())
-          : Effect.fail(new PeerRegistryStateError({ operation: "load", cause })),
-      ),
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeed(EMPTY_REGISTRY),
-          onSome: (contents) =>
-            decodePeerRegistryFile(contents).pipe(
-              Effect.mapError((cause) => new PeerRegistryStateError({ operation: "load", cause })),
-            ),
-        }),
-      ),
-    );
-
-  const writeFile = (next: PeerRegistryFile) =>
-    encodePeerRegistryFile(next).pipe(
-      Effect.flatMap((contents) =>
-        writeFileStringAtomically({ filePath: config.peersPath, contents: `${contents}\n` }),
-      ),
-      // The platform services are captured here rather than surfaced on the
-      // service interface, so callers of the registry need no filesystem context.
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError((cause) => new PeerRegistryStateError({ operation: "save", cause })),
-    );
-
-  const readCredential = (name: string) =>
-    secretStore.get(peerSecretName(name)).pipe(
-      Effect.map(Option.map((bytes) => decoder.decode(bytes))),
-      Effect.mapError((cause) => new PeerRegistryStateError({ operation: "credential", cause })),
-    );
-
-  const writeCredential = (name: string, credential: string) =>
-    secretStore
-      .set(peerSecretName(name), encoder.encode(credential))
-      .pipe(
-        Effect.mapError((cause) => new PeerRegistryStateError({ operation: "credential", cause })),
-      );
-
-  const removeCredential = (name: string) =>
-    secretStore
-      .remove(peerSecretName(name))
-      .pipe(
-        Effect.mapError((cause) => new PeerRegistryStateError({ operation: "credential", cause })),
-      );
-
-  const list: PeerRegistryShape["list"] = readFile.pipe(
-    Effect.map((file) => file.peers),
+  const list: PeerRegistryShape["list"] = fleetRegistry.snapshot.pipe(
+    Effect.map((roster) =>
+      roster.members.flatMap((member) => {
+        const peer = peerFromMember(member);
+        return peer === null ? [] : [peer];
+      }),
+    ),
+    Effect.mapError(mapFleetStateError),
     Effect.withSpan("PeerRegistry.list"),
   );
 
   const resolve: PeerRegistryShape["resolve"] = Effect.fn("PeerRegistry.resolve")(function* (name) {
-    const file = yield* readFile;
-    const peer = file.peers.find((candidate) => candidate.name === name);
-    if (peer === undefined) return Option.none<ResolvedPeer>();
-    const credential = yield* readCredential(name);
-    return Option.map(credential, (value) => ({ peer, credential: value }) satisfies ResolvedPeer);
-  });
-
-  interface ResolvedCredential {
-    readonly credential: string;
-    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
-    readonly credentialExpiresAt: string;
-  }
-
-  /**
-   * Turns either credential input into a stored bearer plus the scopes the
-   * peer says it carries. Both branches end up asking the peer, never the
-   * caller, what the credential is actually good for.
-   */
-  const resolveCredential = Effect.fn("PeerRegistry.resolveCredential")(function* (
-    baseUrl: string,
-    input: PeerRegisterInput,
-    credentialClass: PeerCredentialClass,
-  ): Effect.fn.Return<ResolvedCredential, PeerRegistrationError> {
-    const now = yield* DateTime.now;
-    if ("token" in input.credential) {
-      const state = yield* fetchPeerSessionState({
-        baseUrl,
-        credential: input.credential.token,
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.mapError(
-          (cause) =>
-            new PeerRegistrationError({
-              reason: "peer_unreachable",
-              name: input.name,
-              detail: Cause.pretty(Cause.fail(cause)),
-            }),
-        ),
-      );
-      if (!state.authenticated) {
-        return yield* new PeerRegistrationError({
-          reason: "token_rejected",
-          name: input.name,
-          detail: "The peer did not recognize this token.",
-        });
-      }
-      return {
-        credential: input.credential.token,
-        grantedScopes: state.scopes ?? [],
-        // A session token carries its own expiry; when the peer does not
-        // report one, record the request time so the entry still shows an age.
-        credentialExpiresAt: DateTime.formatIso(
-          state.expiresAt === undefined ? now : state.expiresAt,
-        ),
-      };
-    }
-
-    // Redeem first: a pairing token is single-use, so persisting before the
-    // exchange would leave an entry whose credential can never be obtained.
-    const exchanged = yield* exchangePeerPairingToken({
-      baseUrl,
-      pairingToken: input.credential.pairingToken,
-      label: `starcode peer ${input.name}`,
-      credentialClass,
-    }).pipe(
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.mapError(
-        (cause) =>
-          new PeerRegistrationError({
-            reason: "exchange_rejected",
-            name: input.name,
-            detail: Cause.pretty(Cause.fail(cause)),
-          }),
-      ),
-    );
-    return {
-      credential: exchanged.access_token,
-      grantedScopes: (parseOAuthScope(exchanged.scope) ?? []).filter(isAuthEnvironmentScope),
-      credentialExpiresAt: DateTime.formatIso(
-        DateTime.addDuration(now, `${Math.max(exchanged.expires_in, 0)} seconds`),
-      ),
-    };
+    const resolved = yield* fleetRegistry
+      .resolveByName(name)
+      .pipe(Effect.mapError(mapFleetStateError));
+    if (Option.isNone(resolved)) return Option.none<ResolvedPeer>();
+    const peer = peerFromResolved(resolved.value);
+    return peer === null
+      ? Option.none<ResolvedPeer>()
+      : Option.some({ peer, credential: resolved.value.credential });
   });
 
   const register: PeerRegistryShape["register"] = Effect.fn("PeerRegistry.register")(
     function* (input) {
-      const baseUrl = normalizePeerBaseUrl(input.baseUrl);
-      if (baseUrl === null) {
-        return yield* new PeerRegistrationError({
-          reason: "invalid_base_url",
+      const result = yield* reconciler
+        .register({
           name: input.name,
-          detail: "Peer baseUrl must be an absolute http(s) URL.",
+          baseUrl: input.baseUrl,
+          credential: input.credential,
+          ...(input.sshUser === undefined ? {} : { sshUser: input.sshUser }),
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            isFleetRegistrationError(cause)
+              ? new PeerRegistrationError({
+                  reason: mapRegistrationReason(cause.reason),
+                  name: cause.name,
+                  ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+                })
+              : mapFleetStateError(cause),
+          ),
+        );
+      const roster = result.roster;
+      const member = roster.members.find(
+        (candidate) => candidate.node.environmentId === result.node.environmentId,
+      );
+      const peer = member === undefined ? null : peerFromMember(member);
+      if (peer === null) {
+        return yield* new PeerRegistryStateError({
+          operation: "load",
+          cause: "Registered fleet member has no advertised endpoint.",
         });
       }
-
-      const existing = yield* list;
-      if (existing.some((peer) => peer.name === input.name)) {
-        return yield* new PeerRegistrationError({ reason: "duplicate_name", name: input.name });
-      }
-
-      const credentialClass = input.credentialClass ?? "read";
-      const requiredScopes = peerCredentialScopes(credentialClass);
-      const resolved = yield* resolveCredential(baseUrl, input, credentialClass);
-
-      // Least privilege is enforced here rather than trusted from the caller:
-      // both paths report the scopes the *peer* says the credential carries,
-      // and the required set is exact rather than a floor. A read registration
-      // handed an operate-capable token is refused just as firmly as an
-      // operate registration handed an administrative one — the class the
-      // operator asked for is the authority the entry ends up holding.
-      const verdict = judgePeerScopes(credentialClass, resolved.grantedScopes);
-      if (!verdict.ok) {
-        return yield* new PeerRegistrationError({
-          reason: verdict.reason,
-          name: input.name,
-          detail:
-            verdict.reason === "scope_not_granted"
-              ? `Peer granted "${resolved.grantedScopes.join(" ")}" but a ${credentialClass} peer requires ${verdict.missing.join(", ")}.`
-              : `Peer credential also grants ${verdict.excess.join(", ")}, which a ${credentialClass} peer must not hold. Issue a token scoped to exactly ${requiredScopes.join(", ")}.`,
-        });
-      }
-
-      // Identity is best effort: a peer that redeemed a token but cannot serve
-      // its descriptor is still usable, so this must not fail registration.
-      const descriptor = yield* fetchPeerDescriptor(baseUrl).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.map(Option.some),
-        Effect.catchCause(() => Effect.succeed(Option.none())),
-      );
-
-      const now = yield* DateTime.now;
-      const registeredAt = DateTime.formatIso(now);
-
-      const peer: PeerEnvironment = {
-        name: input.name,
-        baseUrl,
-        credentialClass,
-        environmentId: Option.match(descriptor, {
-          onNone: () => null,
-          onSome: (value) => value.environmentId,
-        }),
-        label: Option.match(descriptor, {
-          onNone: () => null,
-          onSome: (value) => value.label,
-        }),
-        sshUser: input.sshUser ?? null,
-        scopes: resolved.grantedScopes,
-        registeredAt,
-        credentialExpiresAt: resolved.credentialExpiresAt,
-      };
-
-      yield* writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const file = yield* readFile;
-          if (file.peers.some((candidate) => candidate.name === peer.name)) {
-            return yield* new PeerRegistrationError({ reason: "duplicate_name", name: peer.name });
-          }
-          yield* writeCredential(peer.name, resolved.credential);
-          yield* writeFile({ version: 1, peers: [...file.peers, peer] });
-        }),
-      );
-
       return peer;
     },
   );
 
   const remove: PeerRegistryShape["remove"] = Effect.fn("PeerRegistry.remove")(function* (name) {
-    return yield* writeSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const file = yield* readFile;
-        const remaining = file.peers.filter((peer) => peer.name !== name);
-        if (remaining.length === file.peers.length) return false;
-        yield* writeFile({ version: 1, peers: remaining });
-        yield* removeCredential(name);
-        return true;
-      }),
-    );
+    const roster = yield* fleetRegistry.snapshot.pipe(Effect.mapError(mapFleetStateError));
+    const member = roster.members.find((candidate) => candidate.node.name === name);
+    if (member === undefined) return false;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const result = yield* reconciler
+      .remove(member.node.environmentId, now)
+      .pipe(Effect.mapError(mapFleetStateError));
+    return result.removed;
   });
 
-  /**
-   * Its own operation rather than a re-register, because registering redeems a
-   * credential: pairing tokens are single-use, and making an operator mint one
-   * just to record a login name would be a worse trade than an extra method.
-   * Returns false for an unknown peer instead of creating one — this only edits
-   * a peer that already exists.
-   */
   const setSshUser: PeerRegistryShape["setSshUser"] = Effect.fn("PeerRegistry.setSshUser")(
     function* (name, sshUser) {
-      return yield* writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const file = yield* readFile;
-          if (!file.peers.some((peer) => peer.name === name)) return false;
-          yield* writeFile({
-            version: 1,
-            peers: file.peers.map((peer) => (peer.name === name ? { ...peer, sshUser } : peer)),
-          });
-          return true;
-        }),
-      );
+      const now = DateTime.formatIso(yield* DateTime.now);
+      return yield* fleetRegistry
+        .setSshUser(name, sshUser, now)
+        .pipe(Effect.mapError(mapFleetStateError));
     },
   );
 
   return PeerRegistry.of({ list, register, remove, resolve, setSshUser });
 });
 
-export const layer: Layer.Layer<
-  PeerRegistry,
-  never,
-  | FileSystem.FileSystem
-  | Path.Path
-  | ServerConfig.ServerConfig
-  | ServerSecretStore.ServerSecretStore
-  | HttpClient.HttpClient
-> = Layer.effect(PeerRegistry, make);
+export const layer = Layer.effect(PeerRegistry, make);

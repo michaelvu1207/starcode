@@ -136,6 +136,7 @@ import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameE
 import { ServerUpdateAction } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { FleetOnboardingCard } from "./FleetOnboardingCard";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -3401,6 +3402,7 @@ export function ConnectionsSettings() {
           </Dialog>
         }
       >
+        {desktopBridge && canManageLocalBackend ? <FleetOnboardingCard /> : null}
         {savedEnvironments.map((environment) => (
           <SavedBackendListRow
             key={environment.environmentId}

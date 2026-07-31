@@ -9,7 +9,7 @@
  *
  * **It is a claim, not a measurement.** An assigned price is the operator's
  * guess at what an unknown model bills like, so every row that carries one
- * says whose price it borrowed — "gpt-5.6-sol · priced as gpt-5.5" — rather
+ * says whose price it borrowed — "gpt-5.7-preview · priced as gpt-5.6-sol" — rather
  * than quietly folding into the real numbers beside it.
  *
  * **It is per machine.** The registry lives on the machine whose session files

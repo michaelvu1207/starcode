@@ -91,6 +91,27 @@ describe("buildSidebarConnectionGroups", () => {
     expect(groups[2]?.rows.map((row) => row.id)).toEqual(["a"]);
   });
 
+  it("uses the primary machine only for ordering, never as a visibility filter", () => {
+    const threads = [
+      makeThread("local", LOCAL),
+      makeThread("laptop", LAPTOP),
+      makeThread("server", SERVER),
+    ];
+    const groups = buildSidebarConnectionGroups({
+      threads,
+      environments: ENVIRONMENTS,
+      primaryEnvironmentId: LAPTOP,
+    });
+
+    expect(groups[0]?.environmentId).toBe(LAPTOP);
+    expect(
+      groups
+        .flatMap((group) => group.rows)
+        .map((thread) => thread.id)
+        .toSorted(),
+    ).toEqual(["laptop", "local", "server"]);
+  });
+
   it("keeps a connected machine with no threads as an empty group", () => {
     const groups = buildSidebarConnectionGroups({
       threads: [],

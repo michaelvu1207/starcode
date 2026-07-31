@@ -41,6 +41,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { ThreadService } from "./threads/ThreadService.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
@@ -115,9 +116,12 @@ const readPersistedSnapshot = (baseDir: string) =>
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
+    const threadServiceLayer = Layer.mock(ThreadService)({});
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
+      HttpRouter.provideRequest(threadServiceLayer),
+      Layer.provide(threadServiceLayer),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,

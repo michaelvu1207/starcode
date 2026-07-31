@@ -75,6 +75,26 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("always includes threads from every machine", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({
+          environmentId: remoteEnvironmentId,
+          id: ThreadId.make("remote"),
+          title: "Remote",
+        }),
+      ],
+      searchQuery: "",
+    });
+
+    expect(items.map((item) => item.thread.environmentId)).toEqual([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+  });
+
   it("keeps every unarchived thread in one block, newest created first", () => {
     const { items } = buildThreadListV2Items({
       threads: [
@@ -90,7 +110,6 @@ describe("buildThreadListV2Items", () => {
           createdAt: "2026-06-01T12:00:00.000Z",
         }),
       ],
-      environmentId: null,
       searchQuery: "",
     });
 
@@ -104,7 +123,6 @@ describe("buildThreadListV2Items", () => {
         makeThread({ id: ThreadId.make("match"), title: "Fix login bug" }),
         makeThread({ id: ThreadId.make("miss"), title: "Greeting" }),
       ],
-      environmentId: null,
       searchQuery: "login",
     });
 
@@ -122,7 +140,6 @@ describe("buildThreadListV2Items", () => {
           title: "Excluded",
         }),
       ],
-      environmentId: null,
       projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
       searchQuery: "",
     });
@@ -141,7 +158,6 @@ describe("buildThreadListV2Items", () => {
           title: "Remote",
         }),
       ],
-      environmentId: null,
       projectRefs: [
         { environmentId, projectId: ProjectId.make("project-1") },
         { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
@@ -216,7 +232,6 @@ describe("live subagents", () => {
           createdAt: "2026-06-01T00:00:00.000Z",
         }),
       ],
-      environmentId: null,
       searchQuery: "",
     });
 
@@ -229,7 +244,6 @@ describe("live subagents", () => {
     // A list of quiet threads must not become a tree.
     const { items } = buildThreadListV2Items({
       threads: [makeThread({ id: ThreadId.make("t"), title: "t" })],
-      environmentId: null,
       searchQuery: "",
     });
 
@@ -242,7 +256,6 @@ describe("live subagents", () => {
     // separator against nothing.
     const { items } = buildThreadListV2Items({
       threads: [makeThread({ id: ThreadId.make("t"), title: "t", subagents: [agent("a1")] })],
-      environmentId: null,
       searchQuery: "",
     });
 
@@ -256,7 +269,6 @@ describe("live subagents", () => {
         makeThread({ id: ThreadId.make("hit"), title: "Keep", subagents: [agent("a1")] }),
         makeThread({ id: ThreadId.make("miss"), title: "Drop", subagents: [agent("a2")] }),
       ],
-      environmentId: null,
       searchQuery: "keep",
     });
 

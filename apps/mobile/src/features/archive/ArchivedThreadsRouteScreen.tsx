@@ -21,7 +21,6 @@ export function ArchivedThreadsRouteScreen() {
   const { expand } = useClerkSettingsSheetDetent();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
@@ -53,11 +52,10 @@ export function ArchivedThreadsRouteScreen() {
       buildArchivedThreadGroups({
         snapshots,
         environmentLabels,
-        environmentId: selectedEnvironmentId,
         searchQuery,
         sortOrder,
       }),
-    [environmentLabels, searchQuery, selectedEnvironmentId, snapshots, sortOrder],
+    [environmentLabels, searchQuery, snapshots, sortOrder],
   );
   const refreshChangedEnvironment = useCallback(
     (thread: { readonly environmentId: EnvironmentId }) => {
@@ -82,13 +80,11 @@ export function ArchivedThreadsRouteScreen() {
       groups={groups}
       isLoading={isLoading}
       onDeleteThread={confirmDeleteThread}
-      onEnvironmentChange={setSelectedEnvironmentId}
       onRefresh={refresh}
       onSearchQueryChange={setSearchQuery}
       onSortOrderChange={setSortOrder}
       onUnarchiveThread={unarchiveThread}
       searchQuery={searchQuery}
-      selectedEnvironmentId={selectedEnvironmentId}
       sortOrder={sortOrder}
     />
   );

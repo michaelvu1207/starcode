@@ -49,6 +49,7 @@ import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAu
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
+  resolvePrimaryEnvironmentHttpUrl,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
@@ -290,7 +291,10 @@ const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: resolved.target.httpBaseUrl,
+    // In local web development the configured backend is another loopback
+    // origin. Discover it through Vite's same-origin proxy so browser CORS
+    // policy cannot prevent the primary connection from ever registering.
+    httpBaseUrl: resolvePrimaryEnvironmentHttpUrl("/"),
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer), Effect.mapError(mapRemoteEnvironmentError));
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({

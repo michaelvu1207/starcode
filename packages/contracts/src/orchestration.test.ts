@@ -55,6 +55,38 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
+const legacyThreadWithoutAgentRuns = {
+  id: "thread-legacy",
+  projectId: "project-legacy",
+  title: "Legacy thread",
+  modelSelection: {
+    instanceId: "codex",
+    model: "gpt-5-codex",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  sideOfThreadId: null,
+  latestTurn: null,
+  createdAt: "2026-07-30T20:00:00.000Z",
+  updatedAt: "2026-07-30T20:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+};
+
+it.effect("decodes legacy thread payloads without agent runs", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeOrchestrationThread(legacyThreadWithoutAgentRuns);
+    assert.deepEqual(decoded.agentRuns, []);
+  }),
+);
+
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeTurnDiffInput({
@@ -704,7 +736,6 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       status: "idle",
       providerName: null,
       providerSessionId: null,
-      providerThreadId: null,
       activeTurnId: null,
       lastError: null,
       updatedAt: "2026-01-01T00:00:00.000Z",

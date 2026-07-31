@@ -27,7 +27,8 @@ import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGenerat
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { FleetSessionBootstrap } from "../FleetSessionBootstrap.ts";
+import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
@@ -81,6 +82,20 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   },
 });
 
+export function makeClaudeDriverAdapterOptions(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly environment: NodeJS.ProcessEnv;
+  readonly fleetSessionBootstrap: FleetSessionBootstrap["Service"];
+  readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+}): ClaudeAdapterLiveOptions {
+  return {
+    instanceId: input.instanceId,
+    environment: input.environment,
+    fleetSessionBootstrapSnapshot: input.fleetSessionBootstrap.snapshot,
+    ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
+  };
+}
+
 export type ClaudeDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -88,6 +103,7 @@ export type ClaudeDriverEnv =
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
+  | FleetSessionBootstrap
   | ServerConfig
   | ServerSettingsService;
 
@@ -124,6 +140,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const fleetSessionBootstrap = yield* FleetSessionBootstrap;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -142,11 +159,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
-      const adapterOptions = {
+      const adapterOptions = makeClaudeDriverAdapterOptions({
         instanceId,
         environment: processEnv,
+        fleetSessionBootstrap,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      };
+      });
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 

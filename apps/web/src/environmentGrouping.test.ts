@@ -281,7 +281,7 @@ describe("environment grouping", () => {
     );
   });
 
-  it("builds one picker entry per logical project and targets the preferred environment", () => {
+  it("uses the preferred machine for placement without filtering the project catalog", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({
       id: ProjectId.make("project-remote"),
@@ -310,6 +310,10 @@ describe("environment grouping", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries[0]?.group.projectKey).toBe(repositoryIdentity.canonicalKey);
+    expect(entries[0]?.group.memberProjects.map((project) => project.environmentId)).toEqual([
+      primaryEnvironmentId,
+      remoteEnvironmentId,
+    ]);
     expect(entries[0]?.targetProject).toMatchObject({
       environmentId: remoteEnvironmentId,
       id: remote.id,

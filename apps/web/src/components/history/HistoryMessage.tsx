@@ -16,8 +16,8 @@
 import type { HistoryTranscriptEntry } from "@starcode/contracts";
 import type { ReactNode } from "react";
 
-import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown";
+import { ThreadAssistantMessageLayout, ThreadUserMessageLayout } from "../chat/ThreadMessageLayout";
 
 export function HistoryMessage(props: {
   readonly entry: HistoryTranscriptEntry;
@@ -36,27 +36,20 @@ export function HistoryMessage(props: {
   const text = entry.truncated ? `${entry.text}…` : entry.text;
   if (entry.role === "user") {
     return (
-      <div className="flex flex-col items-end">
-        <div
-          className={cn(
-            "max-w-[85%] min-w-0 break-words rounded-2xl bg-accent px-3 py-2 text-xs",
-            props.muted === true && "bg-accent/50",
-          )}
-        >
-          {/* `lineBreaks` for the same reason the real timeline sets it: a
-              human typing into a composer means their newlines. */}
-          <ChatMarkdown
-            text={text}
-            cwd={props.cwd ?? undefined}
-            className={props.muted === true ? "text-muted-foreground" : "text-foreground"}
-            lineBreaks
-          />
-        </div>
-      </div>
+      <ThreadUserMessageLayout muted={props.muted}>
+        {/* `lineBreaks` for the same reason the live timeline sets it: a
+            human typing into a composer means their newlines. */}
+        <ChatMarkdown
+          text={text}
+          cwd={props.cwd ?? undefined}
+          className={props.muted === true ? "text-muted-foreground" : "text-foreground"}
+          lineBreaks
+        />
+      </ThreadUserMessageLayout>
     );
   }
   return (
-    <div className={cn("min-w-0 text-xs", props.muted === true && "text-muted-foreground")}>
+    <ThreadAssistantMessageLayout muted={props.muted}>
       {text.trim().length > 0 ? <ChatMarkdown text={text} cwd={props.cwd ?? undefined} /> : null}
       {/* Names only, never payloads — the server's renderer is lossy by design
           and this is the one trace that work happened between two messages. */}
@@ -65,6 +58,6 @@ export function HistoryMessage(props: {
           {entry.toolCalls.join(" · ")}
         </p>
       ) : null}
-    </div>
+    </ThreadAssistantMessageLayout>
   );
 }

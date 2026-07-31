@@ -17,6 +17,7 @@ import {
   buildSidebarProjectGroups,
   countSidebarProjectRows,
   resolveSidebarProjectGroupExpanded,
+  selectSidebarChatThreads,
   sidebarProjectGroupExpansionKey,
   SIDEBAR_CHATS_GROUP_TITLE,
   SIDEBAR_UNFILED_GROUP_KEY,
@@ -285,6 +286,26 @@ describe("the Chats section", () => {
     const { chatsGroup } = build({ projects: [], active: [first, second, third] });
 
     expect(chatsGroup?.rows).toEqual([first, second, third]);
+  });
+});
+
+describe("selectSidebarChatThreads", () => {
+  it("preserves inbox order while excluding every filed project thread", () => {
+    const firstLoose = makeThread("t-first-loose", LOCAL);
+    const filed = makeThread("t-filed", LOCAL);
+    const secondLoose = makeThread("t-second-loose", LAPTOP);
+    const projects = [
+      project({
+        slug: "atlas",
+        sections: [{ environmentId: LOCAL, local: { threadIds: [filed.id] } }],
+      }),
+    ];
+    const threads = [firstLoose, filed, secondLoose];
+
+    expect(selectSidebarChatThreads(threads, membershipFor(projects, threads))).toEqual([
+      firstLoose,
+      secondLoose,
+    ]);
   });
 });
 

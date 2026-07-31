@@ -1,26 +1,15 @@
 /**
- * Peers - cross-machine thread federation contracts.
+ * Deprecated one-release peer-shaped contracts.
  *
- * A peer is another starcode environment this environment holds a credential for.
- * Peers are registered by redeeming a pairing token minted on the peer, and the
- * credential is narrowed during the token exchange to exactly what its class
- * allows.
- *
- * There are two classes, and the class is a property of the stored credential
- * rather than of the call site, so what a peer entry can do is answerable by
- * looking at the registry instead of by auditing every caller. A `read` peer
- * carries `orchestration:read` and can only ever be read from. An `operate`
- * peer additionally carries `orchestration:operate`, which is what lets this
- * environment create threads on the peer and deliver messages to the ones
- * already running there. Registration refuses anything broader than its class requires, so a
- * mis-issued administrative token cannot quietly become a federation credential.
+ * Fleet membership, credentials, and routing are canonical. These schemas only
+ * preserve the old HTTP and MCP input/output shapes while clients migrate; they
+ * do not define a second registry or authorization model.
  *
  * @module Peers
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { AuthEnvironmentScopes } from "./auth.ts";
 import {
   EnvironmentId,
   IsoDateTime,
@@ -61,29 +50,16 @@ export const PeerBaseUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)
 export type PeerBaseUrl = typeof PeerBaseUrl.Type;
 
 /**
- * What a peer credential is allowed to do. `read` is the F2 default and the
- * only class that existed before operator federation, which is why it is the
- * decoding default: a `peers.json` written by an older server has no
- * `credentialClass` field and must keep meaning read-only.
- */
-export const PeerCredentialClass = Schema.Literals(["read", "operate"]);
-export type PeerCredentialClass = typeof PeerCredentialClass.Type;
-
-/**
  * A registered peer as exposed over HTTP. The stored bearer credential is
  * deliberately absent: it lives in the server secret store and is never
- * returned by any route. `credentialClass` and `scopes` are both present on
- * purpose — the class is the intent, the scopes are what the peer actually
- * granted, and a reader should be able to see them disagree.
+ * returned by any route. This is a one-release compatibility view over a fleet
+ * member; authority is session-scoped rather than a property of the node.
  */
 export const PeerEnvironment = Schema.Struct({
   name: PeerName,
   baseUrl: PeerBaseUrl,
   environmentId: Schema.NullOr(EnvironmentId),
   label: Schema.NullOr(TrimmedNonEmptyString),
-  credentialClass: PeerCredentialClass.pipe(
-    Schema.withDecodingDefault(Effect.succeed("read" as const satisfies PeerCredentialClass)),
-  ),
   /**
    * Login name for reaching this machine over SSH, or null when nobody has
    * recorded one. Only the user: the host is already in `baseUrl`, and the key
@@ -99,26 +75,14 @@ export const PeerEnvironment = Schema.Struct({
   sshUser: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  scopes: AuthEnvironmentScopes,
   registeredAt: IsoDateTime,
-  credentialExpiresAt: IsoDateTime,
 });
 export type PeerEnvironment = typeof PeerEnvironment.Type;
 
 /**
- * Two ways to hand this environment a peer credential.
- *
- * `token` is the v1 path for a small fixed fleet: run
- * `starcode auth session issue --token-only --read-only` on the peer and paste the
- * result. Nothing is redeemed — the token is verified against the peer's own
- * session endpoint and stored.
- *
- * `pairingToken` is the browser/one-time path: a single-use pairing credential
- * is redeemed through the existing RFC 8693 exchange, which narrows the
- * resulting bearer to `orchestration:read`.
- *
- * Either way the stored credential must end up read-only; the difference is
- * only who narrowed it — the CLI flag, or the exchange.
+ * Compatibility credential inputs accepted by the deprecated peer endpoint.
+ * Both paths delegate to fleet registration, which requires administrative
+ * fleet authority and stores the resulting secret outside `fleet.json`.
  */
 export const PeerCredentialInput = Schema.Union([
   Schema.Struct({ token: TrimmedNonEmptyString }),
@@ -130,13 +94,6 @@ export const PeerRegisterInput = Schema.Struct({
   name: PeerName,
   baseUrl: PeerBaseUrl,
   credential: PeerCredentialInput,
-  /**
-   * Optional so an F2-era caller keeps registering read-only peers unchanged.
-   * Asking for `operate` is an explicit act: it widens what this environment
-   * can do to another machine, and the peer still has to have granted the
-   * scope for the registration to succeed.
-   */
-  credentialClass: Schema.optional(PeerCredentialClass),
   /** Login name for `ssh <user>@<host>`. Absent leaves the peer's login unknown. */
   sshUser: Schema.optional(TrimmedNonEmptyString),
 });
@@ -162,12 +119,17 @@ export const PeerConnectionSummary = Schema.Struct({
   /** Host from `baseUrl`, ready to pair with `sshUser`. Null if it cannot be parsed. */
   sshHost: Schema.NullOr(TrimmedNonEmptyString),
   sshUser: Schema.NullOr(TrimmedNonEmptyString),
-  credentialClass: PeerCredentialClass,
   environmentId: Schema.NullOr(EnvironmentId),
 });
 export type PeerConnectionSummary = typeof PeerConnectionSummary.Type;
 
-export const PeersListInput = Schema.Struct({});
+/**
+ * An empty record rather than an empty struct because Effect intentionally
+ * emits `Schema.Struct({})` as an object-or-array JSON Schema. MCP tool inputs
+ * must have an object root, and `Never` keeps this schema closed to keys while
+ * still accepting the only valid input: `{}`.
+ */
+export const PeersListInput = Schema.Record(Schema.String, Schema.Never);
 export type PeersListInput = typeof PeersListInput.Type;
 
 export const PeersListResult = Schema.Struct({

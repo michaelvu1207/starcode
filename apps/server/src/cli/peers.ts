@@ -16,17 +16,14 @@
  *
  * @module PeersCli
  */
-import {
-  PeerCredentialClass,
-  PeerName,
-  type PeerEnvironment,
-  type PeerRegisterInput,
-} from "@starcode/contracts";
+import { PeerEnvironment, PeerName, type PeerRegisterInput } from "@starcode/contracts";
+import { fromJsonStringPretty } from "@starcode/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -34,6 +31,11 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as PeerRegistry from "../peers/PeerRegistry.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+
+const encodePeerJson = Schema.encodeUnknownEffect(fromJsonStringPretty(PeerEnvironment));
+const encodePeersJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(Schema.Array(PeerEnvironment)),
+);
 
 /**
  * Runs against the registry file directly rather than over HTTP.
@@ -83,9 +85,7 @@ const describePeer = (peer: PeerEnvironment): string => {
   return [
     `  ${peer.name}`,
     `    url:        ${peer.baseUrl}`,
-    `    class:      ${peer.credentialClass}`,
     `    label:      ${peer.label ?? "(unknown)"}`,
-    `    expires:    ${peer.credentialExpiresAt}`,
     ssh,
   ]
     .filter((line) => line.length > 0)
@@ -118,12 +118,6 @@ const addCommand = Command.make("add", {
     Flag.withDescription("One-time pairing credential from the peer, redeemed on registration."),
     Flag.optional,
   ),
-  operate: Flag.boolean("operate").pipe(
-    Flag.withDescription(
-      "Register with the operate class, which is what lets threads here start and message threads there. Without it the peer is read-only.",
-    ),
-    Flag.withDefault(false),
-  ),
   sshUser: Flag.string("ssh-user").pipe(
     Flag.withDescription(
       "Login name for reaching this machine over SSH, reported by peers_list so an agent can run `ssh user@host`.",
@@ -150,21 +144,19 @@ const addCommand = Command.make("add", {
             );
           }
 
-          const credentialClass: PeerCredentialClass = flags.operate ? "operate" : "read";
           const input = {
             name: flags.name,
             baseUrl: flags.url,
             credential: Option.isSome(flags.token)
               ? { token: flags.token.value }
               : { pairingToken: Option.getOrThrow(flags.pairingToken) },
-            credentialClass,
             ...(Option.isSome(flags.sshUser) ? { sshUser: flags.sshUser.value } : {}),
           } as PeerRegisterInput;
 
           const peer = yield* registry.register(input);
           yield* Console.log(
             flags.json
-              ? JSON.stringify(peer, null, 2)
+              ? yield* encodePeerJson(peer)
               : `Registered peer ${peer.name}.\n${describePeer(peer)}\n`,
           );
         }),
@@ -182,7 +174,7 @@ const listCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag 
         Effect.gen(function* () {
           const peers = yield* registry.list;
           if (flags.json) {
-            return yield* Console.log(JSON.stringify(peers, null, 2));
+            return yield* Console.log(yield* encodePeersJson(peers));
           }
           yield* Console.log(
             peers.length === 0

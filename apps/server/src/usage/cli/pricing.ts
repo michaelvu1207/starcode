@@ -107,6 +107,7 @@ const CODEX_RATES: Readonly<Record<string, ModelRate>> = {
   "gpt-5.4-mini": perMillion(0.75, 4.5, 0, 0, 0.075),
   "gpt-5.5": perMillion(5, 30, 0, 0, 0.5),
   "gpt-5.5-pro": perMillion(30, 180, 0, 0, 3.0),
+  "gpt-5.6-sol": perMillion(5, 30, 0, 0, 0.5),
   "gpt-5-mini": perMillion(0.25, 2, 0, 0, 0.025),
   "gpt-5-nano": perMillion(0.05, 0.4, 0, 0, 0.005),
 };
@@ -139,6 +140,7 @@ export const priceableModels = (provider: CliUsageProvider): ReadonlyArray<strin
  * it is on now.
  */
 const CODEX_FAST_MULTIPLIERS: Readonly<Record<string, number>> = {
+  "gpt-5.6-sol": 2.0,
   "gpt-5.5": 2.5,
   "gpt-5.4": 2.0,
   "gpt-5.3-codex": 2.0,

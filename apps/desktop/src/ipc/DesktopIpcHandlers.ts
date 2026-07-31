@@ -23,6 +23,7 @@ import {
   issueSshWebSocketTicket,
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
+import { discoverFleetHosts, preflightFleetHost } from "./methods/fleetOnboarding.ts";
 import {
   checkForUpdate,
   downloadUpdate,
@@ -65,6 +66,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
+  yield* ipc.handle(discoverFleetHosts);
+  yield* ipc.handle(preflightFleetHost);
   yield* ipc.handle(ensureSshEnvironment);
   yield* ipc.handle(disconnectSshEnvironment);
   yield* ipc.handle(fetchSshEnvironmentDescriptor);

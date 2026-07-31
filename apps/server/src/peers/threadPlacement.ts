@@ -15,7 +15,7 @@
  * one file over. And a category default that is silently overridden by a
  * location default is a setting the operator can watch have no effect.
  *
- * Pure, and separate from `PeerThreadWriter`, so the rules are readable and
+ * Pure, and separate from `ThreadService`, so the rules are readable and
  * testable without standing up an HTTP client.
  *
  * @module PeerProjectPlacement

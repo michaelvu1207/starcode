@@ -35,7 +35,8 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { FleetSessionBootstrap } from "../FleetSessionBootstrap.ts";
+import { makeCodexAdapter, type CodexAdapterLiveOptions } from "../Layers/CodexAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -68,6 +69,20 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: null,
 });
 
+export function makeCodexDriverAdapterOptions(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly environment: NodeJS.ProcessEnv;
+  readonly fleetSessionBootstrap: FleetSessionBootstrap["Service"];
+  readonly nativeEventLogger?: CodexAdapterLiveOptions["nativeEventLogger"];
+}): CodexAdapterLiveOptions {
+  return {
+    instanceId: input.instanceId,
+    environment: input.environment,
+    fleetSessionBootstrapSnapshot: input.fleetSessionBootstrap.snapshot,
+    ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
+  };
+}
+
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
  * driver's `R` so the registry layer aggregates these across every
@@ -80,6 +95,7 @@ export type CodexDriverEnv =
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
+  | FleetSessionBootstrap
   | ServerConfig
   | ServerSettingsService;
 
@@ -119,6 +135,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const fleetSessionBootstrap = yield* FleetSessionBootstrap;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
@@ -155,11 +172,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // here; the registry only has to worry about snapshot-build and
       // spawner-availability failures surfaced from `checkCodexProviderStatus`
       // below.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const adapter = yield* makeCodexAdapter(
+        effectiveConfig,
+        makeCodexDriverAdapterOptions({
+          instanceId,
+          environment: processEnv,
+          fleetSessionBootstrap,
+          ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        }),
+      );
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
       // Build a managed snapshot whose settings never change — mutations come

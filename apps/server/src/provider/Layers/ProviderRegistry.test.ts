@@ -33,6 +33,7 @@ import { applyServerSettingsPatch } from "@starcode/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import { FleetSessionBootstrap } from "../FleetSessionBootstrap.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
@@ -71,6 +72,16 @@ const TestHttpClientLive = Layer.succeed(
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
   ),
+);
+
+const FleetSessionBootstrapTestLive = Layer.succeed(
+  FleetSessionBootstrap,
+  FleetSessionBootstrap.of({
+    snapshot: () => Effect.sync(() => undefined),
+  }),
+);
+const ProviderInstanceRegistryHydrationTestLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provide(FleetSessionBootstrapTestLive),
 );
 
 function selectDescriptor(
@@ -1429,7 +1440,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationTestLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1521,7 +1532,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationTestLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1642,7 +1653,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationTestLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1703,7 +1714,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
-              Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+              Layer.provideMerge(ProviderInstanceRegistryHydrationTestLive),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),

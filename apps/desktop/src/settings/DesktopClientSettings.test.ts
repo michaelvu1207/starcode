@@ -28,7 +28,6 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
-  sidebarV2Enabled: false,
   sidebarV2ThreadSortOrder: "created_at",
   sidebarV2ViewMode: "inbox",
   timestampFormat: "24-hour",

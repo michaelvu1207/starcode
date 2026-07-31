@@ -8,9 +8,9 @@
  * each, and the project picker is dead weight at our project count.
  *
  * This collapses all three into two: the wordmark on its own row, and one
- * compact icon strip beneath it. The actions are the same actions — new project
- * is still the add-project command dialog — so nothing here owns behaviour, only
- * placement. Fork-owned so the diff inside `SidebarV2.tsx` stays a call site.
+ * compact icon strip beneath it. The new-project action is still the
+ * add-project command palette, so nothing here owns behaviour, only placement.
+ * Fork-owned so the diff inside `SidebarV2.tsx` stays a call site.
  *
  * Two icons that were here are not any more. **New thread** left because the
  * strip was never its only door: the `chat.newLocal` binding is handled at the
@@ -22,28 +22,27 @@
  * home view. The fleet-wide `/workbench` route is still routable by URL and no
  * longer linked from anywhere.
  *
- * One icon arrived: **Settings**, which was a full-width labelled row at the
- * foot of the sidebar. It is an app-level control like the rest of this strip,
- * and it was the last thing keeping `SidebarChromeFooter` from collapsing on
- * the common case where neither update pill has anything to say.
+ * Two icons arrived. **Chats** swaps the project/thread surface for loose
+ * conversations without asking them to compete for space at the bottom of the
+ * project list. **Settings** was a full-width labelled row at the foot of the
+ * sidebar; moving it here lets `SidebarChromeFooter` collapse on the common
+ * case where neither update pill has anything to say.
  *
- * The collapse control leads the strip. It is the same `SidebarTrigger` the
- * fixed workspace control renders, and that control still appears — but only
- * while the sidebar is closed, because a button that lives inside the sidebar
- * cannot be the way back into it. See `AppSidebarLayout.SidebarControl`.
+ * **Chats** leads the strip because it changes the sidebar's primary surface.
+ * The sidebar collapse control moved out of this strip and into the top-left
+ * corner of the thread pane, where the same button can both hide and restore
+ * the sidebar. See `AppSidebarLayout.SidebarControl`.
  *
  * The project *filter* the picker used to drive is guarded separately; see
  * `sidebarProjectScope.ts`.
  */
-import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import { SettingsIcon } from "lucide-react";
+import { MessageCircleIcon, SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 
 import { isElectron } from "../../env";
-import { shortcutLabelForCommand } from "../../keybindings";
-import { primaryServerKeybindingsAtom } from "../../state/server";
-import { SidebarMenuButton, SidebarTrigger, useSidebar } from "../ui/sidebar";
+import { cn } from "../../lib/utils";
+import { SidebarMenuButton, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarChromeHeader } from "./SidebarChrome";
 import { SidebarConnectionsMenu } from "./SidebarConnectionsMenu";
@@ -78,15 +77,16 @@ function TouchTarget() {
 export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
   onNewProject,
   showProjectActions,
+  showChats,
+  onToggleChats,
 }: {
   onNewProject: () => void;
   /** False until at least one project exists — matches the old row-3 gate. */
   showProjectActions: boolean;
+  /** Chats is a peer sidebar surface, not a panel attached below Projects. */
+  showChats: boolean;
+  onToggleChats: () => void;
 }) {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  // Same binding the fixed workspace control advertises, so both entry points
-  // teach the same shortcut.
-  const sidebarShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   // Carried over verbatim from the footer row this replaces: on mobile the
@@ -110,25 +110,39 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
         // carrying the workspace titlebar-control inset (~46px). That inset
         // exists to clear the macOS traffic lights, and the traffic lights only
         // occupy the *first* row — this row sits below the titlebar region and
-        // never needed it. At three icons the dead space reads as margin; at
-        // five it still stays balanced within the sidebar, which is the
-        // geometry Michael wanted.
+        // never needed it. At four icons the dead space read as margin; at six
+        // it pushed the strip into the right edge, which is the imbalance
+        // Michael saw.
         //
         // `flex-wrap` is the overflow behaviour rather than a scroller or a
-        // squeeze. Five 28px buttons plus their gaps come to ~156px, which
-        // still fits the 192px of usable width at the sidebar's 208px minimum —
-        // so nothing wraps today, and a sixth icon would drop to a second
+        // squeeze. Six 28px buttons plus their gaps come to ~188px, which still
+        // fits the 192px of usable width at the sidebar's 208px minimum — so
+        // nothing wraps today, and a seventh icon would drop to a second
         // centred line rather than overflowing the panel.
         <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1 px-2 pb-1">
           <Tooltip>
             <TooltipTrigger
               render={
-                <SidebarTrigger aria-label="Hide sidebar" className={HEADER_ACTION_BUTTON_CLASS} />
+                <SidebarMenuButton
+                  size="sm"
+                  type="button"
+                  className={cn(
+                    HEADER_ACTION_BUTTON_CLASS,
+                    showChats && "bg-sidebar-row-hover text-sidebar-foreground",
+                  )}
+                  onClick={onToggleChats}
+                  aria-label={showChats ? "Show project list" : "Show chat list"}
+                  aria-pressed={showChats}
+                  data-testid="sidebar-chats-toggle"
+                />
               }
-            />
-            <TooltipPopup side="bottom">
-              {sidebarShortcutLabel ? `Hide sidebar (${sidebarShortcutLabel})` : "Hide sidebar"}
-            </TooltipPopup>
+            >
+              <MessageCircleIcon
+                className={cn(HEADER_ACTION_ICON_CLASS, showChats && "text-sidebar-foreground")}
+              />
+              <TouchTarget />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{showChats ? "Show projects" : "Show chats"}</TooltipPopup>
           </Tooltip>
           {/* Outside the `showProjectActions` gate: when a machine drops out,
               this is the icon that says so, and a client with no projects is

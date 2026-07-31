@@ -225,7 +225,10 @@ export const makeHistoryImporter = Effect.gen(function* () {
     }
 
     const entry = yield* historyIndex.resolve(input.sessionId);
-    if (entry === null) return yield* new HistorySessionNotFound();
+    // Hidden Claude subagent transcripts are resolvable for the read-only
+    // agent viewer, but they are fragments of a parent session and can never
+    // be resumed as standalone imported threads.
+    if (entry === null || entry.kind !== "session") return yield* new HistorySessionNotFound();
 
     const cwd = yield* readImportCwd({ path: entry.path, provider: entry.provider });
 

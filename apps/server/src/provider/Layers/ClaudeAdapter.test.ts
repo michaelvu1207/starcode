@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -160,6 +161,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly fleetSessionBootstrapSnapshot?: ClaudeAdapterLiveOptions["fleetSessionBootstrapSnapshot"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -171,6 +173,9 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.fleetSessionBootstrapSnapshot
+      ? { fleetSessionBootstrapSnapshot: config.fleetSessionBootstrapSnapshot }
+      : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -354,6 +359,68 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("appends one fleet snapshot to the Claude system prompt at session start", () => {
+    let snapshotReads = 0;
+    const harness = makeHarness({
+      fleetSessionBootstrapSnapshot: () => {
+        snapshotReads += 1;
+        return Effect.succeed({
+          localNode: {
+            environmentId: EnvironmentId.make("local-node"),
+            label: "MacBook Pro",
+          },
+          reachableNodes: [
+            {
+              environmentId: EnvironmentId.make("remote-node"),
+              label: "SimForge",
+            },
+          ],
+          thread: {
+            threadId: THREAD_ID,
+            title: "Fleet bootstrap",
+          },
+          project: {
+            slug: "starcode",
+            title: "StarCode",
+            notes: "Implement the unified thread architecture.",
+          },
+          orchestrator: {
+            role: "project",
+          },
+        });
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(snapshotReads, 1);
+      const systemPrompt = harness.getLastCreateQueryInput()?.options.systemPrompt;
+      assert.isObject(systemPrompt);
+      if (
+        systemPrompt === undefined ||
+        typeof systemPrompt === "string" ||
+        Array.isArray(systemPrompt)
+      ) {
+        return;
+      }
+      assert.equal(systemPrompt.type, "preset");
+      assert.equal(systemPrompt.preset, "claude_code");
+      assert.match(
+        systemPrompt.append ?? "",
+        /MacBook Pro[\s\S]*SimForge[\s\S]*Never ask the user which machine/u,
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1546,6 +1613,167 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("projects a foreground codex exec Bash call as a linked subagent lifecycle", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        cwd: "/work/router",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "delegate through codex",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-codex-cli",
+        uuid: "stream-codex-cli-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-codex-cli-1",
+            name: "Bash",
+            input: {
+              command:
+                'codex exec -C phase2-router -m gpt-5.6-sol "Consolidate the route representation."',
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-codex-cli",
+        uuid: "user-codex-cli-result",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-codex-cli-1",
+              content: "Codex final answer",
+              is_error: false,
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = events.find((event) => event.type === "task.started");
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskId, "codex-cli:tool-codex-cli-1");
+        assert.equal(started.payload.toolUseId, "tool-codex-cli-1");
+        assert.equal(started.payload.subagentType, "Codex CLI");
+        assert.equal(started.payload.model, "gpt-5.6-sol");
+      }
+      const commandCompleted = events.find(
+        (event) => event.type === "item.completed" && event.itemId === "tool-codex-cli-1",
+      );
+      assert.equal(commandCompleted?.type, "item.completed");
+      if (commandCompleted?.type === "item.completed") {
+        assert.equal(commandCompleted.payload.parentToolUseId, "tool-codex-cli-1");
+        assert.equal(commandCompleted.payload.output, "Codex final answer");
+      }
+      const completed = events.find((event) => event.type === "task.completed");
+      assert.equal(completed?.type, "task.completed");
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.status, "completed");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("discovers codex exec launched from inside a Claude subagent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        cwd: "/work/router",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "ask opus to delegate",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-nested-codex",
+        uuid: "assistant-nested-codex",
+        parent_tool_use_id: "toolu_outer_opus",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_nested_codex",
+              name: "Bash",
+              input: { command: 'codex exec "Inspect the lane graph."' },
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-nested-codex",
+        uuid: "user-nested-codex",
+        parent_tool_use_id: "toolu_outer_opus",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_nested_codex",
+              content: "Nested Codex answer",
+              is_error: false,
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const nestedItem = events.find(
+        (event) => event.type === "item.completed" && event.itemId === "toolu_nested_codex",
+      );
+      assert.equal(nestedItem?.type, "item.completed");
+      if (nestedItem?.type === "item.completed") {
+        // The Bash item moves from the outer Opus transcript into the nested
+        // Codex transcript, whose row uses this exact tool id.
+        assert.equal(nestedItem.payload.parentToolUseId, "toolu_nested_codex");
+        assert.equal(nestedItem.payload.output, "Nested Codex answer");
+      }
+      const nestedTask = events.find((event) => event.type === "task.started");
+      assert.equal(nestedTask?.type, "task.started");
+      if (nestedTask?.type === "task.started") {
+        assert.equal(nestedTask.payload.taskId, "codex-cli:toolu_nested_codex");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2071,6 +2299,96 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(updatedEvent.payload.error, "user interrupted");
         assert.equal(updatedEvent.payload.isBackgrounded, false);
       }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reconciles tasks missing from Claude's background-task roster as stopped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-background-1",
+        description: "Wait for build",
+        task_type: "local_bash",
+        session_id: "sdk-session-subagent",
+        uuid: "task-started-background-1",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [
+          {
+            task_id: "task-background-1",
+            task_type: "local_bash",
+            description: "Wait for build",
+          },
+        ],
+        session_id: "sdk-session-subagent",
+        uuid: "roster-with-task",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [],
+        session_id: "sdk-session-subagent",
+        uuid: "roster-empty",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const terminalEvents = runtimeEvents.filter(
+        (event) => event.type === "task.completed" && event.payload.taskId === "task-background-1",
+      );
+      assert.equal(terminalEvents.length, 1);
+      assert.equal(terminalEvents[0]?.type, "task.completed");
+      if (terminalEvents[0]?.type === "task.completed") {
+        assert.equal(terminalEvents[0].payload.status, "stopped");
+      }
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-foreground-1",
+        description: "Foreground review",
+        task_type: "local_agent",
+        session_id: "sdk-session-subagent",
+        uuid: "task-started-foreground-1",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [],
+        session_id: "sdk-session-subagent",
+        uuid: "roster-still-empty",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "task.completed" && event.payload.taskId === "task-foreground-1",
+        ),
+        false,
+      );
 
       yield* Fiber.interrupt(runtimeEventsFiber);
     }).pipe(

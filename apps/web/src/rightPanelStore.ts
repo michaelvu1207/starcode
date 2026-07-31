@@ -16,7 +16,6 @@ import { resolveStorage } from "./lib/storage";
 
 export const RIGHT_PANEL_KINDS = [
   "plan",
-  "subagents",
   "diff",
   "files",
   "file",
@@ -47,8 +46,6 @@ export type RightPanelSurface =
       revealRequestId: number;
     }
   | { id: "plan"; kind: "plan" }
-  /** Subagents for this thread. Singleton, like plan — one list, not one per task. */
-  | { id: "subagents"; kind: "subagents" }
   /**
    * A side conversation: a whole other thread, mounted in this panel.
    *
@@ -65,7 +62,7 @@ export type RightPanelSurface =
   | { id: `side:${string}`; kind: "side"; threadId: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "starcode:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 8;
+const RIGHT_PANEL_STORAGE_VERSION = 9;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -127,8 +124,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
-    case "subagents":
-      return { id: "subagents", kind };
   }
 };
 
@@ -213,6 +208,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
+                    // Agent transcripts remain available as normal task content,
+                    // but the aggregate Agents panel has been removed. Drop its
+                    // formerly persisted singleton (and any other unknown
+                    // surface) so an old installation cannot restore it.
+                    if (
+                      !surface ||
+                      typeof surface !== "object" ||
+                      !("kind" in surface) ||
+                      !RIGHT_PANEL_KINDS.includes(surface.kind as RightPanelKind)
+                    ) {
+                      return [];
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -278,9 +285,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 ? (validThreadState?.activeSurfaceId ?? null)
                 : null;
               const isOpen =
-                typeof validThreadState?.isOpen === "boolean"
+                surfaces.length > 0 &&
+                (typeof validThreadState?.isOpen === "boolean"
                   ? validThreadState.isOpen
-                  : activeSurfaceId !== null;
+                  : activeSurfaceId !== null);
               return [threadKey, { isOpen, surfaces, activeSurfaceId }];
             },
           ),

@@ -180,7 +180,7 @@ export const parseTailscaleStatus = (
     }),
   );
 
-export const readTailscaleStatus = Effect.gen(function* () {
+export const readRawTailscaleStatus = Effect.gen(function* () {
   const args = ["status", "--json"];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcessPlatform;
@@ -214,7 +214,7 @@ export const readTailscaleStatus = Effect.gen(function* () {
         stderrLength: stderr.length,
       });
     }
-    return yield* parseTailscaleStatus(stdout);
+    return stdout;
   }).pipe(
     Effect.scoped,
     Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
@@ -230,6 +230,10 @@ export const readTailscaleStatus = Effect.gen(function* () {
     }),
   );
 });
+
+export const readTailscaleStatus = readRawTailscaleStatus.pipe(
+  Effect.flatMap(parseTailscaleStatus),
+);
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;

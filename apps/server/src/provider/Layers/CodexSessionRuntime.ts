@@ -130,6 +130,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly fleetSessionBootstrapInstructions?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -361,6 +362,7 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly fleetSessionBootstrapInstructions: string | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -368,6 +370,9 @@ function buildThreadStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
+    ...(input.fleetSessionBootstrapInstructions
+      ? { developerInstructions: input.fleetSessionBootstrapInstructions }
+      : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -521,6 +526,7 @@ export const openCodexThread = (input: {
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly fleetSessionBootstrapInstructions?: string;
   readonly resumeThreadId: string | undefined;
   /**
    * Branch `resumeThreadId` instead of continuing it. Ignored without a
@@ -536,6 +542,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    fleetSessionBootstrapInstructions: input.fleetSessionBootstrapInstructions,
   });
 
   if (resumeThreadId === undefined) {
@@ -1327,6 +1334,9 @@ export const makeCodexSessionRuntime = (
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
+        ...(options.fleetSessionBootstrapInstructions
+          ? { fleetSessionBootstrapInstructions: options.fleetSessionBootstrapInstructions }
+          : {}),
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
         ...(forkRequest.fork ? { fork: true, ephemeral: forkRequest.ephemeral } : {}),
       });

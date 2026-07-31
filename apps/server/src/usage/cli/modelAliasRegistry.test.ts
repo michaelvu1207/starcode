@@ -10,18 +10,22 @@ const alias = (provider: "claude" | "codex", model: string, pricedAs: string) =>
 
 describe("sanitizeModelAliases", () => {
   it("keeps an unknown model pointed at a priced one", () => {
-    assert.deepStrictEqual(sanitizeModelAliases([alias("codex", "gpt-5.6-sol", "gpt-5.5")]), [
-      alias("codex", "gpt-5.6-sol", "gpt-5.5"),
-    ]);
+    assert.deepStrictEqual(
+      sanitizeModelAliases([alias("codex", "gpt-5.7-preview", "gpt-5.6-sol")]),
+      [alias("codex", "gpt-5.7-preview", "gpt-5.6-sol")],
+    );
   });
 
   it("drops an alias pointed at a model this build cannot price", () => {
-    assert.lengthOf(sanitizeModelAliases([alias("codex", "gpt-5.6-sol", "gpt-9-imaginary")]), 0);
+    assert.lengthOf(
+      sanitizeModelAliases([alias("codex", "gpt-5.7-preview", "gpt-9-imaginary")]),
+      0,
+    );
   });
 
   it("drops an alias on a model the vendored table already prices", () => {
     // Storing it would let the panel claim a borrowed price for a real rate.
-    assert.lengthOf(sanitizeModelAliases([alias("codex", "gpt-5.4", "gpt-5.5")]), 0);
+    assert.lengthOf(sanitizeModelAliases([alias("codex", "gpt-5.6-sol", "gpt-5.5")]), 0);
   });
 
   it("drops a self-alias", () => {
@@ -30,15 +34,15 @@ describe("sanitizeModelAliases", () => {
 
   it("rejects a cross-provider target", () => {
     // `claude-opus-5` is not in the Codex table, so this buys nothing.
-    assert.lengthOf(sanitizeModelAliases([alias("codex", "gpt-5.6-sol", "claude-opus-5")]), 0);
+    assert.lengthOf(sanitizeModelAliases([alias("codex", "gpt-5.7-preview", "claude-opus-5")]), 0);
   });
 
   it("keeps the last row for a repeated model", () => {
     const result = sanitizeModelAliases([
-      alias("codex", "gpt-5.6-sol", "gpt-5.4"),
-      alias("codex", "gpt-5.6-sol", "gpt-5.5"),
+      alias("codex", "gpt-5.7-preview", "gpt-5.4"),
+      alias("codex", "gpt-5.7-preview", "gpt-5.6-sol"),
     ]);
-    assert.deepStrictEqual(result, [alias("codex", "gpt-5.6-sol", "gpt-5.5")]);
+    assert.deepStrictEqual(result, [alias("codex", "gpt-5.7-preview", "gpt-5.6-sol")]);
   });
 
   it("does not confuse two providers' rows for the same model name", () => {
@@ -65,14 +69,14 @@ describe("sanitizeModelAliases", () => {
 describe("toModelAliasMap", () => {
   it("nests by provider then model", () => {
     const map = toModelAliasMap([
-      alias("codex", "gpt-5.6-sol", "gpt-5.5"),
+      alias("codex", "gpt-5.7-preview", "gpt-5.6-sol"),
       alias("codex", "unknown", "gpt-5.4"),
       alias("claude", "mystery", "claude-opus-5"),
     ]);
-    assert.strictEqual(map.get("codex")?.get("gpt-5.6-sol"), "gpt-5.5");
+    assert.strictEqual(map.get("codex")?.get("gpt-5.7-preview"), "gpt-5.6-sol");
     assert.strictEqual(map.get("codex")?.get("unknown"), "gpt-5.4");
     assert.strictEqual(map.get("claude")?.get("mystery"), "claude-opus-5");
-    assert.strictEqual(map.get("claude")?.get("gpt-5.6-sol"), undefined);
+    assert.strictEqual(map.get("claude")?.get("gpt-5.7-preview"), undefined);
   });
 
   it("returns an empty map for no aliases", () => {

@@ -30,6 +30,9 @@ export interface ServerDerivedPaths {
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
+  /** Transitive environment roster. Supersedes peersPath for new writes. */
+  readonly fleetPath: string;
+  /** @deprecated One-release migration source for pre-fleet peer metadata. */
   readonly peersPath: string;
   /** Import provenance: which CLI session became which thread. See `history/importRegistry.ts`. */
   readonly historyImportsPath: string;
@@ -121,6 +124,7 @@ export const deriveServerPaths = Effect.fn(function* (
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
+    fleetPath: join(stateDir, "fleet.json"),
     peersPath: join(stateDir, "peers.json"),
     historyImportsPath: join(stateDir, "history-imports.json"),
     cliUsageCachePath: join(stateDir, "cli-usage-cache.json"),

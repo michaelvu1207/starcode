@@ -50,6 +50,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     proposedPlans: [],
     activities: [],
+    agentRuns: [],
     checkpoints: [],
     createdAt: now,
     updatedAt: now,

@@ -6,19 +6,12 @@ describe("buildHomeListFilterMenu", () => {
   it("adds a project scope submenu that selects and clears the same scope as the chips", () => {
     const onProjectChange = vi.fn();
     const menu = buildHomeListFilterMenu({
-      environments: [],
       projects: [
         { key: "environment-1:project-1", label: "Codething" },
         { key: "environment-1:project-2", label: "Website" },
       ],
-      selectedEnvironmentId: null,
       selectedProjectKey: "environment-1:project-1",
-      projectSortOrder: "updated_at",
-      threadSortOrder: "updated_at",
-      onEnvironmentChange: vi.fn(),
       onProjectChange,
-      onProjectSortOrderChange: vi.fn(),
-      onThreadSortOrderChange: vi.fn(),
     });
 
     const projectMenu = menu.items.find(

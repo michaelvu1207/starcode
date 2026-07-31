@@ -48,17 +48,17 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "starcode service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
+    return "StarCode service\n  Status: unavailable on this machine\n  Supported on: macOS with launchd or Linux with systemd";
   }
   if (!status.installed) {
-    return "starcode service\n  Status: not installed\n  Next: Run `starcode service install`.";
+    return "StarCode service\n  Status: not installed\n  Next: Run `starcode service install`.";
   }
   return [
-    "starcode service",
-    `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
-    `  Unit: ${status.unitPath}`,
+    "StarCode service",
+    `  Status: ${status.current ? `installed · starcode@${cliVersion}` : "needs an update or repair"}`,
+    `  Definition: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
-    ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+    ...(status.current ? [] : ["  Next: Run `npx starcode@latest service update`."]),
   ].join("\n");
 }
 
@@ -80,12 +80,12 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
         const result = yield* reconcileService();
         if (!result.changed) {
           yield* Console.log(
-            `starcode service is already installed with t3@${packageJson.version}.`,
+            `StarCode service is already installed with starcode@${packageJson.version}.`,
           );
           return;
         }
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} starcode service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${result.previouslyInstalled ? "Updated" : "Installed"} StarCode service with starcode@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -94,7 +94,7 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
 
 const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
   Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
+    "Update or repair the background service using this CLI version. Use `npx starcode@latest service update` for the latest release.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -102,11 +102,11 @@ const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
       Effect.gen(function* () {
         const result = yield* reconcileService();
         if (!result.changed) {
-          yield* Console.log(`starcode service is already using t3@${packageJson.version}.`);
+          yield* Console.log(`StarCode service is already using starcode@${packageJson.version}.`);
           return;
         }
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} starcode service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${result.previouslyInstalled ? "Updated" : "Installed"} StarCode service with starcode@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -122,7 +122,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
         const service = yield* BootService.BootService;
         const removed = yield* service.uninstall;
         yield* Console.log(
-          removed ? "Removed the starcode service." : "starcode service is not installed.",
+          removed ? "Removed the StarCode service." : "StarCode service is not installed.",
         );
       }),
     ),
@@ -149,15 +149,14 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     return false;
   }
   if (installed && current) {
-    yield* Console.log("starcode is already set up to run in the background on this machine.");
+    yield* Console.log("StarCode is already set up to run in the background on this machine.");
     return true;
   }
   const wanted = yield* Prompt.run(
     Prompt.confirm({
       message: installed
-        ? "The installed starcode service needs an update or repair. Update it now?"
-        : "Run starcode in the background whenever this machine boots? " +
-          "It stays reachable through starcode Connect even after you log out.",
+        ? "The installed StarCode service needs an update or repair. Update it now?"
+        : "Start StarCode automatically and keep this machine reachable in the background?",
       initial: true,
     }),
   );

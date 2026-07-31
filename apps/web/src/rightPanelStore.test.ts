@@ -18,6 +18,28 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("drops the removed Agents surface during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagents",
+            surfaces: [{ id: "subagents", kind: "subagents" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        },
+      },
+    });
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({

@@ -393,6 +393,51 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("sets fleet bootstrap developer instructions on a fresh thread", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        fleetSessionBootstrapInstructions: "credential-free fleet topology",
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/start",
+          payload: {
+            cwd: "/tmp/project",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+            approvalsReviewer: "user",
+            developerInstructions: "credential-free fleet topology",
+            model: "gpt-5.3-codex",
+          },
+        },
+      ]);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{
@@ -497,6 +542,7 @@ describe("openCodexThread", () => {
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
+        fleetSessionBootstrapInstructions: "credential-free fleet topology",
         resumeThreadId: "source-thread",
         fork: true,
       });
@@ -508,9 +554,14 @@ describe("openCodexThread", () => {
         ["thread/fork"],
       );
       NodeAssert.equal(opened.thread.id, "forked-thread");
-      const payload = calls[0]?.payload as { readonly threadId: string; readonly cwd: string };
+      const payload = calls[0]?.payload as {
+        readonly threadId: string;
+        readonly cwd: string;
+        readonly developerInstructions: string;
+      };
       NodeAssert.equal(payload.threadId, "source-thread");
       NodeAssert.equal(payload.cwd, "/tmp/project");
+      NodeAssert.equal(payload.developerInstructions, "credential-free fleet topology");
     }),
   );
 

@@ -53,7 +53,7 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  * its own machine is amputated exactly the way one that could not leave a
  * mailbox message would be, and that is the same trade `peer_thread_send` was
  * already decided on. The runaway risk master-only was implicitly covering is
- * answered where it belongs — a per-turn creation cap in `LocalThreadWriter` —
+ * answered where it belongs — a per-turn creation cap in `ThreadService` —
  * rather than by taking the tool away from everyone who is not the master.
  * Note this is also why it is a separate tool from `peer_thread_create` rather
  * than a `peer?` on it: this list keys on tool *name*, so one name cannot be
@@ -68,7 +68,7 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
  */
 export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.McpCapability> =
   new Map([
-    ["peer_thread_create", "peers-operate"],
+    ["peer_thread_create", "threads-operate"],
     // Same split on the feature map: reading it helps every agent orient,
     // writing it is the orchestrator's alone. `feature_map_list` is absent for
     // exactly the reason `peer_thread_send` is.
@@ -80,8 +80,30 @@ export const CAPABILITY_GATED_TOOLS: ReadonlyMap<string, McpInvocationContext.Mc
   ]);
 
 interface ToolsListShape {
-  readonly result: { readonly tools: ReadonlyArray<{ readonly name?: unknown }> };
+  readonly result: { readonly tools: ReadonlyArray<unknown> };
 }
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * MCP tool inputs are always objects. Some schema emitters represent an empty
+ * object as a root union (for example `anyOf: [object, array]`), which the MCP
+ * protocol can serialize but Claude's Zod-backed client rejects while parsing
+ * `tools/list`. Tool calls are object-shaped, so replace a malformed root with
+ * the smallest valid closed-object schema at the transport boundary.
+ */
+const normalizeToolInputSchema = (tool: unknown): unknown => {
+  if (!isRecord(tool)) return tool;
+  const inputSchema = tool.inputSchema;
+  if (!isRecord(inputSchema) || inputSchema.type === "object") return tool;
+  return {
+    ...tool,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  };
+};
+
+const listedToolName = (tool: unknown): unknown => (isRecord(tool) ? tool.name : undefined);
 
 /** Narrow to a JSON-RPC response actually carrying a tool list. */
 const isToolsListPayload = (payload: unknown): payload is ToolsListShape => {
@@ -111,9 +133,11 @@ export const filterToolsListPayload = (
 ): unknown | null => {
   if (!isToolsListPayload(payload)) return null;
   const tools = payload.result.tools;
-  const visible = tools.filter((tool) => isToolVisible(tool?.name, capabilities));
-  if (visible.length === tools.length) return null;
-  return { ...payload, result: { ...payload.result, tools: visible } };
+  const visible = tools.filter((tool) => isToolVisible(listedToolName(tool), capabilities));
+  const normalized = visible.map(normalizeToolInputSchema);
+  const schemasChanged = normalized.some((tool, index) => tool !== visible[index]);
+  if (visible.length === tools.length && !schemasChanged) return null;
+  return { ...payload, result: { ...payload.result, tools: normalized } };
 };
 
 /** Bodies we can safely read and rewrite. A stream is neither. */

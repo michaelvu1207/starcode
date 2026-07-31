@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import { PeerName } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,15 +9,33 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import {
-  judgePeerScopes,
-  normalizePeerBaseUrl,
-  peerCredentialScopes,
-} from "./PeerEnvironmentClient.ts";
+import * as FleetRegistry from "../fleet/FleetRegistry.ts";
+import { FleetReconciler, FleetRegistrationError } from "../fleet/FleetReconciler.ts";
+import { normalizePeerBaseUrl } from "./PeerEnvironmentClient.ts";
 import * as PeerRegistry from "./PeerRegistry.ts";
 
-const makePeerRegistryLayer = () =>
-  PeerRegistry.layer.pipe(
+const EMPTY_ROSTER = { version: 1, revision: 0, members: [], tombstones: [] } as const;
+
+const FleetReconcilerTest = Layer.succeed(
+  FleetReconciler,
+  FleetReconciler.of({
+    register: (input) =>
+      Effect.fail(
+        new FleetRegistrationError({
+          reason: input.baseUrl.startsWith("file:") ? "invalid_base_url" : "node_unreachable",
+          name: input.name,
+        }),
+      ),
+    reconcile: Effect.succeed({ roster: EMPTY_ROSTER, failures: [] }),
+    exchange: () => Effect.succeed({ roster: EMPTY_ROSTER, introductions: [] }),
+    clientBootstrap: () => Effect.succeed({ revision: 0, nodes: [] }),
+    ensureSelf: () => Effect.die("ensureSelf is not used by PeerRegistry compatibility tests"),
+    remove: () => Effect.succeed({ removed: false, roster: EMPTY_ROSTER }),
+  }),
+);
+
+const makePeerRegistryLayer = () => {
+  const fleetRegistryLayer = FleetRegistry.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(
       Layer.fresh(
@@ -27,6 +45,11 @@ const makePeerRegistryLayer = () =>
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(NodeServices.layer),
   );
+  return PeerRegistry.layer.pipe(
+    Layer.provide(FleetReconcilerTest),
+    Layer.provideMerge(fleetRegistryLayer),
+  );
+};
 
 it.effect("reports no peers before anything is registered", () =>
   Effect.gen(function* () {
@@ -94,53 +117,6 @@ it("normalizes a peer base URL to its origin and rejects other schemes", () => {
   assert.equal(normalizePeerBaseUrl("starcode://app"), null);
   assert.equal(normalizePeerBaseUrl("127.0.0.1:14233"), null);
   assert.equal(normalizePeerBaseUrl("not a url"), null);
-});
-
-describe("peer credential classes", () => {
-  it("accepts a read peer holding exactly the read scope", () => {
-    assert.deepStrictEqual(judgePeerScopes("read", ["orchestration:read"]), { ok: true });
-  });
-
-  it("accepts an operate peer holding read plus operate", () => {
-    assert.deepStrictEqual(
-      judgePeerScopes("operate", ["orchestration:read", "orchestration:operate"]),
-      { ok: true },
-    );
-  });
-
-  it("refuses an operate peer that was only granted read", () => {
-    const verdict = judgePeerScopes("operate", ["orchestration:read"]);
-    assert.isFalse(verdict.ok);
-    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_not_granted");
-  });
-
-  it("refuses a read peer handed an operate-capable token", () => {
-    // The point of the class: a read registration must not quietly end up
-    // holding write authority over another machine.
-    const verdict = judgePeerScopes("read", ["orchestration:read", "orchestration:operate"]);
-    assert.isFalse(verdict.ok);
-    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_too_broad");
-  });
-
-  it("refuses an operate peer handed an administrative token", () => {
-    const verdict = judgePeerScopes("operate", [
-      "orchestration:read",
-      "orchestration:operate",
-      "access:write",
-    ]);
-    assert.isFalse(verdict.ok);
-    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_too_broad");
-  });
-
-  it("refuses a credential that grants nothing at all", () => {
-    const verdict = judgePeerScopes("read", []);
-    assert.isFalse(verdict.ok);
-    assert.strictEqual(verdict.ok === false ? verdict.reason : null, "scope_not_granted");
-  });
-
-  it("keeps read-class registrations unchanged from F2", () => {
-    assert.deepStrictEqual([...peerCredentialScopes("read")], ["orchestration:read"]);
-  });
 });
 
 it.effect("recording an ssh login for an unknown peer reports no change", () =>

@@ -1,39 +1,92 @@
-/**
- * The local counterpart to the peer-thread write tools.
- *
- * Kept a separate tool from `peer_thread_create` rather than a `peer?` on it,
- * even though `peer_thread_send` establishes the omit-peer-for-local shape. The
- * reason is the capability filter: it hides tools by *name*, and these two have
- * different audiences — `peer_thread_create` is master-only and stays hidden
- * from workers, while this one is open to every session. One name cannot be
- * both, and ungating the shared name would show every worker a tool whose peer
- * form it can never call, which is exactly the wasted-turn cost that filter
- * exists to prevent.
- *
- * @module ThreadTools
- */
-import { ThreadCreateInput, ThreadCreateResult, ThreadToolError } from "@starcode/contracts";
+/** Canonical fleet-wide thread tools. @module ThreadTools */
+import {
+  PeerFederationError,
+  ThreadCreateInput,
+  ThreadReadInput,
+  ThreadReadResult,
+  ThreadSendInput,
+  ThreadSendResult,
+  ThreadServiceCreateResult,
+  ThreadsListInput,
+  ThreadsListResult,
+} from "@starcode/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { LocalThreadWriter } from "../../../threads/LocalThreadWriter.ts";
+import { ThreadService } from "../../../threads/ThreadService.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
 
-export const ThreadCreateTool = Tool.make("thread_create", {
-  description:
-    "Create a new agent thread on THIS machine and start it working on a first message. Use this to delegate work to a fresh thread on your own connection — for a thread on another machine, use peer_thread_create instead. Say where it goes with project (a slug from project_list) or projectId; provider instance, model and modes default to that project's own settings. The new thread begins a turn immediately, so give it a message it can act on without you. Capped at 3 per turn.",
-  parameters: ThreadCreateInput,
-  success: ThreadCreateResult,
-  failure: ThreadToolError,
-  dependencies: [McpInvocationContext.McpInvocationContext, LocalThreadWriter],
-})
-  .annotate(Tool.Title, "Create a thread on this machine")
-  .annotate(Tool.Readonly, false)
-  // Destructive in the same sense `peer_thread_create` is: it spends money and
-  // takes attention. Nothing it does can be undone by calling it again, which
-  // is also why it is not idempotent.
-  .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, false)
-  // Closed-world, unlike every peer tool: this one never leaves the machine.
-  .annotate(Tool.OpenWorld, false);
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadService,
+  ServerEnvironment.ServerEnvironment,
+  ProjectionSnapshotQuery,
+  ProjectCatalogRegistry,
+];
 
-export const ThreadsToolkit = Toolkit.make(ThreadCreateTool);
+const readTool = <T extends Tool.Any>(tool: T): T =>
+  tool
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, true) as T;
+
+const writeTool = <T extends Tool.Any>(tool: T): T =>
+  tool
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, true)
+    .annotate(Tool.Idempotent, false)
+    .annotate(Tool.OpenWorld, true) as T;
+
+export const ThreadsListTool = readTool(
+  Tool.make("threads_list", {
+    description:
+      "List threads on this machine and every reachable fleet node in one result. The optional node only filters the view. A failed node appears in failures and does not hide surviving threads.",
+    parameters: ThreadsListInput,
+    success: ThreadsListResult,
+    failure: PeerFederationError,
+    dependencies,
+  }).annotate(Tool.Title, "List fleet threads"),
+);
+
+export const ThreadReadTool = readTool(
+  Tool.make("thread_read", {
+    description:
+      "Read a thread transcript by id. The server locates the thread; do not pass a machine.",
+    parameters: ThreadReadInput,
+    success: ThreadReadResult,
+    failure: PeerFederationError,
+    dependencies,
+  }).annotate(Tool.Title, "Read a thread"),
+);
+
+export const ThreadSendTool = writeTool(
+  Tool.make("thread_send", {
+    description:
+      "Send a message to a thread by id. The server locates it locally or across the fleet. Use queue=true only when the recipient need not wake now.",
+    parameters: ThreadSendInput,
+    success: ThreadSendResult,
+    failure: PeerFederationError,
+    dependencies,
+  }).annotate(Tool.Title, "Send a message to a thread"),
+);
+
+export const ThreadCreateTool = writeTool(
+  Tool.make("thread_create", {
+    description:
+      "Create a thread and start its first turn. Omit node for this machine or choose a fleet node as preferred placement. Pass exactly one of project or projectId.",
+    parameters: ThreadCreateInput,
+    success: ThreadServiceCreateResult,
+    failure: PeerFederationError,
+    dependencies,
+  }).annotate(Tool.Title, "Create a thread"),
+);
+
+export const ThreadsToolkit = Toolkit.make(
+  ThreadsListTool,
+  ThreadReadTool,
+  ThreadSendTool,
+  ThreadCreateTool,
+);

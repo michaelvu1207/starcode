@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - hub
 
 jobs:
   check:
@@ -60,6 +61,26 @@ jobs:
 
       - name: Test
         run: vp run test
+
+  fleet_integration:
+    name: Real three-node fleet gates
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Run G1, G2, and transport-level G3
+        env:
+          STARCODE_RUN_FLEET_INTEGRATION: "1"
+        run: vp test run apps/server/integration/fleet/FleetGates.integration.test.ts
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis

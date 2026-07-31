@@ -116,7 +116,7 @@ describe("aggregateCliUsage", () => {
 
   it("counts an unpriced model's tokens while refusing to price them", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ model: "gpt-5.6-sol", messages: 4, input: 5_000, output: 500 })])],
+      [codexFile([bucket({ model: "gpt-5.7-preview", messages: 4, input: 5_000, output: 500 })])],
       options,
     );
 
@@ -128,12 +128,29 @@ describe("aggregateCliUsage", () => {
     assert.strictEqual(codex?.models[0]?.priced, false);
   });
 
+  it("prices gpt-5.6-sol tokens in every usage total", () => {
+    const result = aggregateCliUsage(
+      [
+        codexFile([
+          bucket({ model: "gpt-5.6-sol", messages: 2, input: 1_000_000, output: 1_000_000 }),
+        ]),
+      ],
+      options,
+    );
+
+    const codex = providerNamed(result, "codex");
+    assert.strictEqual(codex?.allTime.costUsd, 35);
+    assert.strictEqual(codex?.allTime.unpricedMessages, 0);
+    assert.strictEqual(codex?.models[0]?.priced, true);
+    assert.strictEqual(codex?.models[0]?.pricedAs, null);
+  });
+
   it("reports a partly unpriced provider's cost as a floor", () => {
     const result = aggregateCliUsage(
       [
         codexFile([
           bucket({ model: "gpt-5.5", messages: 1, output: 1_000_000 }),
-          bucket({ model: "gpt-5.6-sol", messages: 3, output: 1_000_000 }),
+          bucket({ model: "gpt-5.7-preview", messages: 3, output: 1_000_000 }),
         ]),
       ],
       options,
@@ -381,7 +398,7 @@ describe("aggregateCliUsage day buckets", () => {
         codexFile([
           bucket({ day: "2026-07-25", model: "gpt-5.5", output: 1_000_000 }),
           bucket({ day: "2026-07-01", model: "gpt-5.4", output: 1_000_000 }),
-          bucket({ day: "2026-07-01", model: "gpt-5.6-sol", output: 1_000_000 }),
+          bucket({ day: "2026-07-01", model: "gpt-5.7-preview", output: 1_000_000 }),
         ]),
       ],
       options,
@@ -396,7 +413,11 @@ describe("aggregateCliUsage day buckets", () => {
 
   it("keeps an all-unpriced day in the series with tokens and no cost", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ day: "2026-07-24", model: "gpt-5.6-sol", messages: 3, output: 900 })])],
+      [
+        codexFile([
+          bucket({ day: "2026-07-24", model: "gpt-5.7-preview", messages: 3, output: 900 }),
+        ]),
+      ],
       options,
     );
     const day = (providerNamed(result, "codex")?.days ?? [])[0];
@@ -415,8 +436,8 @@ describe("aggregateCliUsage model aliases", () => {
 
   it("prices an unknown model at its alias's rate", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
-      aliasing("codex", "gpt-5.6-sol", "gpt-5.5"),
+      [codexFile([bucket({ model: "gpt-5.7-preview", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.7-preview", "gpt-5.5"),
     );
     const codex = providerNamed(result, "codex");
     assert.strictEqual(codex?.allTime.costUsd, 30);
@@ -438,8 +459,8 @@ describe("aggregateCliUsage model aliases", () => {
 
   it("does not let one provider's alias price the other's model", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
-      aliasing("claude", "gpt-5.6-sol", "claude-opus-5"),
+      [codexFile([bucket({ model: "gpt-5.7-preview", output: 1_000_000 })])],
+      aliasing("claude", "gpt-5.7-preview", "claude-opus-5"),
     );
     const codex = providerNamed(result, "codex");
     assert.strictEqual(codex?.allTime.costUsd, 0);
@@ -448,8 +469,8 @@ describe("aggregateCliUsage model aliases", () => {
 
   it("stays unpriced when the alias names a model this build cannot price", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
-      aliasing("codex", "gpt-5.6-sol", "gpt-9-imaginary"),
+      [codexFile([bucket({ model: "gpt-5.7-preview", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.7-preview", "gpt-9-imaginary"),
     );
     const codex = providerNamed(result, "codex");
     assert.strictEqual(codex?.allTime.costUsd, 0);
@@ -460,8 +481,8 @@ describe("aggregateCliUsage model aliases", () => {
 
   it("prices an aliased model into its day buckets too", () => {
     const result = aggregateCliUsage(
-      [codexFile([bucket({ day: "2026-07-24", model: "gpt-5.6-sol", output: 1_000_000 })])],
-      aliasing("codex", "gpt-5.6-sol", "gpt-5.5"),
+      [codexFile([bucket({ day: "2026-07-24", model: "gpt-5.7-preview", output: 1_000_000 })])],
+      aliasing("codex", "gpt-5.7-preview", "gpt-5.5"),
     );
     const day = (providerNamed(result, "codex")?.days ?? [])[0];
     assert.strictEqual(day?.totals.costUsd, 30);
@@ -472,10 +493,10 @@ describe("aggregateCliUsage model aliases", () => {
     const priority = {
       ...options,
       codexPriorityTier: true,
-      modelAliases: new Map([["codex", new Map([["gpt-5.6-sol", "gpt-5.5"]])]]) as never,
+      modelAliases: new Map([["codex", new Map([["gpt-5.7-preview", "gpt-5.5"]])]]) as never,
     };
     const result = aggregateCliUsage(
-      [codexFile([bucket({ model: "gpt-5.6-sol", output: 1_000_000 })])],
+      [codexFile([bucket({ model: "gpt-5.7-preview", output: 1_000_000 })])],
       priority,
     );
     // gpt-5.5's priority multiplier is 2.5, not the 2.0 default an unnamed

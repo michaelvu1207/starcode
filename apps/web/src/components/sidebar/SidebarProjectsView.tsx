@@ -19,9 +19,8 @@
  *
  * What is NOT here: any inbox. No attention badges, no needs-attention rollup,
  * no ranking. This view is your projects and their threads; triage is the inbox
- * view's job and it is one menu away. Threads no project claims land in a
- * "Chats" section at the very bottom, under everything including the archived
- * disclosure, with the filing popover on its header.
+ * view's job and it is one menu away. Threads no project claims are rendered by
+ * this component's dedicated Chats mode, selected from the compact header.
  *
  * Also NOT here: any second opinion about which project a thread belongs to.
  * Membership arrives resolved from the F16 fold, the same answer `/projects`
@@ -72,9 +71,9 @@ import {
 import { SidebarUnfiledTriage } from "./SidebarUnfiledTriage";
 import { StarcodeMark } from "../brand/StarcodeWordmark";
 import "../projects/Projects.css";
-import "./ChatsDock.css";
 
 export function SidebarProjectsView(props: {
+  readonly mode: "projects" | "chats";
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly routeThreadKey: string | null;
   readonly renderThreadRow: (thread: EnvironmentThreadShell) => ReactNode;
@@ -178,8 +177,8 @@ export function SidebarProjectsView(props: {
   /**
    * What a group actually shows, once collapse and paging are applied.
    *
-   * Shared by the project groups and the docked Chats section so the one rule
-   * that matters here cannot drift between them: a collapsed group still
+   * Shared by the project groups so the one rule that matters here stays
+   * explicit: a collapsed group still
    * renders the thread you are reading, because the chat pane and the sidebar
    * must never disagree about what is open.
    */
@@ -313,86 +312,62 @@ export function SidebarProjectsView(props: {
     );
   };
 
-  /**
-   * Chats, docked to the bottom of the sidebar.
-   *
-   * Not the last item in the list — the bottom of the *viewport*. `mt-auto`
-   * hugs it to the floor when the projects are short, and `sticky bottom-0`
-   * holds it there once they are long enough to scroll. Both need the list to
-   * be as tall as the scroller, which is what `flex-1` on the `<ul>` in
-   * `SidebarV2` buys. Threads with no home are the pile you work off, so it has
-   * to be somewhere your eye can always find without scrolling to the end of
-   * everything else.
-   *
-   * The rows go in a nested list with its own scroll, capped so a hundred loose
-   * threads cannot eat the projects above them. Nesting is safe here: thread
-   * selection resolves through `closest()`, not through direct children.
-   *
-   * The `<li>` is the dock; the `<div>` inside it is the opaque panel. They are
-   * separate so the gap above the panel can belong to the sticky element — it
-   * has to travel with the panel while it is pinned — without being painted
-   * over. See `ChatsDock.css` for the gap and the fade that fills it.
-   *
-   * The panel needs the sidebar's own background AND its grain — rows scroll
-   * under this, and a plain `bg-sidebar` panel over a grained surface leaves a
-   * seam exactly at the line where the texture stops.
-   */
-  const renderChatsSection = (group: SidebarProjectGroup): ReactNode => {
-    const { expanded, rows, hiddenCount } = visibleRowsFor(group);
+  const renderChatsView = (): ReactNode => {
+    const visibleCount =
+      visibleCountByGroup[SIDEBAR_UNFILED_GROUP_KEY] ?? SIDEBAR_PROJECT_ROWS_INITIAL_COUNT;
+    const visibleChats =
+      chatsGroup === null
+        ? null
+        : limitSidebarProjectRows(chatsGroup.rows, visibleCount, props.routeThreadKey);
     return (
-      <li
-        data-thread-selection-safe
-        data-testid="sidebar-v2-chats-dock"
-        className="sc-chats-dock sticky bottom-0 z-10 mt-auto list-none"
-      >
-        <div data-testid="sidebar-v2-chats-panel" className="bg-sidebar surface-grain pb-1">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => toggleGroup(group.key, expanded)}
-              aria-expanded={expanded}
-              title={expanded ? "Collapse Chats" : "Expand Chats"}
-              data-testid="sidebar-v2-chats-toggle"
-              className="starcode-section-rule w-full cursor-pointer px-2.5 pb-1.5 pt-2 text-center"
-            >
-              <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
-                Chats
-              </span>
-            </button>
-            {/* Absolutely placed so the engraved rule stays centred on the title
-                rather than on the title plus a button. */}
-            <span className="absolute bottom-1.5 right-2.5">
-              <SidebarUnfiledTriage
-                threads={group.rows}
-                projects={fileableProjects}
-                environmentLabelById={environmentLabelById}
-              />
+      <>
+        <li data-thread-selection-safe className="list-none">
+          <div
+            data-testid="sidebar-v2-chats-heading"
+            className="starcode-section-rule relative px-2.5 pb-1.5 pt-1 text-center"
+          >
+            <span className="text-[13px] font-semibold tracking-[0.14em] text-sidebar-foreground/70 uppercase">
+              Chats
             </span>
+            {chatsGroup === null ? null : (
+              <span className="absolute bottom-1.5 right-2.5">
+                <SidebarUnfiledTriage
+                  threads={chatsGroup.rows}
+                  projects={fileableProjects}
+                  environmentLabelById={environmentLabelById}
+                />
+              </span>
+            )}
           </div>
-          {expanded ? (
-            <div className="max-h-[38vh] overflow-y-auto">
-              <ul role="list" className="flex flex-col gap-px">
-                {rows.map((row) => props.renderThreadRow(row))}
-                {hiddenCount > 0 ? renderShowMore(group, hiddenCount) : null}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      </li>
+        </li>
+        {visibleChats === null ? (
+          <li className="list-none px-2.5 py-6 text-center text-xs text-muted-foreground/60">
+            <p className="mb-1">No chats yet</p>
+            <p className="text-[11px] text-muted-foreground/50">
+              Threads outside a project will appear here.
+            </p>
+          </li>
+        ) : (
+          <>
+            {visibleChats.rows.map((row) => props.renderThreadRow(row))}
+            {visibleChats.hiddenCount > 0 && chatsGroup !== null
+              ? renderShowMore(chatsGroup, visibleChats.hiddenCount)
+              : null}
+          </>
+        )}
+      </>
     );
   };
+
+  if (props.mode === "chats") return renderChatsView();
 
   const archivedThreadCount = countSidebarProjectRows(archivedGroups);
 
   return (
     <>
-      {/* The two section headings this view has, and the only two engraved
-          rules in the app outside a dialog. They exist because the list now has
-          two halves that answer different questions — what you organised, and
-          what you have not — and a docked panel at the bottom needs something
-          at the top saying what the rest of the list is. Centred and engraved
-          rather than a left-aligned label, so they read as chapter marks over
-          the headings rather than as one more heading among them. */}
+      {/* Projects and Chats are separate sidebar surfaces selected from the
+          compact header. This heading labels the surface instead of dividing
+          two lists that compete for the same vertical space. */}
       <li data-thread-selection-safe className="list-none">
         <div
           data-testid="sidebar-v2-projects-heading"
@@ -404,11 +379,9 @@ export function SidebarProjectsView(props: {
         </div>
       </li>
 
-      {/* The invitation shows whenever no project exists — NOT only when the
-          list is empty. Before you have filed anything every thread is in
-          Chats, so the view is never empty, and gating this on "nothing to
-          show" would leave the one view that is about projects with no way to
-          make one. Chats still renders below it. */}
+      {/* The invitation shows whenever no project exists. The dedicated Chats
+          surface can still hold loose threads, but this view must retain its
+          own path to creating the first project. */}
       {groups.length === 0 ? (
         <li className="list-none px-2.5 py-6 text-center text-xs text-muted-foreground/60">
           <p className="mb-2">No projects yet</p>
@@ -469,12 +442,6 @@ export function SidebarProjectsView(props: {
         </li>
       ) : null}
       {showArchived ? archivedGroups.map(renderGroup) : null}
-
-      {/* Chats is docked to the bottom of the viewport rather than laid after
-          the archived disclosure — see `renderChatsSection`. The projects are
-          the point of this view and they get the top of it; the threads with no
-          home get a floor you can always see. */}
-      {chatsGroup === null ? null : renderChatsSection(chatsGroup)}
 
       <ProjectCreateDialog
         open={createOpen}

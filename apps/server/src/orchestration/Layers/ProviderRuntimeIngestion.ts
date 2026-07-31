@@ -653,6 +653,12 @@ export function runtimeEventToActivities(
             ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
             ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
             ...(event.payload.model ? { model: event.payload.model } : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
+            ...(event.payload.parentNativeSessionId
+              ? { parentNativeSessionId: event.payload.parentNativeSessionId }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -722,6 +728,9 @@ export function runtimeEventToActivities(
             ...(event.payload.isBackgrounded !== undefined
               ? { isBackgrounded: event.payload.isBackgrounded }
               : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -756,6 +765,9 @@ export function runtimeEventToActivities(
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
             ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1862,6 +1874,16 @@ const make = Effect.gen(function* () {
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
+                : {}),
+              ...((event.type === "thread.started"
+                ? event.payload.providerThreadId
+                : thread.session?.providerThreadId) !== undefined
+                ? {
+                    providerThreadId:
+                      event.type === "thread.started"
+                        ? event.payload.providerThreadId
+                        : thread.session?.providerThreadId,
+                  }
                 : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,

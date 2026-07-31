@@ -1802,6 +1802,7 @@ describe("deriveSubagentTasks", () => {
       payload: {
         taskId,
         detail: "Find the thing",
+        taskType: "local_agent",
         subagentType: "Explore",
         toolUseId: `toolu_${taskId}`,
         ...overrides,
@@ -1833,6 +1834,7 @@ describe("deriveSubagentTasks", () => {
     ]);
 
     expect(task?.taskId).toBe("a1");
+    expect(task?.taskType).toBe("local_agent");
     expect(task?.subagentType).toBe("Explore");
     expect(task?.toolUseId).toBe("toolu_a1");
     expect(task?.status).toBe("completed");
@@ -1899,19 +1901,399 @@ describe("deriveSubagentTasks", () => {
     expect(task?.status).toBe("running");
   });
 
-  it("sorts live subagents above finished ones", () => {
+  it("sorts live subagents first and finished subagents newest-first", () => {
     const tasks = deriveSubagentTasks([
-      started("done"),
+      started("older-done"),
       makeActivity({
         kind: "task.completed",
         createdAt: "2026-07-27T00:00:02.000Z",
-        payload: { taskId: "done", status: "completed" },
+        payload: { taskId: "older-done", status: "completed" },
       }),
       started("live"),
       progress("live", 100),
+      makeActivity({
+        kind: "task.started",
+        createdAt: "2026-07-27T00:00:03.000Z",
+        payload: { taskId: "newer-done" },
+      }),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:04.000Z",
+        payload: { taskId: "newer-done", status: "completed" },
+      }),
     ]);
 
-    expect(tasks.map((task) => task.taskId)).toEqual(["live", "done"]);
+    expect(tasks.map((task) => task.taskId)).toEqual(["live", "newer-done", "older-done"]);
+  });
+
+  it("discovers a historical nested Codex CLI launch from its exact Bash item", () => {
+    const tool = makeActivity({
+      id: "codex-tool-updated",
+      kind: "tool.updated",
+      payload: {
+        providerItemId: "toolu_codex_1",
+        status: "inProgress",
+        data: {
+          toolName: "Bash",
+          input: {
+            command:
+              'nohup codex exec -C phase2-router -m gpt-5.6-sol "Consolidate the route representation." > /tmp/worker.log 2>&1 &',
+          },
+        },
+      },
+    });
+
+    const [task] = deriveSubagentTasks([tool]);
+    expect(task).toMatchObject({
+      taskId: "codex-cli:toolu_codex_1",
+      description: "Consolidate the route representation.",
+      subagentType: "Codex CLI",
+      model: "gpt-5.6-sol",
+      status: "running",
+      isBackgrounded: true,
+      toolUseId: "toolu_codex_1",
+      lastToolName: "codex exec",
+    });
+  });
+
+  it("keeps an exact linked rollout id on the Codex CLI task", () => {
+    const historySessionId = "a".repeat(32);
+    const [task] = deriveSubagentTasks([
+      started("codex-cli:toolu_codex_2", {
+        subagentType: "Codex CLI",
+        toolUseId: "toolu_codex_2",
+        historySessionId,
+      }),
+    ]);
+    expect(task?.historySessionId).toBe(historySessionId);
+  });
+
+  it("opens a uniquely recovered historical Codex rollout", () => {
+    const historySessionId = "c".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        kind: "tool.updated",
+        payload: {
+          providerItemId: "toolu_historical_codex",
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          data: {
+            toolName: "Bash",
+            input: {
+              command:
+                'cd /work/router && nohup codex exec -C . "Review the route graph." > /tmp/codex.log 2>&1 &',
+            },
+          },
+        },
+      }),
+    ]);
+    expect(task).toMatchObject({
+      status: "completed",
+      historySessionId,
+      subagentType: "Codex CLI",
+    });
+  });
+
+  it("opens a recovered historical Codex rollout joined through legacy itemId rows", () => {
+    const historySessionId = "d".repeat(32);
+    const itemId = "toolu_legacy_historical_codex";
+    const command =
+      'cd /work/router && nohup codex exec -C . "Review the route graph." ' +
+      "> /tmp/codex.log 2>&1 &";
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "legacy-codex-updated",
+        kind: "tool.updated",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          data: { toolName: "Bash", input: { command } },
+        },
+      }),
+      makeActivity({
+        id: "legacy-codex-completed",
+        kind: "tool.completed",
+        payload: {
+          itemId,
+          status: "completed",
+          data: { toolName: "Bash", input: { command } },
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      taskId: `codex-cli:${itemId}`,
+      toolUseId: itemId,
+      status: "completed",
+      historySessionId,
+      subagentType: "Codex CLI",
+    });
+  });
+
+  it("uses a recovered stopped rollout to close an older stale lifecycle row", () => {
+    const itemId = "toolu_stale_codex";
+    const historySessionId = "e".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "stale-codex-wrapper",
+        kind: "tool.updated",
+        createdAt: "2026-07-27T00:00:01.000Z",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "stopped",
+          codexCliRolloutStatusAt: "2026-07-28T00:00:01.000Z",
+          data: {
+            toolName: "Bash",
+            input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "stale-codex-started",
+        kind: "task.started",
+        // A replayed task.started after service restart is not proof that the
+        // already-terminal rollout became live again.
+        createdAt: "2026-07-29T00:00:02.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          toolUseId: itemId,
+          subagentType: "Codex CLI",
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      taskId: `codex-cli:${itemId}`,
+      status: "stopped",
+      historySessionId,
+      updatedAt: "2026-07-28T00:00:01.000Z",
+    });
+  });
+
+  it("does not let an older recovered terminal state override newer live progress", () => {
+    const itemId = "toolu_resumed_codex";
+    const historySessionId = "f".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "resumed-codex-wrapper",
+        kind: "tool.updated",
+        createdAt: "2026-07-27T00:00:01.000Z",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          codexCliRolloutStatusAt: "2026-07-27T00:00:03.000Z",
+          data: {
+            toolName: "Bash",
+            input: { command: 'codex exec "Review the graph."' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "resumed-codex-started",
+        kind: "task.started",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          toolUseId: itemId,
+          subagentType: "Codex CLI",
+        },
+      }),
+      makeActivity({
+        id: "resumed-codex-progress",
+        kind: "task.progress",
+        createdAt: "2026-07-27T00:00:04.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          status: "running",
+          lastToolName: "exec",
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      status: "running",
+      historySessionId,
+      updatedAt: "2026-07-27T00:00:04.000Z",
+    });
+  });
+
+  it("closes unmatched live rows once their owning provider session is fully stopped", () => {
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "unmatched-codex-started",
+          kind: "task.started",
+          createdAt: "2026-07-27T00:00:02.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_unmatched",
+            toolUseId: "toolu_unmatched",
+            subagentType: "Codex CLI",
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "stopped",
+      summary: "Owning provider session stopped.",
+      updatedAt: "2026-07-27T00:00:05.000Z",
+    });
+  });
+
+  it("keeps task activity observed after the owning session stop live", () => {
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "newer-codex-started",
+          kind: "task.started",
+          createdAt: "2026-07-27T00:00:02.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_newer",
+            toolUseId: "toolu_newer",
+            subagentType: "Codex CLI",
+          },
+        }),
+        makeActivity({
+          id: "newer-codex-progress",
+          kind: "task.progress",
+          createdAt: "2026-07-27T00:00:06.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_newer",
+            status: "running",
+            lastToolName: "exec",
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "running",
+      updatedAt: "2026-07-27T00:00:06.000Z",
+    });
+  });
+
+  it("keeps an exactly linked detached rollout live when historical observation says running", () => {
+    const itemId = "toolu_observed_detached";
+    const historySessionId = "1".repeat(32);
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "observed-detached-wrapper",
+          kind: "tool.updated",
+          createdAt: "2026-07-27T00:00:01.000Z",
+          payload: {
+            itemId,
+            codexCliHistorySessionId: historySessionId,
+            codexCliRolloutStatus: "running",
+            codexCliRolloutStatusAt: "2026-07-27T00:00:04.000Z",
+            codexCliRolloutLiveness: "live",
+            data: {
+              toolName: "Bash",
+              input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+            },
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "running",
+      historySessionId,
+      isBackgrounded: true,
+    });
+  });
+
+  it("does not protect an unprobed recent rollout after its provider runtime stopped", () => {
+    const itemId = "toolu_unprobed_detached";
+    const historySessionId = "2".repeat(32);
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "unprobed-detached-wrapper",
+          kind: "tool.updated",
+          createdAt: "2026-07-27T00:00:01.000Z",
+          payload: {
+            itemId,
+            codexCliHistorySessionId: historySessionId,
+            codexCliRolloutStatus: "running",
+            codexCliRolloutStatusAt: "2026-07-27T00:00:04.000Z",
+            codexCliRolloutLiveness: "unknown",
+            data: {
+              toolName: "Bash",
+              input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+            },
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "stopped",
+      historySessionId,
+      updatedAt: "2026-07-27T00:00:05.000Z",
+    });
+  });
+
+  it("does not let a detached Bash wrapper overwrite the linked rollout terminal state", () => {
+    const toolUseId = "toolu_codex_linked";
+    const [task] = deriveSubagentTasks([
+      started(`codex-cli:${toolUseId}`, {
+        subagentType: "Codex CLI",
+        toolUseId,
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        payload: {
+          providerItemId: toolUseId,
+          status: "completed",
+          data: {
+            toolName: "Bash",
+            input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+          },
+        },
+      }),
+      makeActivity({
+        kind: "task.completed",
+        payload: {
+          taskId: `codex-cli:${toolUseId}`,
+          status: "completed",
+          historySessionId: "b".repeat(32),
+        },
+      }),
+    ]);
+    expect(task?.status).toBe("completed");
+    expect(task?.historySessionId).toBe("b".repeat(32));
   });
 
   it("ignores activities that are not tasks", () => {
@@ -1963,6 +2345,66 @@ describe("subagent activity partitioning", () => {
 
     expect(agentActivities([first, second, own], "toolu_01").map((a) => a.id)).toEqual(["a1"]);
     expect(agentActivities([first, second, own], "toolu_02").map((a) => a.id)).toEqual(["b1"]);
+  });
+
+  it("moves all lifecycle rows for a detected Codex Bash item into its agent view", () => {
+    const startedTool = makeActivity({
+      id: "codex-started",
+      kind: "tool.started",
+      payload: { providerItemId: "toolu_codex" },
+    });
+    const updatedTool = makeActivity({
+      id: "codex-updated",
+      kind: "tool.updated",
+      payload: {
+        providerItemId: "toolu_codex",
+        data: {
+          toolName: "Bash",
+          input: { command: 'codex exec "Review the graph."' },
+        },
+      },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.updated" });
+
+    expect(mainThreadActivities([startedTool, updatedTool, own]).map((row) => row.id)).toEqual([
+      "own",
+    ]);
+    expect(
+      agentActivities([startedTool, updatedTool, own], "toolu_codex").map((row) => row.id),
+    ).toEqual(["codex-started", "codex-updated"]);
+  });
+
+  it("moves legacy itemId lifecycle rows into the Codex agent view", () => {
+    const itemId = "toolu_legacy_codex";
+    const startedTool = makeActivity({
+      id: "legacy-codex-started",
+      kind: "tool.started",
+      payload: { itemId },
+    });
+    const updatedTool = makeActivity({
+      id: "legacy-codex-updated",
+      kind: "tool.updated",
+      payload: {
+        itemId,
+        data: {
+          toolName: "Bash",
+          input: { command: 'codex exec "Review the graph."' },
+        },
+      },
+    });
+    const completedTool = makeActivity({
+      id: "legacy-codex-completed",
+      kind: "tool.completed",
+      payload: { itemId },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.updated" });
+
+    expect(
+      mainThreadActivities([startedTool, updatedTool, completedTool, own]).map((row) => row.id),
+    ).toEqual(["own"]);
+    expect(
+      agentActivities([startedTool, updatedTool, completedTool, own], itemId).map((row) => row.id),
+    ).toEqual(["legacy-codex-started", "legacy-codex-updated", "legacy-codex-completed"]);
   });
 
   it("returns nothing for an agent whose tool-use id was never reported", () => {

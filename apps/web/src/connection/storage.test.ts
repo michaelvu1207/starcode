@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { afterEach, vi } from "vite-plus/test";
 
 import { makeCatalogBackend, makeCatalogStore } from "./storage";
+import storageSource from "./storage.ts?raw";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -53,6 +54,16 @@ describe("makeCatalogStore", () => {
       expect(yield* Effect.flip(store.read)).toBe(failure);
     }),
   );
+});
+
+describe("thread snapshot cache", () => {
+  it("invalidates snapshots written before the AgentRun projection", () => {
+    expect(storageSource).toContain("const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 3");
+    expect(storageSource).toContain(
+      "schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION)",
+    );
+    expect(storageSource).not.toContain("schemaVersion: Schema.Literal(2)");
+  });
 });
 
 describe("makeCatalogBackend", () => {

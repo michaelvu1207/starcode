@@ -3,7 +3,6 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BotIcon,
-  FlaskConicalIcon,
   GaugeIcon,
   GitBranchIcon,
   KeyboardIcon,
@@ -33,7 +32,6 @@ export type SettingsSectionPath =
   | "/settings/usage"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/beta"
   | "/settings/archived";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -47,7 +45,6 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Accounts & Usage", to: "/settings/usage", icon: GaugeIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
-  { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

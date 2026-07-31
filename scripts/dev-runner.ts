@@ -5,7 +5,8 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@starcode/shared/Net";
-import { HostProcessEnvironment } from "@starcode/shared/hostProcess";
+import { resolveWorktreeStarCodeHome } from "@starcode/shared/devHome";
+import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@starcode/shared/hostProcess";
 import { resolveSpawnCommand } from "@starcode/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -245,7 +246,9 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    const configuredBaseDir = starcodeHome?.trim() || baseEnv.STARCODE_HOME?.trim() || undefined;
+    // Precedence is resolved by the caller. Unset here means use the default,
+    // rather than silently re-inheriting an ambient live-app home.
+    const configuredBaseDir = starcodeHome?.trim() || undefined;
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
     const isDesktopMode = mode === "dev:desktop";
 
@@ -505,12 +508,17 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     });
 
     const hostEnvironment = yield* HostProcessEnvironment;
+    const worktreeHome = yield* resolveWorktreeStarCodeHome(yield* HostProcessWorkingDirectory);
+    const resolvedStarCodeHome =
+      (input.starcodeHome?.trim() || undefined) ??
+      worktreeHome ??
+      (hostEnvironment.STARCODE_HOME?.trim() || undefined);
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      starcodeHome: input.starcodeHome,
+      starcodeHome: resolvedStarCodeHome,
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -592,9 +600,10 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   starcodeHome: Flag.string("home-dir").pipe(
     Flag.withDescription(
-      "Explicit starcode data directory; runtime state is stored under userdata (equivalent to STARCODE_HOME).",
+      "Explicit StarCode data directory; inside a linked git worktree this defaults to that worktree's own .starcode.",
     ),
-    Flag.withFallbackConfig(optionalStringConfig("STARCODE_HOME")),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   browser: Flag.boolean("browser").pipe(
     Flag.withDescription("Open a browser automatically (disabled by default for web dev)."),

@@ -13,13 +13,17 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@starcode/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  BOOT_SERVICE_LAUNCH_AGENT_LABEL,
   BOOT_SERVICE_UNIT_ENV,
   BOOT_SERVICE_UNIT_FILE,
+  launchAgentPaths,
+  renderBootServiceLaunchAgent,
   renderBootServiceUnit,
 } from "./bootService.ts";
 import * as SelfUpdate from "./selfUpdate.ts";
@@ -76,6 +80,7 @@ const provideHostRefs = (input: {
       Layer.succeed(HostProcessEnvironment, input.env),
       Layer.succeed(HostProcessExecutablePath, NODE_PATH),
       Layer.succeed(HostProcessArguments, [NODE_PATH, input.entryPath, "serve"]),
+      Layer.succeed(HostProcessUserId, 501),
     ),
   );
 
@@ -201,6 +206,42 @@ it.layer(NodeServices.layer)("resolveHostServerSelfUpdateCapability", (it) => {
           entryPath,
         }),
       );
+      assert.equal(method, "boot-service");
+    }),
+  );
+
+  it.effect("reports boot-service for the StarCode-managed macOS LaunchAgent", () =>
+    Effect.gen(function* () {
+      const { fs, home, path } = yield* makeHome();
+      const baseDir = path.join(home, ".starcode");
+      const launchAgent = launchAgentPaths(path, home, baseDir, 501);
+      yield* fs.makeDirectory(path.dirname(launchAgent.unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        launchAgent.unitPath,
+        renderBootServiceLaunchAgent({
+          nodePath: NODE_PATH,
+          starcodeEntryPath: launchAgent.activeEntryPath,
+          baseDir,
+          logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
+          unitPath: launchAgent.unitPath,
+          pathEnvironment: "/usr/local/bin:/usr/bin:/bin",
+        }),
+      );
+
+      const method = yield* SelfUpdate.resolveHostServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
+        provideHostRefs({
+          platform: "darwin",
+          env: {
+            HOME: home,
+            STARCODE_HOME: baseDir,
+            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_LAUNCH_AGENT_LABEL,
+          },
+          entryPath: launchAgent.activeEntryPath,
+        }),
+      );
+
       assert.equal(method, "boot-service");
     }),
   );

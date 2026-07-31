@@ -53,6 +53,10 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import {
+  type FleetSessionBootstrapSnapshotProvider,
+  resolveFleetSessionBootstrapInstructions,
+} from "../FleetSessionBootstrap.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -78,6 +82,7 @@ const PROVIDER = ProviderDriverKind.make("codex");
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly fleetSessionBootstrapSnapshot?: FleetSessionBootstrapSnapshotProvider;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
   ) => Effect.Effect<
@@ -1534,6 +1539,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const fleetSessionBootstrapInstructions = yield* resolveFleetSessionBootstrapInstructions(
+          options?.fleetSessionBootstrapSnapshot,
+          { threadId: input.threadId },
+        );
         const serviceTier =
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
@@ -1551,6 +1560,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,
+          ...(fleetSessionBootstrapInstructions ? { fleetSessionBootstrapInstructions } : {}),
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),

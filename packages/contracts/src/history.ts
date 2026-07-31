@@ -34,8 +34,10 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { HistorySessionId } from "./historyIds.ts";
 import { RuntimeMode } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+export { HistorySessionId } from "./historyIds.ts";
 
 /** Days of history a listing covers when the caller names no window. */
 export const HISTORY_SESSIONS_DEFAULT_WINDOW_DAYS = 7;
@@ -99,11 +101,6 @@ export type HistoryProvider = typeof HistoryProvider.Type;
  * checks that keep a client from naming a file: anything path-shaped fails to
  * decode here before the server's index is ever consulted.
  */
-export const HistorySessionId = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^[0-9a-f]{32}$/),
-).pipe(Schema.brand("HistorySessionId"));
-export type HistorySessionId = typeof HistorySessionId.Type;
-
 /**
  * Listing cursor. Opaque to the client, `<lastActivityMs>.<sessionId>` to the
  * server — the same (timestamp, id) pair the listing sorts on, so a page

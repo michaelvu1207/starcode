@@ -3088,6 +3088,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         taskId: "turn-task-1",
         taskType: "plan",
+        historySessionId: "a".repeat(32),
       },
     });
 
@@ -3163,6 +3164,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(started?.kind).toBe("task.started");
     expect(started?.summary).toBe("Plan task started");
+    expect(
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>).historySessionId
+        : null,
+    ).toBe("a".repeat(32));
     expect(progress?.kind).toBe("task.progress");
     expect(progressPayload?.detail).toBe("Code reviewer is validating the desktop rollout chunks.");
     expect(progressPayload?.summary).toBe(

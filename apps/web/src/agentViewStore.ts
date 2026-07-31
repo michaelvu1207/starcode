@@ -8,43 +8,44 @@
  * would open an empty view with no obvious way back. On reload you land on the
  * main thread, which is always a valid place to be.
  *
- * Keyed by task id rather than tool-use id because the task id is what every
- * `task.*` activity carries; the tool-use id is resolved from the shell's
- * subagent rollup at the point of use.
+ * A provider is part of the identity: Claude and Codex may reuse the same
+ * lifecycle id under one parent, and selecting one must never open the other.
  */
 import { scopedThreadKey } from "@starcode/client-runtime/environment";
-import type { ScopedThreadRef } from "@starcode/contracts";
+import type { AgentRun, ScopedThreadRef } from "@starcode/contracts";
 import { create } from "zustand";
 
+export type SelectedAgentRun = Pick<AgentRun, "provider" | "agentRunId">;
+
 interface AgentViewStoreState {
-  readonly selectedTaskIdByThreadKey: Readonly<Record<string, string>>;
-  readonly select: (ref: ScopedThreadRef, taskId: string) => void;
+  readonly selectedAgentRunByThreadKey: Readonly<Record<string, SelectedAgentRun>>;
+  readonly select: (ref: ScopedThreadRef, run: SelectedAgentRun) => void;
   readonly clear: (ref: ScopedThreadRef) => void;
 }
 
 export const useAgentViewStore = create<AgentViewStoreState>((set) => ({
-  selectedTaskIdByThreadKey: {},
-  select: (ref, taskId) =>
+  selectedAgentRunByThreadKey: {},
+  select: (ref, run) =>
     set((state) => ({
-      selectedTaskIdByThreadKey: {
-        ...state.selectedTaskIdByThreadKey,
-        [scopedThreadKey(ref)]: taskId,
+      selectedAgentRunByThreadKey: {
+        ...state.selectedAgentRunByThreadKey,
+        [scopedThreadKey(ref)]: run,
       },
     })),
   clear: (ref) =>
     set((state) => {
       const key = scopedThreadKey(ref);
-      if (!(key in state.selectedTaskIdByThreadKey)) {
+      if (!(key in state.selectedAgentRunByThreadKey)) {
         return state;
       }
-      const { [key]: _removed, ...rest } = state.selectedTaskIdByThreadKey;
-      return { selectedTaskIdByThreadKey: rest };
+      const { [key]: _removed, ...rest } = state.selectedAgentRunByThreadKey;
+      return { selectedAgentRunByThreadKey: rest };
     }),
 }));
 
 /** The agent selected for a thread, or null when its own transcript is shown. */
-export function useSelectedAgentTaskId(ref: ScopedThreadRef | null): string | null {
+export function useSelectedAgentRun(ref: ScopedThreadRef | null): SelectedAgentRun | null {
   return useAgentViewStore((state) =>
-    ref === null ? null : (state.selectedTaskIdByThreadKey[scopedThreadKey(ref)] ?? null),
+    ref === null ? null : (state.selectedAgentRunByThreadKey[scopedThreadKey(ref)] ?? null),
   );
 }

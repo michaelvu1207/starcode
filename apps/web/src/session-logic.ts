@@ -11,7 +11,9 @@ import {
   type UserInputQuestion,
   type ThreadId,
   type TurnId,
+  type HistorySessionId,
 } from "@starcode/contracts";
+import { detectCodexCliSubagent } from "@starcode/shared/codexCliSubagent";
 
 import type {
   ChatMessage,
@@ -145,6 +147,12 @@ export interface SubagentTaskState {
   taskId: string;
   /** The task's own label — "Find starcode thread background". */
   description: string;
+  /**
+   * The provider's task category. Claude reports `local_agent` for real
+   * subagents and `local_bash` for background shell jobs; retaining the
+   * distinction prevents historical shell jobs from masquerading as agents.
+   */
+  taskType: string | null;
   /** The named agent: `Explore`, `code-reviewer`. Null when the run predates it. */
   subagentType: string | null;
   /**
@@ -163,6 +171,8 @@ export interface SubagentTaskState {
   isBackgrounded: boolean;
   /** Links the row to its Task call in the transcript. */
   toolUseId: string | null;
+  /** Real Codex rollout attached only after high-confidence server correlation. */
+  historySessionId: HistorySessionId | null;
   startedAt: string;
   updatedAt: string;
 }
@@ -587,6 +597,11 @@ const asPayloadRecord = (activity: OrchestrationThreadActivity): Record<string, 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.trim().length > 0 ? value : null;
 
+const providerItemId = (payload: Record<string, unknown> | null): string | null =>
+  // Live adapter rows use providerItemId; persisted historical rows use the
+  // legacy itemId field for the same provider lifecycle join key.
+  optionalString(payload?.providerItemId) ?? optionalString(payload?.itemId);
+
 const optionalNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
@@ -628,13 +643,22 @@ function readTaskUsage(value: unknown): {
  */
 export function deriveSubagentTasks(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: {
+    readonly owningSession: Pick<
+      NonNullable<Thread["session"]>,
+      "status" | "activeTurnId" | "updatedAt"
+    > | null;
+  },
 ): SubagentTaskState[] {
   const byTaskId = new Map<string, SubagentTaskState>();
+  const liveEvidenceAtByTaskId = new Map<string, string>();
+  const observedRunningCodexTaskIds = new Set<string>();
 
   const upsert = (
     activity: OrchestrationThreadActivity,
     taskId: string,
     apply: (current: SubagentTaskState) => SubagentTaskState,
+    updatedAt = activity.createdAt,
   ) => {
     const existing = byTaskId.get(taskId);
     // A task first seen mid-flight — after a reconnect, say — still gets a row.
@@ -643,6 +667,7 @@ export function deriveSubagentTasks(
     const base: SubagentTaskState = existing ?? {
       taskId,
       description: "",
+      taskType: null,
       subagentType: null,
       model: null,
       status: "running",
@@ -654,10 +679,11 @@ export function deriveSubagentTasks(
       error: null,
       isBackgrounded: false,
       toolUseId: null,
+      historySessionId: null,
       startedAt: activity.createdAt,
       updatedAt: activity.createdAt,
     };
-    byTaskId.set(taskId, { ...apply(base), updatedAt: activity.createdAt });
+    byTaskId.set(taskId, { ...apply(base), updatedAt });
   };
 
   for (const activity of [...activities].toSorted(compareActivitiesByOrder)) {
@@ -665,6 +691,12 @@ export function deriveSubagentTasks(
     const payload = asPayloadRecord(activity);
     const taskId = optionalString(payload?.taskId);
     if (!payload || !taskId) continue;
+    if (
+      activity.kind === "task.progress" ||
+      (activity.kind === "task.updated" && payload.status === "running")
+    ) {
+      liveEvidenceAtByTaskId.set(taskId, activity.createdAt);
+    }
 
     // Note there is deliberately no `skip_transcript` filter. That flag means
     // "hide from the inline transcript"; the SDK's own docs go on to say such a
@@ -677,9 +709,13 @@ export function deriveSubagentTasks(
         upsert(activity, taskId, (current) => ({
           ...current,
           description: optionalString(payload.detail) ?? current.description,
+          taskType: optionalString(payload.taskType) ?? current.taskType,
           subagentType: optionalString(payload.subagentType) ?? current.subagentType,
           model: optionalString(payload.model) ?? current.model,
           toolUseId: optionalString(payload.toolUseId) ?? current.toolUseId,
+          historySessionId:
+            (optionalString(payload.historySessionId) as HistorySessionId | null) ??
+            current.historySessionId,
           startedAt: activity.createdAt,
         }));
         break;
@@ -713,6 +749,9 @@ export function deriveSubagentTasks(
             typeof payload.isBackgrounded === "boolean"
               ? payload.isBackgrounded
               : current.isBackgrounded,
+          historySessionId:
+            (optionalString(payload.historySessionId) as HistorySessionId | null) ??
+            current.historySessionId,
           status:
             payload.status === "killed"
               ? "stopped"
@@ -733,6 +772,9 @@ export function deriveSubagentTasks(
           description: optionalString(payload.title) ?? current.description,
           summary: optionalString(payload.summary) ?? current.summary,
           toolUseId: optionalString(payload.toolUseId) ?? current.toolUseId,
+          historySessionId:
+            (optionalString(payload.historySessionId) as HistorySessionId | null) ??
+            current.historySessionId,
           // Terminal events usually carry no usage; keep what progress reported.
           totalTokens: usage.totalTokens ?? current.totalTokens,
           toolUses: usage.toolUses ?? current.toolUses,
@@ -754,13 +796,150 @@ export function deriveSubagentTasks(
     }
   }
 
+  // Backfill launches recorded before the adapter emitted task lifecycle
+  // events. The command item's provider id is an explicit join key; rollout
+  // history is attached separately and only after server-side proof.
+  for (const activity of [...activities].toSorted(compareActivitiesByOrder)) {
+    if (
+      activity.kind !== "tool.started" &&
+      activity.kind !== "tool.updated" &&
+      activity.kind !== "tool.completed"
+    ) {
+      continue;
+    }
+    const payload = asPayloadRecord(activity);
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : null;
+    const toolName = optionalString(data?.toolName);
+    const toolInput =
+      data?.input && typeof data.input === "object"
+        ? (data.input as Record<string, unknown>)
+        : null;
+    const toolUseId = providerItemId(payload);
+    if (!toolName || !toolInput || !toolUseId) continue;
+    const invocation = detectCodexCliSubagent(toolName, toolInput);
+    if (!invocation) continue;
+    const historicalHistorySessionId = optionalString(
+      payload?.codexCliHistorySessionId,
+    ) as HistorySessionId | null;
+    const historicalStatus = optionalString(payload?.codexCliRolloutStatus);
+    const historicalStatusAt = optionalString(payload?.codexCliRolloutStatusAt);
+    const historicalLiveness = optionalString(payload?.codexCliRolloutLiveness);
+    const taskId = `codex-cli:${toolUseId}`;
+    const existing = byTaskId.get(taskId);
+    const recoveredTerminalStatus =
+      historicalStatus === "completed" ||
+      historicalStatus === "failed" ||
+      historicalStatus === "stopped"
+        ? historicalStatus
+        : null;
+    const recoveredAtMs = historicalStatusAt ? Date.parse(historicalStatusAt) : Number.NaN;
+    const liveEvidenceAt = liveEvidenceAtByTaskId.get(taskId);
+    const liveEvidenceAtMs = liveEvidenceAt ? Date.parse(liveEvidenceAt) : Number.NaN;
+    const existingIsLive = existing?.status === "running" || existing?.status === "paused";
+    const recoveredTerminalIsCurrent =
+      recoveredTerminalStatus !== null &&
+      Number.isFinite(recoveredAtMs) &&
+      (!existing ||
+        (existingIsLive &&
+          (!Number.isFinite(liveEvidenceAtMs) || recoveredAtMs >= liveEvidenceAtMs)));
+
+    if (
+      historicalStatus === "running" &&
+      historicalLiveness === "live" &&
+      historicalHistorySessionId !== null
+    ) {
+      observedRunningCodexTaskIds.add(taskId);
+    }
+
+    if (existing && !recoveredTerminalIsCurrent) {
+      // A newer task.progress/task.updated event is proof that the task became
+      // live again. Keep that status, but retain an exact recovered history
+      // link so the transcript remains available.
+      if (historicalHistorySessionId && existing.historySessionId === null) {
+        byTaskId.set(taskId, {
+          ...existing,
+          historySessionId: historicalHistorySessionId,
+        });
+      }
+      continue;
+    }
+    upsert(
+      activity,
+      taskId,
+      (current) => ({
+        ...current,
+        description: invocation.description,
+        taskType: "codex_cli",
+        subagentType: "Codex CLI",
+        model: invocation.model ?? current.model,
+        status:
+          recoveredTerminalStatus ??
+          (historicalStatus === "running"
+            ? "running"
+            : activity.kind === "tool.completed"
+              ? payload?.status === "failed"
+                ? "failed"
+                : invocation.detached
+                  ? "stopped"
+                  : "completed"
+              : "running"),
+        lastToolName:
+          recoveredTerminalStatus !== null || activity.kind === "tool.completed"
+            ? null
+            : "codex exec",
+        summary:
+          activity.kind === "tool.completed" && invocation.detached
+            ? "Launch wrapper exited; awaiting a uniquely linked Codex rollout."
+            : current.summary,
+        isBackgrounded: invocation.detached,
+        toolUseId,
+        historySessionId: historicalHistorySessionId ?? current.historySessionId,
+      }),
+      historicalStatusAt ?? activity.createdAt,
+    );
+  }
+
+  const owningSession = options?.owningSession;
+  const owningSessionStoppedAt =
+    owningSession?.status === "stopped" && owningSession.activeTurnId === null
+      ? owningSession.updatedAt
+      : null;
+  const owningSessionStoppedAtMs =
+    owningSessionStoppedAt === null ? Number.NaN : Date.parse(owningSessionStoppedAt);
+  if (owningSessionStoppedAt !== null && Number.isFinite(owningSessionStoppedAtMs)) {
+    for (const [taskId, task] of byTaskId) {
+      const taskUpdatedAtMs = Date.parse(task.updatedAt);
+      const taskIsLive = task.status === "running" || task.status === "paused";
+      if (
+        taskIsLive &&
+        Number.isFinite(taskUpdatedAtMs) &&
+        taskUpdatedAtMs <= owningSessionStoppedAtMs &&
+        !observedRunningCodexTaskIds.has(taskId)
+      ) {
+        byTaskId.set(taskId, {
+          ...task,
+          status: "stopped",
+          lastToolName: null,
+          summary: task.summary ?? "Owning provider session stopped.",
+          updatedAt: owningSessionStoppedAt,
+        });
+      }
+    }
+  }
+
   // Running first — the panel's whole question is "what is happening now" —
-  // then by when each started, so rows do not reshuffle as tokens tick up.
+  // with stable oldest-first live rows. Finished work is newest-first so a
+  // recently completed agent is not buried behind a thread's entire history.
   return [...byTaskId.values()].toSorted((left, right) => {
     const leftLive = left.status === "running" || left.status === "paused";
     const rightLive = right.status === "running" || right.status === "paused";
     if (leftLive !== rightLive) return leftLive ? -1 : 1;
-    return left.startedAt.localeCompare(right.startedAt);
+    return leftLive
+      ? left.startedAt.localeCompare(right.startedAt)
+      : right.startedAt.localeCompare(left.startedAt);
   });
 }
 
@@ -779,6 +958,26 @@ export function activityParentToolUseId(activity: OrchestrationThreadActivity): 
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function codexCliActivityToolUseId(activity: OrchestrationThreadActivity): string | null {
+  if (
+    activity.kind !== "tool.started" &&
+    activity.kind !== "tool.updated" &&
+    activity.kind !== "tool.completed"
+  ) {
+    return null;
+  }
+  const payload = asPayloadRecord(activity);
+  const data =
+    payload?.data && typeof payload.data === "object"
+      ? (payload.data as Record<string, unknown>)
+      : null;
+  const toolName = optionalString(data?.toolName);
+  const input =
+    data?.input && typeof data.input === "object" ? (data.input as Record<string, unknown>) : null;
+  if (!toolName || !input || !detectCodexCliSubagent(toolName, input)) return null;
+  return providerItemId(payload);
+}
+
 /**
  * A thread's own activities, with everything its subagents produced removed.
  *
@@ -792,12 +991,22 @@ export function activityParentToolUseId(activity: OrchestrationThreadActivity): 
 export function mainThreadActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
+  const codexCliToolUseIds = new Set(
+    activities.map(codexCliActivityToolUseId).filter((value): value is string => value !== null),
+  );
   // Fast path: threads that never spawned an agent are the common case and
   // must not pay a copy for a feature they are not using.
-  if (!activities.some((activity) => activityParentToolUseId(activity) !== null)) {
+  if (
+    codexCliToolUseIds.size === 0 &&
+    !activities.some((activity) => activityParentToolUseId(activity) !== null)
+  ) {
     return activities;
   }
-  return activities.filter((activity) => activityParentToolUseId(activity) === null);
+  return activities.filter((activity) => {
+    if (activityParentToolUseId(activity) !== null) return false;
+    const itemId = providerItemId(asPayloadRecord(activity));
+    return itemId === null || !codexCliToolUseIds.has(itemId);
+  });
 }
 
 /**
@@ -815,7 +1024,10 @@ export function agentActivities(
   toolUseId: string | null,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   if (toolUseId === null) return [];
-  return activities.filter((activity) => activityParentToolUseId(activity) === toolUseId);
+  return activities.filter((activity) => {
+    if (activityParentToolUseId(activity) === toolUseId) return true;
+    return providerItemId(asPayloadRecord(activity)) === toolUseId;
+  });
 }
 
 export function deriveActivePlanState(

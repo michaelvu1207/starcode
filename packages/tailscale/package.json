@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./peers": {
+      "types": "./src/peers.ts",
+      "import": "./src/peers.ts"
     }
   },
   "scripts": {

@@ -42,6 +42,7 @@ const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
+const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 3;
 
 const StoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
@@ -49,11 +50,12 @@ const StoredShellSnapshot = Schema.Struct({
   snapshot: OrchestrationShellSnapshot,
 });
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
-// v2 stores the snapshot sequence alongside the thread so a warm cache can
-// resume via `afterSequence` instead of re-downloading the full thread body.
-// Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
+// v3 invalidates snapshots written before the durable AgentRun projection.
+// Allowing a v2 document to decode `agentRuns` through its [] default would
+// incorrectly look current, then resume after its sequence without ever
+// fetching the server's historical runs.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -559,7 +561,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 2,
+            schemaVersion: THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,

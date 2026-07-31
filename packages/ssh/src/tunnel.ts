@@ -50,17 +50,27 @@ import {
 } from "./errors.ts";
 
 export const DEFAULT_REMOTE_PORT = 3773;
+export const REMOTE_BOOTSTRAP_NODE_VERSION = "24.13.1";
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 15_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const REMOTE_SOURCE_PREPARE_TIMEOUT_MS = 15 * 60_000;
+const REMOTE_SOURCE_PACKAGE_MANAGER_VERSION = "11.10.0";
 
 export interface RemoteStarcodeRunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
+  readonly sourceCheckout?: {
+    readonly repositoryUrl: string;
+    readonly archiveBaseUrl: string;
+    readonly commitApiBaseUrl: string;
+    readonly archiveRootPrefix: string;
+    readonly ref: string;
+  };
 }
 
 export interface SshEnvironmentManagerOptions {
@@ -73,6 +83,7 @@ interface SshTunnelEntry {
   readonly target: DesktopSshEnvironmentTarget;
   readonly remotePort: number;
   readonly remoteServerKind: "external" | "managed" | null;
+  readonly bindHost: "127.0.0.1" | "0.0.0.0";
   readonly localPort: number;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
@@ -119,6 +130,9 @@ function sshRunnerLogFields(runner: RemoteStarcodeRunnerOptions | undefined) {
   if (runner?.nodeScriptPath?.trim()) {
     return { runner: "node-script", nodeScriptPath: runner.nodeScriptPath.trim() };
   }
+  if (runner?.sourceCheckout) {
+    return { runner: "fork-source", sourceRef: runner.sourceCheckout.ref };
+  }
   if (runner?.packageSpec?.trim()) {
     return { runner: "package", packageSpec: runner.packageSpec.trim() };
   }
@@ -141,7 +155,10 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    options?: {
+      readonly issuePairingToken?: boolean;
+      readonly networkAccessible?: boolean;
+    },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -155,6 +172,7 @@ export interface SshEnvironmentManagerShape {
 const RemoteLaunchResult = Schema.Struct({
   remotePort: Schema.Number,
   serverKind: Schema.optional(Schema.Literals(["external", "managed"])),
+  bindHost: Schema.optional(Schema.Literals(["127.0.0.1", "0.0.0.0"])),
 });
 
 const RemotePairingResult = Schema.Struct({
@@ -336,6 +354,83 @@ remote_node_satisfies_engine() {
 NODE
 }
 
+bootstrap_remote_node_runtime() (
+  set -eu
+  STARCODE_NODE_VERSION=@@STARCODE_BOOTSTRAP_NODE_VERSION@@
+  STARCODE_NODE_ROOT="$HOME/.starcode/runtime"
+  STARCODE_NODE_TARGET="$STARCODE_NODE_ROOT/node-v$STARCODE_NODE_VERSION"
+  STARCODE_KERNEL="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  STARCODE_MACHINE="$(uname -m 2>/dev/null)"
+  case "$STARCODE_KERNEL" in
+    linux) STARCODE_NODE_PLATFORM=linux ;;
+    darwin) STARCODE_NODE_PLATFORM=darwin ;;
+    *)
+      printf 'Automatic StarCode Node.js bootstrap does not support %s.\\n' "$STARCODE_KERNEL" >&2
+      exit 1
+      ;;
+  esac
+  case "$STARCODE_MACHINE" in
+    x86_64|amd64) STARCODE_NODE_ARCH=x64 ;;
+    arm64|aarch64) STARCODE_NODE_ARCH=arm64 ;;
+    *)
+      printf 'Automatic StarCode Node.js bootstrap does not support architecture %s.\\n' "$STARCODE_MACHINE" >&2
+      exit 1
+      ;;
+  esac
+  STARCODE_NODE_ARCHIVE="node-v$STARCODE_NODE_VERSION-$STARCODE_NODE_PLATFORM-$STARCODE_NODE_ARCH.tar.gz"
+  STARCODE_NODE_BASE_URL="https://nodejs.org/dist/v$STARCODE_NODE_VERSION"
+  mkdir -p "$STARCODE_NODE_ROOT"
+  if [ -x "$STARCODE_NODE_TARGET/bin/node" ]; then
+    exit 0
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    printf 'Automatic StarCode Node.js bootstrap requires tar.\\n' >&2
+    exit 1
+  fi
+  STARCODE_NODE_TMP="$(mktemp -d "$STARCODE_NODE_ROOT/bootstrap.XXXXXX")"
+  trap 'rm -rf "$STARCODE_NODE_TMP"' EXIT HUP INT TERM
+  download_node_file() {
+    STARCODE_DOWNLOAD_URL="$1"
+    STARCODE_DOWNLOAD_PATH="$2"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --retry 2 "$STARCODE_DOWNLOAD_URL" -o "$STARCODE_DOWNLOAD_PATH"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q "$STARCODE_DOWNLOAD_URL" -O "$STARCODE_DOWNLOAD_PATH"
+    else
+      printf 'Automatic StarCode Node.js bootstrap requires curl or wget.\\n' >&2
+      return 1
+    fi
+  }
+  download_node_file "$STARCODE_NODE_BASE_URL/$STARCODE_NODE_ARCHIVE" "$STARCODE_NODE_TMP/$STARCODE_NODE_ARCHIVE"
+  download_node_file "$STARCODE_NODE_BASE_URL/SHASUMS256.txt" "$STARCODE_NODE_TMP/SHASUMS256.txt"
+  STARCODE_NODE_EXPECTED="$(awk -v archive="$STARCODE_NODE_ARCHIVE" '$2 == archive { print $1; exit }' "$STARCODE_NODE_TMP/SHASUMS256.txt")"
+  if [ -z "$STARCODE_NODE_EXPECTED" ]; then
+    printf 'Node.js did not publish a checksum for %s.\\n' "$STARCODE_NODE_ARCHIVE" >&2
+    exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    STARCODE_NODE_ACTUAL="$(sha256sum "$STARCODE_NODE_TMP/$STARCODE_NODE_ARCHIVE" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    STARCODE_NODE_ACTUAL="$(shasum -a 256 "$STARCODE_NODE_TMP/$STARCODE_NODE_ARCHIVE" | awk '{print $1}')"
+  else
+    printf 'Automatic StarCode Node.js bootstrap requires sha256sum or shasum.\\n' >&2
+    exit 1
+  fi
+  if [ "$STARCODE_NODE_ACTUAL" != "$STARCODE_NODE_EXPECTED" ]; then
+    printf 'Downloaded Node.js archive failed checksum verification.\\n' >&2
+    exit 1
+  fi
+  mkdir -p "$STARCODE_NODE_TMP/extracted"
+  tar -xzf "$STARCODE_NODE_TMP/$STARCODE_NODE_ARCHIVE" -C "$STARCODE_NODE_TMP/extracted" --strip-components=1
+  if [ ! -x "$STARCODE_NODE_TMP/extracted/bin/node" ]; then
+    printf 'Downloaded Node.js archive did not contain the expected runtime.\\n' >&2
+    exit 1
+  fi
+  if [ ! -d "$STARCODE_NODE_TARGET" ]; then
+    mv "$STARCODE_NODE_TMP/extracted" "$STARCODE_NODE_TARGET"
+  fi
+)
+
 ensure_remote_node_path() {
   if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
     return 0
@@ -343,6 +438,7 @@ ensure_remote_node_path() {
 
   prepend_path_if_dir "$HOME/.local/bin"
   prepend_path_if_dir "$HOME/bin"
+  prepend_path_if_dir "$HOME/.starcode/runtime/node-v@@STARCODE_BOOTSTRAP_NODE_VERSION@@/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"
@@ -415,12 +511,147 @@ set -eu
 @@STARCODE_NODE_ENV_SCRIPT@@
 ensure_remote_node_path || true
 STARCODE_NODE_SCRIPT_PATH=@@STARCODE_NODE_SCRIPT_PATH@@
+STARCODE_SOURCE_REPOSITORY=@@STARCODE_SOURCE_REPOSITORY@@
+STARCODE_SOURCE_ARCHIVE_BASE_URL=@@STARCODE_SOURCE_ARCHIVE_BASE_URL@@
+STARCODE_SOURCE_COMMIT_API_BASE_URL=@@STARCODE_SOURCE_COMMIT_API_BASE_URL@@
+STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX=@@STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX@@
+STARCODE_SOURCE_REF=@@STARCODE_SOURCE_REF@@
+STARCODE_SOURCE_ROOT="$HOME/.starcode/runtime/fork-source"
+STARCODE_SOURCE_KEY=""
+STARCODE_SOURCE_ENTRY=""
+if [ -n "$STARCODE_SOURCE_REPOSITORY" ] &&
+  [ -n "$STARCODE_SOURCE_ARCHIVE_BASE_URL" ] &&
+  [ -n "$STARCODE_SOURCE_COMMIT_API_BASE_URL" ] &&
+  [ -n "$STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX" ] &&
+  [ -n "$STARCODE_SOURCE_REF" ]; then
+  STARCODE_SOURCE_KEY="$(printf '%s\\n%s\\n' "$STARCODE_SOURCE_REPOSITORY" "$STARCODE_SOURCE_REF" | cksum | awk '{print $1}')"
+  STARCODE_SOURCE_ENTRY="$STARCODE_SOURCE_ROOT/$STARCODE_SOURCE_KEY/apps/server/dist/bin.mjs"
+fi
+prepare_starcode_source_checkout() (
+  set -eu
+  if [ -z "$STARCODE_SOURCE_ENTRY" ]; then
+    exit 0
+  fi
+  STARCODE_SOURCE_TARGET="$STARCODE_SOURCE_ROOT/$STARCODE_SOURCE_KEY"
+  STARCODE_SOURCE_REF_FILE="$STARCODE_SOURCE_TARGET/.starcode-source-ref"
+  STARCODE_SOURCE_COMMIT_FILE="$STARCODE_SOURCE_TARGET/.starcode-source-commit"
+  if ! command -v npx >/dev/null 2>&1; then
+    printf 'The StarCode fork installer requires npm/npx on the remote host.\\n' >&2
+    exit 1
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    printf 'The StarCode fork installer requires tar on the remote host.\\n' >&2
+    exit 1
+  fi
+  mkdir -p "$STARCODE_SOURCE_ROOT"
+  STARCODE_SOURCE_STAGING="$STARCODE_SOURCE_ROOT/.staging.$STARCODE_SOURCE_KEY.$$"
+  trap 'rm -rf "$STARCODE_SOURCE_STAGING"' EXIT HUP INT TERM
+  rm -rf "$STARCODE_SOURCE_STAGING"
+  mkdir -p "$STARCODE_SOURCE_STAGING"
+  download_starcode_source_file() {
+    STARCODE_DOWNLOAD_URL="$1"
+    STARCODE_DOWNLOAD_PATH="$2"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --retry 2 "$STARCODE_DOWNLOAD_URL" -o "$STARCODE_DOWNLOAD_PATH"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q "$STARCODE_DOWNLOAD_URL" -O "$STARCODE_DOWNLOAD_PATH"
+    else
+      printf 'The StarCode fork installer requires curl or wget on the remote host.\\n' >&2
+      return 1
+    fi
+  }
+  case "$STARCODE_SOURCE_REF" in
+    *[!0-9a-fA-F]*|'')
+      STARCODE_SOURCE_REF_ENCODED="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$STARCODE_SOURCE_REF")"
+      STARCODE_SOURCE_COMMIT_JSON="$STARCODE_SOURCE_STAGING/commit.json"
+      download_starcode_source_file "$STARCODE_SOURCE_COMMIT_API_BASE_URL/$STARCODE_SOURCE_REF_ENCODED" "$STARCODE_SOURCE_COMMIT_JSON"
+      STARCODE_SOURCE_COMMIT="$(node - "$STARCODE_SOURCE_COMMIT_JSON" <<'NODE'
+const fs = require("node:fs");
+const inputPath = process.argv[2];
+try {
+  const sha = JSON.parse(fs.readFileSync(inputPath, "utf8")).sha;
+  if (typeof sha !== "string" || !/^[0-9a-f]{40}$/i.test(sha)) {
+    process.exit(1);
+  }
+  process.stdout.write(sha.toLowerCase());
+} catch {
+  process.exit(1);
+}
+NODE
+)"
+      ;;
+    *)
+      if [ "\${#STARCODE_SOURCE_REF}" -eq 40 ]; then
+        STARCODE_SOURCE_COMMIT="$(printf '%s' "$STARCODE_SOURCE_REF" | tr '[:upper:]' '[:lower:]')"
+      else
+        STARCODE_SOURCE_REF_ENCODED="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$STARCODE_SOURCE_REF")"
+        STARCODE_SOURCE_COMMIT_JSON="$STARCODE_SOURCE_STAGING/commit.json"
+        download_starcode_source_file "$STARCODE_SOURCE_COMMIT_API_BASE_URL/$STARCODE_SOURCE_REF_ENCODED" "$STARCODE_SOURCE_COMMIT_JSON"
+        STARCODE_SOURCE_COMMIT="$(node - "$STARCODE_SOURCE_COMMIT_JSON" <<'NODE'
+const fs = require("node:fs");
+const inputPath = process.argv[2];
+try {
+  const sha = JSON.parse(fs.readFileSync(inputPath, "utf8")).sha;
+  if (typeof sha !== "string" || !/^[0-9a-f]{40}$/i.test(sha)) {
+    process.exit(1);
+  }
+  process.stdout.write(sha.toLowerCase());
+} catch {
+  process.exit(1);
+}
+NODE
+)"
+      fi
+      ;;
+  esac
+  if [ -x "$STARCODE_SOURCE_ENTRY" ] &&
+    [ "$(cat "$STARCODE_SOURCE_REF_FILE" 2>/dev/null || true)" = "$STARCODE_SOURCE_REF" ] &&
+    [ "$(cat "$STARCODE_SOURCE_COMMIT_FILE" 2>/dev/null || true)" = "$STARCODE_SOURCE_COMMIT" ]; then
+    exit 0
+  fi
+  STARCODE_SOURCE_ARCHIVE="$STARCODE_SOURCE_STAGING/source.tar.gz"
+  download_starcode_source_file "$STARCODE_SOURCE_ARCHIVE_BASE_URL/$STARCODE_SOURCE_COMMIT" "$STARCODE_SOURCE_ARCHIVE"
+  STARCODE_SOURCE_EXPECTED_ROOT="$STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX$STARCODE_SOURCE_COMMIT"
+  STARCODE_SOURCE_ARCHIVE_ROOT="$(tar -tzf "$STARCODE_SOURCE_ARCHIVE" | head -n 1 | cut -d/ -f1)"
+  if [ "$STARCODE_SOURCE_ARCHIVE_ROOT" != "$STARCODE_SOURCE_EXPECTED_ROOT" ]; then
+    printf 'The downloaded StarCode source archive did not match the resolved commit.\\n' >&2
+    exit 1
+  fi
+  tar -xzf "$STARCODE_SOURCE_ARCHIVE" -C "$STARCODE_SOURCE_STAGING" --strip-components=1
+  rm -f "$STARCODE_SOURCE_ARCHIVE" "$STARCODE_SOURCE_STAGING/commit.json"
+  (
+    cd "$STARCODE_SOURCE_STAGING"
+    NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes pnpm@@@STARCODE_SOURCE_PACKAGE_MANAGER_VERSION@@ \\
+      --filter @starcode/monorepo \\
+      --filter starcode... \\
+      install --frozen-lockfile --reporter=append-only
+    "$STARCODE_SOURCE_STAGING/node_modules/.bin/vp" run --filter starcode build
+  )
+  if [ ! -x "$STARCODE_SOURCE_STAGING/apps/server/dist/bin.mjs" ]; then
+    printf 'The StarCode fork checkout built without a runnable server entry.\\n' >&2
+    exit 1
+  fi
+  node "$STARCODE_SOURCE_STAGING/apps/server/dist/bin.mjs" --version >/dev/null
+  printf '%s\\n' "$STARCODE_SOURCE_REF" >"$STARCODE_SOURCE_STAGING/.starcode-source-ref"
+  printf '%s\\n' "$STARCODE_SOURCE_COMMIT" >"$STARCODE_SOURCE_STAGING/.starcode-source-commit"
+  rm -rf "$STARCODE_SOURCE_TARGET"
+  mv "$STARCODE_SOURCE_STAGING" "$STARCODE_SOURCE_TARGET"
+  trap - EXIT HUP INT TERM
+)
+if [ "\${1:-}" = "__starcode_prepare__" ]; then
+  prepare_starcode_source_checkout
+  exit 0
+fi
 if [ -n "$STARCODE_NODE_SCRIPT_PATH" ]; then
   if ! command -v node >/dev/null 2>&1; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
     exit 1
   fi
   exec node "$STARCODE_NODE_SCRIPT_PATH" "$@"
+fi
+if [ -n "$STARCODE_SOURCE_ENTRY" ]; then
+  prepare_starcode_source_checkout
+  exec node "$STARCODE_SOURCE_ENTRY" "$@"
 fi
 if command -v starcode >/dev/null 2>&1; then
   exec starcode "$@"
@@ -438,12 +669,14 @@ exit 1
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@STARCODE_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
+BIND_HOST="\${2:-127.0.0.1}"
 STATE_DIR="$HOME/.starcode/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.starcode"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
+BIND_FILE="$STATE_DIR/bind-host"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
@@ -462,9 +695,13 @@ fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
 if ! ensure_remote_node_path; then
-  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
-  exit 1
+  printf 'Installing the StarCode Node.js runtime on the remote host.\\n' >&2
+  if ! bootstrap_remote_node_runtime || ! ensure_remote_node_path; then
+    printf 'Remote host is missing a supported Node.js runtime and automatic bootstrap failed.\\n' >&2
+    exit 1
+  fi
 fi
+"$RUNNER_FILE" __starcode_prepare__
 pick_port() {
   node - "$PORT_FILE" "@@STARCODE_DEFAULT_REMOTE_PORT@@" "@@STARCODE_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
 @@STARCODE_PICK_PORT_SCRIPT@@
@@ -508,6 +745,13 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+REMOTE_BIND_HOST="$(cat "$BIND_FILE" 2>/dev/null || true)"
+if [ -z "$REMOTE_BIND_HOST" ]; then
+  REMOTE_BIND_HOST=127.0.0.1
+fi
+if [ "$REMOTE_BIND_HOST" = "0.0.0.0" ] && [ "$BIND_HOST" = "127.0.0.1" ]; then
+  BIND_HOST="$REMOTE_BIND_HOST"
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -515,7 +759,7 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$BIND_HOST" = "127.0.0.1" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@STARCODE_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
@@ -527,10 +771,11 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
       REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
+      rm -f "$PID_FILE" "$BIND_FILE"
       printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
       printf 'external\\n' >"$MANAGED_FILE"
     else
+      rm -f "$BIND_FILE"
       printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
       printf 'external\\n' >"$MANAGED_FILE"
       REMOTE_PID=""
@@ -541,6 +786,17 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
   fi
+fi
+if [ "$BIND_HOST" = "0.0.0.0" ] && [ "$REMOTE_BIND_HOST" != "0.0.0.0" ]; then
+  if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+  fi
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+  REMOTE_BIND_HOST="$BIND_HOST"
+  rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BIND_FILE"
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
   if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@STARCODE_REUSE_READY_TIMEOUT_MS@@"; then
@@ -573,21 +829,26 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env STARCODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env STARCODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host "$BIND_HOST" --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
+  printf '%s\\n' "$BIND_HOST" >"$BIND_FILE"
+  REMOTE_BIND_HOST="$BIND_HOST"
   if ! wait_ready "@@STARCODE_READY_TIMEOUT_MS@@"; then
     printf 'Remote starcode server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BIND_FILE"
     exit 1
   fi
 fi
-printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
+if [ "$REMOTE_MANAGED" = "external" ]; then
+  REMOTE_BIND_HOST=127.0.0.1
+fi
+printf '{"remotePort":%s,"serverKind":"%s","bindHost":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}" "$REMOTE_BIND_HOST"
 `;
 
 export const REMOTE_PAIRING_SCRIPT = `set -eu
@@ -608,6 +869,7 @@ STATE_DIR="$HOME/.starcode/ssh-launch/@@STARCODE_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
+BIND_FILE="$STATE_DIR/bind-host"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
@@ -618,7 +880,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BIND_FILE"
 printf '{"stopped":true}\\n'
 `;
 
@@ -633,10 +895,21 @@ fi
 export function buildRemoteStarcodeRunnerScript(input?: RemoteStarcodeRunnerOptions): string {
   const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
+  const sourceRepository = input?.sourceCheckout?.repositoryUrl.trim() || "";
+  const sourceArchiveBaseUrl = input?.sourceCheckout?.archiveBaseUrl.trim() || "";
+  const sourceCommitApiBaseUrl = input?.sourceCheckout?.commitApiBaseUrl.trim() || "";
+  const sourceArchiveRootPrefix = input?.sourceCheckout?.archiveRootPrefix.trim() || "";
+  const sourceRef = input?.sourceCheckout?.ref.trim() || "";
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       STARCODE_PACKAGE_SPEC: packageSpec,
       STARCODE_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      STARCODE_SOURCE_ARCHIVE_BASE_URL: shellSingleQuote(sourceArchiveBaseUrl),
+      STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX: shellSingleQuote(sourceArchiveRootPrefix),
+      STARCODE_SOURCE_COMMIT_API_BASE_URL: shellSingleQuote(sourceCommitApiBaseUrl),
+      STARCODE_SOURCE_PACKAGE_MANAGER_VERSION: REMOTE_SOURCE_PACKAGE_MANAGER_VERSION,
+      STARCODE_SOURCE_REPOSITORY: shellSingleQuote(sourceRepository),
+      STARCODE_SOURCE_REF: shellSingleQuote(sourceRef),
       STARCODE_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
@@ -645,6 +918,7 @@ export function buildRemoteStarcodeRunnerScript(input?: RemoteStarcodeRunnerOpti
 export function buildRemoteNodeEnvScript(input?: RemoteStarcodeRunnerOptions): string {
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_NODE_ENV_SCRIPT, {
+      STARCODE_BOOTSTRAP_NODE_VERSION: REMOTE_BOOTSTRAP_NODE_VERSION,
       STARCODE_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
       STARCODE_NODE_ENGINE_CHECK_SCRIPT: stripTrailingNewlines(buildRemoteNodeEngineCheckScript()),
     }),
@@ -692,8 +966,13 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     target: DesktopSshEnvironmentTarget,
     input?: SshAuthOptions,
     runner?: RemoteStarcodeRunnerOptions,
+    networkAccessible = false,
   ): Effect.fn.Return<
-    { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
+    {
+      readonly remotePort: number;
+      readonly remoteServerKind: "external" | "managed" | null;
+      readonly bindHost: "127.0.0.1" | "0.0.0.0";
+    },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
   > {
@@ -703,8 +982,17 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey: remoteStateKey(target),
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-s", "--", remoteStateKey(target)],
+      remoteCommandArgs: [
+        "sh",
+        "-s",
+        "--",
+        remoteStateKey(target),
+        networkAccessible ? "0.0.0.0" : "127.0.0.1",
+      ],
       stdin: buildRemoteLaunchScript(runner),
+      ...(runner?.sourceCheckout === undefined
+        ? {}
+        : { timeoutMs: REMOTE_SOURCE_PREPARE_TIMEOUT_MS }),
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -740,6 +1028,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     return {
       remotePort: parsed.remotePort,
       remoteServerKind: parsed.serverKind ?? null,
+      bindHost: parsed.bindHost ?? (networkAccessible ? "0.0.0.0" : "127.0.0.1"),
     };
   },
 );
@@ -926,6 +1215,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly wsBaseUrl: string;
   readonly authOptions: SshAuthOptions;
   readonly remoteServerKind: "external" | "managed" | null;
+  readonly bindHost: "127.0.0.1" | "0.0.0.0";
 }): Effect.fn.Return<
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
@@ -982,6 +1272,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     localPort: input.localPort,
     remotePort: input.remotePort,
     remoteServerKind: input.remoteServerKind,
+    bindHost: input.bindHost,
     httpBaseUrl: input.httpBaseUrl,
   });
   const child = yield* spawner
@@ -1023,6 +1314,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     target: input.resolvedTarget,
     remotePort: input.remotePort,
     remoteServerKind: input.remoteServerKind,
+    bindHost: input.bindHost,
     localPort: input.localPort,
     httpBaseUrl: input.httpBaseUrl,
     wsBaseUrl: input.wsBaseUrl,
@@ -1305,6 +1597,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     readonly key: string;
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly runner?: RemoteStarcodeRunnerOptions;
+    readonly networkAccessible: boolean;
   }): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logDebug("ssh.environment.tunnel.create.start", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1315,7 +1608,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
+        launchOrReuseRemoteServer(
+          input.resolvedTarget,
+          authOptions,
+          input.runner,
+          input.networkAccessible,
+        ),
     });
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
@@ -1323,6 +1621,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key: input.key,
       remotePort,
       remoteServerKind: remoteLaunch.remoteServerKind,
+      bindHost: remoteLaunch.bindHost,
     });
     const localPort = yield* reserveLocalTunnelPort();
     const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
@@ -1347,6 +1646,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           wsBaseUrl,
           authOptions,
           remoteServerKind: remoteLaunch.remoteServerKind,
+          bindHost: remoteLaunch.bindHost,
         }).pipe(Effect.provideService(Scope.Scope, entryScope)),
     }).pipe(
       Effect.onExit((exit) =>
@@ -1418,6 +1718,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     key: string,
     resolvedTarget: DesktopSshEnvironmentTarget,
     runner?: RemoteStarcodeRunnerOptions,
+    networkAccessible = false,
   ): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     let entry = tunnels.get(key) ?? null;
 
@@ -1431,7 +1732,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       const readinessExit = yield* Effect.exit(
         waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
       );
-      if (Exit.isSuccess(readinessExit)) {
+      if (Exit.isSuccess(readinessExit) && (!networkAccessible || entry.bindHost === "0.0.0.0")) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
           ...sshTargetLogFields(resolvedTarget),
           key,
@@ -1445,7 +1746,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         key,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
-        cause: readinessExit.cause,
+        ...(Exit.isFailure(readinessExit) ? { cause: readinessExit.cause } : {}),
+        bindHost: entry.bindHost,
+        requiredBindHost: networkAccessible ? "0.0.0.0" : null,
       });
       yield* closeTunnelEntry(entry);
       yield* cancelPendingTunnelEntry(key, resolvedTarget);
@@ -1467,6 +1770,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     return yield* createTunnelEntry({
       key,
       resolvedTarget,
+      networkAccessible,
       ...(runner === undefined ? {} : { runner }),
     }).pipe(
       Effect.tapError((cause) =>
@@ -1488,7 +1792,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    requestOptions?: {
+      readonly issuePairingToken?: boolean;
+      readonly networkAccessible?: boolean;
+    },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1497,6 +1804,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     yield* Effect.logInfo("ssh.environment.ensure.start", {
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
+      networkAccessible: requestOptions?.networkAccessible === true,
     });
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
@@ -1521,7 +1829,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
-    const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
+    const entry = yield* ensureTunnelEntry(
+      key,
+      resolvedTarget,
+      runner,
+      requestOptions?.networkAccessible === true,
+    );
 
     const pairingResult = requestOptions?.issuePairingToken
       ? yield* runWithSshAuth({

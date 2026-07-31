@@ -18,6 +18,11 @@ import type {
   VcsStatusInput,
   VcsStatusResult,
 } from "./git.ts";
+import type {
+  DesktopFleetHostDiscovery,
+  DesktopFleetOnboardingHost,
+  DesktopFleetOnboardingPreflight,
+} from "./fleetOnboarding.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
@@ -368,6 +373,7 @@ export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
 
 export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
   issuePairingToken: Schema.optionalKey(Schema.Boolean),
+  networkAccessible: Schema.optionalKey(Schema.Boolean),
 });
 
 export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
@@ -986,9 +992,13 @@ export interface DesktopBridge {
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
+  discoverFleetHosts: () => Promise<DesktopFleetHostDiscovery>;
+  preflightFleetHost: (
+    host: DesktopFleetOnboardingHost,
+  ) => Promise<DesktopFleetOnboardingPreflight>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { issuePairingToken?: boolean },
+    options?: { issuePairingToken?: boolean; networkAccessible?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;

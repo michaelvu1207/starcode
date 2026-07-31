@@ -116,6 +116,8 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@starcode/shared/relayClient";
+import { permitsThreadOperation } from "./threads/ThreadCapability.ts";
+import { ThreadService } from "./threads/ThreadService.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -412,6 +414,7 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const threadService = yield* ThreadService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -983,7 +986,7 @@ const makeWsRpcLayer = (
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
+              yield* threadService.dispatchCreate({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
@@ -1033,7 +1036,7 @@ const makeWsRpcLayer = (
 
             yield* runSetupProgram();
 
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
+            return yield* threadService.startTurn(finalTurnStartCommand);
           });
 
           return yield* bootstrapProgram.pipe(
@@ -1050,16 +1053,54 @@ const makeWsRpcLayer = (
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                  ),
-                );
+        const threadOperation =
+          normalizedCommand.type === "thread.create"
+            ? "create"
+            : normalizedCommand.type === "thread.turn.start"
+              ? "turn"
+              : normalizedCommand.type === "thread.archive" ||
+                  normalizedCommand.type === "thread.unarchive"
+                ? "archive"
+                : null;
+        if (
+          threadOperation !== null &&
+          !permitsThreadOperation(
+            { kind: "environment", scopes: new Set(currentSession.scopes) },
+            { operation: threadOperation },
+          )
+        ) {
+          return Effect.fail(
+            toDispatchCommandError(
+              new Error(`Thread ${threadOperation} is not permitted for this session.`),
+              "Thread operation is not permitted",
+            ),
+          );
+        }
+        const dispatchEffect: Effect.Effect<
+          { readonly sequence: number },
+          OrchestrationDispatchCommandError
+        > = Effect.gen(function* () {
+          if (normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap) {
+            return yield* dispatchBootstrapTurnStart(normalizedCommand);
+          }
+          if (normalizedCommand.type === "thread.create") {
+            return yield* threadService.dispatchCreate(normalizedCommand);
+          }
+          if (normalizedCommand.type === "thread.turn.start") {
+            return yield* threadService.startTurn(normalizedCommand);
+          }
+          if (
+            normalizedCommand.type === "thread.archive" ||
+            normalizedCommand.type === "thread.unarchive"
+          ) {
+            return yield* threadService.setArchived(normalizedCommand);
+          }
+          return yield* orchestrationEngine.dispatch(normalizedCommand);
+        }).pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+          ),
+        );
 
         return startup
           .enqueueCommand(dispatchEffect)

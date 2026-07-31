@@ -162,8 +162,8 @@ run a copied command on the server machine.
 Finish active work before updating because the server restarts briefly. For step-by-step guidance,
 see [Keeping starcode in Sync](./server-updates.md).
 
-On a Linux host, you can keep the server running after logout and manage it independently of the
-connection method. See [Running starcode in the Background](./background-service.md).
+On macOS or Linux, you can keep the server running in the background and manage it independently of
+the connection method. See [Running StarCode in the Background](./background-service.md).
 
 ## How Pairing Works
 
@@ -176,6 +176,16 @@ Instead:
 3. The server creates an authenticated session for that device.
 
 After pairing, future access is session-based. You do not need to keep reusing the original token unless you are pairing a new device.
+
+For a server that is already running, mint a fresh short-lived administrative pairing credential
+without restarting it:
+
+```sh
+starcode pair
+```
+
+Add `--tailscale` to publish or repair a Tailscale Serve HTTPS mapping and print a pairing URL that
+other devices on the tailnet can reach.
 
 ## Hosted Web App Pairing
 

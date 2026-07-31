@@ -5,7 +5,7 @@
  * so the regression to guard is chrome growing back — a header strip, a rollup
  * row, a thread rail — and that is invisible to a rendering test, which would
  * happily pass with a second toolbar above the composer. So this reads the
- * source, the same way `../sidebar/ChatsDock.layout.test.ts` does, and with the
+ * source, the same way `../sidebar/SidebarChatMode.layout.test.ts` does, and with the
  * same limits: it asserts what the markup says, not what the browser draws.
  *
  * Flex order and column widths are here for the older reason too — both are

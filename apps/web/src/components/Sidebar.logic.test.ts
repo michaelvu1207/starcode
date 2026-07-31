@@ -3,7 +3,6 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
-  getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -19,8 +18,14 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  selectFinishedSidebarAgentRuns,
+  selectOwnedSidebarAgentRuns,
   formatWorkingDurationLabel,
+  shouldClearSelectedSidebarAgent,
   shouldNavigateAfterProjectRemoval,
+  shouldShowFinishedSubagentDisclosure,
+  shouldShowFinishedSubagentRows,
+  shouldShowSidebarSubagentRows,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortThreadsForSidebarV2,
@@ -29,6 +34,7 @@ import {
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
+  type AgentRun,
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
@@ -44,6 +50,111 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldShowSidebarSubagentRows", () => {
+  it("shows child rows only for the task open in the main pane", () => {
+    expect(shouldShowSidebarSubagentRows(true, 2)).toBe(true);
+    expect(shouldShowSidebarSubagentRows(false, 2)).toBe(false);
+  });
+
+  it("keeps an open task without subagents flat", () => {
+    expect(shouldShowSidebarSubagentRows(true, 0)).toBe(false);
+  });
+
+  it("shows the selected task when only finished agent history exists", () => {
+    expect(shouldShowSidebarSubagentRows(true, 0, 2)).toBe(true);
+    expect(shouldShowSidebarSubagentRows(false, 0, 2)).toBe(false);
+  });
+});
+
+function agentRun(
+  agentRunId: string,
+  status: AgentRun["status"],
+  overrides: Partial<AgentRun> = {},
+): AgentRun {
+  return {
+    parentThreadId: ThreadId.make("parent"),
+    provider: "claude",
+    agentRunId,
+    launchToolUseId: `tool-${agentRunId}`,
+    taskType: "local_agent",
+    agentType: null,
+    model: null,
+    description: agentRunId,
+    status,
+    historySessionId: null,
+    transcriptState: "pending",
+    startedAt: "2026-07-30T12:00:00.000Z",
+    updatedAt: "2026-07-30T12:01:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("finished sidebar subagents", () => {
+  it("filters the AgentRun projection down to terminal agents", () => {
+    const result = selectFinishedSidebarAgentRuns([
+      agentRun("running", "running"),
+      agentRun("paused", "paused"),
+      agentRun("completed", "completed"),
+      agentRun("failed", "failed"),
+      agentRun("stopped", "stopped"),
+    ]);
+
+    expect(result.map((agent) => agent.agentRunId)).toEqual(["completed", "failed", "stopped"]);
+  });
+
+  it("scopes rows to the selected parent without inferring ownership", () => {
+    const selected = agentRun("selected", "completed");
+    const other = agentRun("other", "completed", {
+      parentThreadId: ThreadId.make("another-parent"),
+    });
+
+    expect(
+      selectOwnedSidebarAgentRuns([selected, other], ThreadId.make("parent")).map(
+        (agent) => agent.agentRunId,
+      ),
+    ).toEqual(["selected"]);
+  });
+
+  it("gates the disclosure to the selected task with finished history", () => {
+    expect(shouldShowFinishedSubagentDisclosure(true, 2)).toBe(true);
+    expect(shouldShowFinishedSubagentDisclosure(false, 2)).toBe(false);
+    expect(shouldShowFinishedSubagentDisclosure(true, 0)).toBe(false);
+  });
+
+  it("shows finished rows only after the disclosure is expanded", () => {
+    expect(shouldShowFinishedSubagentRows(true, 2, false)).toBe(false);
+    expect(shouldShowFinishedSubagentRows(true, 2, true)).toBe(true);
+    expect(shouldShowFinishedSubagentRows(false, 2, true)).toBe(false);
+  });
+
+  it("uses normal row selection and toggles back only for the current agent", () => {
+    const claude = agentRun("same-id", "completed");
+    const codex = agentRun("same-id", "completed", { provider: "codex" });
+    expect(shouldClearSelectedSidebarAgent(true, null, claude)).toBe(false);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        true,
+        { provider: codex.provider, agentRunId: codex.agentRunId },
+        claude,
+      ),
+    ).toBe(false);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        true,
+        { provider: claude.provider, agentRunId: claude.agentRunId },
+        claude,
+      ),
+    ).toBe(true);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        false,
+        { provider: claude.provider, agentRunId: claude.agentRunId },
+        claude,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -323,20 +434,6 @@ describe("createThreadJumpHintVisibilityController", () => {
     vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
 
     expect(visibilityChanges).toEqual([]);
-  });
-});
-
-describe("getSidebarThreadIdsToPrewarm", () => {
-  it("returns only the first visible thread ids up to the prewarm limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "t3"], 2)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns all visible thread ids when they fit within the limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 10)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns no thread ids when the limit is zero", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
   });
 });
 
@@ -1113,6 +1210,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
+    agentRuns: [],
     ...overrides,
   };
 }

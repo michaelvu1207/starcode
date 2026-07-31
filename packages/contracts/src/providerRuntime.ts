@@ -15,6 +15,7 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ThreadGoal } from "./threadGoal.ts";
+import { HistorySessionId } from "./history.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -465,6 +466,8 @@ export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
 const ContentDeltaPayload = Schema.Struct({
   streamKind: RuntimeContentStreamKind,
   delta: Schema.String,
+  /** Owning nested task when streamed command output belongs to a subagent. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   contentIndex: Schema.optional(Schema.Int),
   summaryIndex: Schema.optional(Schema.Int),
 });
@@ -538,6 +541,10 @@ const TaskStartedPayload = Schema.Struct({
    * something it would then have to keep in sync.
    */
   model: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Opaque handle to a uniquely correlated on-disk CLI rollout, when one exists. */
+  historySessionId: Schema.optional(HistorySessionId),
+  /** Exact provider-native parent session in which this agent was launched. */
+  parentNativeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
@@ -576,6 +583,7 @@ const TaskUpdatedPayload = Schema.Struct({
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   error: Schema.optional(TrimmedNonEmptyStringSchema),
   isBackgrounded: Schema.optional(Schema.Boolean),
+  historySessionId: Schema.optional(HistorySessionId),
 });
 export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
 
@@ -590,6 +598,7 @@ const TaskCompletedPayload = Schema.Struct({
    */
   usage: Schema.optional(Schema.Unknown),
   toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  historySessionId: Schema.optional(HistorySessionId),
 });
 export type TaskCompletedPayload = typeof TaskCompletedPayload.Type;
 

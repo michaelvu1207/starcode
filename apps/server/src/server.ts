@@ -22,6 +22,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
+import * as FleetSessionBootstrapLive from "./provider/Layers/FleetSessionBootstrap.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
@@ -94,7 +95,8 @@ import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { FeatureFlowServicesLive, featureFlowHttpApiLayer } from "./featureFlow/layer.ts";
 import { mailboxHttpApiLayer } from "./mailbox/layer.ts";
 import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
-import { PeerServicesLive, peersHttpApiLayer } from "./peers/layer.ts";
+import { fleetHttpApiLayer, peersHttpApiLayer } from "./peers/layer.ts";
+import * as FleetRegistry from "./fleet/FleetRegistry.ts";
 import { ThreadServicesLive } from "./threads/layer.ts";
 import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
 import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
@@ -304,6 +306,16 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+const FleetSessionBootstrapLayerLive = FleetSessionBootstrapLive.layer.pipe(
+  Layer.provideMerge(FleetRegistry.layer),
+  Layer.provideMerge(ProjectCatalogServicesLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+);
+
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(FleetSessionBootstrapLayerLive),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
@@ -329,7 +341,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
@@ -381,7 +393,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
-      Layer.provide(peersHttpApiLayer),
+      Layer.provide(Layer.merge(peersHttpApiLayer, fleetHttpApiLayer)),
       Layer.provide(mailboxHttpApiLayer),
       Layer.provide(featureFlowHttpApiLayer),
       Layer.provide(usageHttpApiLayer),
@@ -398,7 +410,10 @@ export const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(PeerServicesLive),
+  // HTTP and WebSocket handlers carry request-scoped requirement markers;
+  // MCP handlers consume the same service directly while their toolkit layer
+  // is built. Provide both views from one memoized canonical service layer.
+  HttpRouter.provideRequest(ThreadServicesLive),
   Layer.provide(ThreadServicesLive),
   Layer.provide(FeatureFlowServicesLive),
   Layer.provide(UsageServicesLive),

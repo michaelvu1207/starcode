@@ -279,11 +279,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? editingPendingProject
       : (projectsForEnvironment[0] ?? null));
 
-  // Only offer machines that actually host the currently selected repository, so
-  // switching computers moves the same repo across machines instead of jumping to
-  // whatever unrelated project happens to be first on the other machine. Repository
-  // identity is the primary signal; projects that haven't reported one yet (still
-  // indexing) fall back to workspace basename / title so a valid host isn't hidden.
+  // This is a placement picker, never a visibility filter: the project catalog
+  // above remains fleet-wide. Only offer machines that host the selected
+  // repository so switching placement follows the same repo instead of
+  // jumping to an unrelated project. Repository identity is the primary
+  // signal; projects still indexing fall back to workspace basename / title.
   const selectedRepositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
   // `|| null` (not `??`): a pending-task placeholder project can have an empty
   // workspaceRoot, and an "" basename would reject every real host below.

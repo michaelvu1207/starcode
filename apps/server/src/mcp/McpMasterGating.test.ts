@@ -107,8 +107,9 @@ describe("workbench master gating", () => {
   it.effect("withholds peers-operate from an ordinary session", () =>
     Effect.gen(function* () {
       const capabilities = yield* capabilitiesFor(workerThreadId, masterThreadId);
-      assert.deepStrictEqual(capabilities, ["peers", "preview"]);
+      assert.deepStrictEqual(capabilities, ["peers", "preview", "threads"]);
       assert.notInclude(capabilities, "peers-operate");
+      assert.notInclude(capabilities, "threads-operate");
     }),
   );
 
@@ -120,6 +121,8 @@ describe("workbench master gating", () => {
         "peers",
         "peers-operate",
         "preview",
+        "threads",
+        "threads-operate",
       ]);
     }),
   );
@@ -129,7 +132,7 @@ describe("workbench master gating", () => {
       // The unconfigured state is every server's default, so an empty setting
       // must never be read as "every thread is the master".
       const capabilities = yield* capabilitiesFor(masterThreadId, "");
-      assert.deepStrictEqual(capabilities, ["peers", "preview"]);
+      assert.deepStrictEqual(capabilities, ["peers", "preview", "threads"]);
     }),
   );
 
@@ -137,6 +140,7 @@ describe("workbench master gating", () => {
     Effect.gen(function* () {
       const capabilities = yield* capabilitiesFor(workerThreadId, masterThreadId);
       assert.include(capabilities, "peers");
+      assert.include(capabilities, "threads");
     }),
   );
 
@@ -144,6 +148,7 @@ describe("workbench master gating", () => {
     Effect.gen(function* () {
       const capabilities = yield* capabilitiesFor(masterThreadId, `  ${masterThreadId}  `);
       assert.include(capabilities, "peers-operate");
+      assert.include(capabilities, "threads-operate");
     }),
   );
 });
@@ -164,6 +169,8 @@ describe("project master gating", () => {
         "peers",
         "peers-operate",
         "preview",
+        "threads",
+        "threads-operate",
       ]);
     }),
   );
@@ -178,6 +185,7 @@ describe("project master gating", () => {
         catalogLayer([category("alpamayo", projectMasterThreadId)]),
       );
       assert.include(capabilities, "peers-operate");
+      assert.include(capabilities, "threads-operate");
     }),
   );
 
@@ -188,7 +196,7 @@ describe("project master gating", () => {
         masterThreadId,
         catalogLayer([category("alpamayo", projectMasterThreadId)]),
       );
-      assert.deepStrictEqual(capabilities, ["peers", "preview"]);
+      assert.deepStrictEqual(capabilities, ["peers", "preview", "threads"]);
     }),
   );
 
@@ -202,6 +210,7 @@ describe("project master gating", () => {
         catalogLayer([category("alpamayo", ""), category("arc-spirits", "")]),
       );
       assert.notInclude(capabilities, "peers-operate");
+      assert.notInclude(capabilities, "threads-operate");
     }),
   );
 
@@ -219,6 +228,7 @@ describe("project master gating", () => {
         }),
       );
       assert.include(capabilities, "peers-operate");
+      assert.include(capabilities, "threads-operate");
     }),
   );
 
@@ -248,6 +258,7 @@ describe("project master gating", () => {
         ),
       );
       assert.include(capabilities, "peers-operate");
+      assert.include(capabilities, "threads-operate");
     }),
   );
 });

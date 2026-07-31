@@ -28,6 +28,7 @@ import {
   ThreadGoalObjective,
   ThreadGoalSummaryField,
 } from "./threadGoal.ts";
+import { HistorySessionId } from "./historyIds.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -313,6 +314,8 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  /** Provider-native parent session currently mapped to this Starcode thread. */
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -361,6 +364,46 @@ export const OrchestrationThreadActivity = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
+
+export const AgentRunProvider = Schema.Literals(["claude", "codex"]);
+export type AgentRunProvider = typeof AgentRunProvider.Type;
+
+export const AgentRunStatus = Schema.Literals([
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type AgentRunStatus = typeof AgentRunStatus.Type;
+
+export const AgentRunTranscriptState = Schema.Literals(["linked", "pending", "unavailable"]);
+export type AgentRunTranscriptState = typeof AgentRunTranscriptState.Type;
+
+/**
+ * One provider-native agent owned by one Starcode parent thread.
+ *
+ * `agentRunId` is the provider lifecycle task id and is stable across status
+ * updates. `launchToolUseId` is proof that the launch belongs to the parent
+ * thread, not the row identity. Native history is attached only after exact
+ * provider-specific correlation.
+ */
+export const AgentRun = Schema.Struct({
+  parentThreadId: ThreadId,
+  provider: AgentRunProvider,
+  agentRunId: TrimmedNonEmptyString,
+  launchToolUseId: Schema.NullOr(TrimmedNonEmptyString),
+  taskType: Schema.NullOr(TrimmedNonEmptyString),
+  agentType: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  description: Schema.NullOr(TrimmedNonEmptyString),
+  status: AgentRunStatus,
+  startedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  historySessionId: Schema.NullOr(HistorySessionId),
+  transcriptState: AgentRunTranscriptState,
+});
+export type AgentRun = typeof AgentRun.Type;
 
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
@@ -513,6 +556,7 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
+  agentRuns: Schema.Array(AgentRun).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
   goal: ThreadGoalField,

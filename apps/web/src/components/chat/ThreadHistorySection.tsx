@@ -58,24 +58,7 @@ export function ThreadHistorySection(props: {
   readonly sessionId: HistorySessionId;
 }): ReactNode {
   const [expanded, setExpanded] = useState(false);
-  const [paging, setPaging] = useState<HistoryPagingState>(() =>
-    initialHistoryPaging(props.model.before),
-  );
-
-  const onPageResolved = useCallback(
-    (input: { readonly cursorIndex: number; readonly nextBefore: number | null }) => {
-      setPaging((current) =>
-        // Only the page currently at the top reports. A late answer from one
-        // further down would otherwise re-offer a cursor already spent.
-        input.cursorIndex === oldestCursorIndex(current)
-          ? reportOldestPage(current, input.nextBefore)
-          : current,
-      );
-    },
-    [],
-  );
-
-  const showEarlier = useCallback(() => setPaging(loadEarlierHistoryPage), []);
+  const paging = useHistoryPaging(props.model.before);
 
   return (
     <section
@@ -116,34 +99,113 @@ export function ThreadHistorySection(props: {
           // transparency, since the theme's backdrop should still show through.
           className="flex max-h-[45vh] min-h-0 shrink-0 flex-col overflow-y-auto bg-card/70 px-5 py-3 opacity-85"
         >
-          {canLoadEarlier(paging) ? (
-            <button
-              type="button"
-              data-testid="thread-history-show-earlier"
-              onClick={showEarlier}
-              className="mx-auto mb-3 shrink-0 rounded-full border border-border/60 px-3 py-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
-            >
-              Show earlier
-            </button>
-          ) : null}
-          {/* Reversed: the cursor list grows newest-first as paging walks
-              backwards, and reading order is the opposite. */}
-          {paging.cursors
-            .map((cursor, index) => ({ cursor, index }))
-            .toReversed()
-            .map(({ cursor, index }) => (
-              <HistoryPage
-                key={cursor ?? "end"}
-                environmentId={props.environmentId}
-                sessionId={props.sessionId}
-                before={cursor}
-                cursorIndex={index}
-                onResolved={onPageResolved}
-              />
-            ))}
+          <HistoryTranscriptPages
+            environmentId={props.environmentId}
+            sessionId={props.sessionId}
+            paging={paging.state}
+            onPageResolved={paging.onPageResolved}
+            onShowEarlier={paging.showEarlier}
+            cwd={null}
+            muted
+          />
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * A history session rendered as the conversation itself.
+ *
+ * Unlike `ThreadHistorySection`, this adds no disclosure bar, recessed panel,
+ * or nested scroll container. Its parent supplies the ordinary thread reading
+ * surface, so a linked CLI rollout reads exactly like any other read-only
+ * thread.
+ */
+export function HistoryThreadTimeline(props: {
+  readonly environmentId: EnvironmentId;
+  readonly model: ThreadHistoryModel;
+  readonly sessionId: HistorySessionId;
+  readonly cwd: string | null;
+}): ReactNode {
+  const paging = useHistoryPaging(props.model.before);
+  return (
+    <div data-testid="history-thread-timeline" className="flex flex-col gap-3">
+      <HistoryTranscriptPages
+        environmentId={props.environmentId}
+        sessionId={props.sessionId}
+        paging={paging.state}
+        onPageResolved={paging.onPageResolved}
+        onShowEarlier={paging.showEarlier}
+        cwd={props.cwd}
+        muted={false}
+      />
+    </div>
+  );
+}
+
+function useHistoryPaging(before: number | null) {
+  const [state, setState] = useState<HistoryPagingState>(() => initialHistoryPaging(before));
+
+  const onPageResolved = useCallback(
+    (input: { readonly cursorIndex: number; readonly nextBefore: number | null }) => {
+      setState((current) =>
+        // Only the page currently at the top reports. A late answer from one
+        // further down would otherwise re-offer a cursor already spent.
+        input.cursorIndex === oldestCursorIndex(current)
+          ? reportOldestPage(current, input.nextBefore)
+          : current,
+      );
+    },
+    [],
+  );
+
+  const showEarlier = useCallback(() => setState(loadEarlierHistoryPage), []);
+  return { state, onPageResolved, showEarlier } as const;
+}
+
+function HistoryTranscriptPages(props: {
+  readonly environmentId: EnvironmentId;
+  readonly sessionId: HistorySessionId;
+  readonly paging: HistoryPagingState;
+  readonly onPageResolved: (input: {
+    readonly cursorIndex: number;
+    readonly nextBefore: number | null;
+  }) => void;
+  readonly onShowEarlier: () => void;
+  readonly cwd: string | null;
+  readonly muted: boolean;
+}): ReactNode {
+  return (
+    <>
+      {canLoadEarlier(props.paging) ? (
+        <button
+          type="button"
+          data-testid="thread-history-show-earlier"
+          onClick={props.onShowEarlier}
+          className="mx-auto mb-3 shrink-0 rounded-full border border-border/60 px-3 py-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+        >
+          Show earlier
+        </button>
+      ) : null}
+      {/* Reversed: the cursor list grows newest-first as paging walks
+          backwards, and reading order is the opposite. */}
+      {props.paging.cursors
+        .map((cursor, index) => ({ cursor, index }))
+        .toReversed()
+        .map(({ cursor, index }) => (
+          <HistoryPage
+            key={cursor ?? "end"}
+            environmentId={props.environmentId}
+            sessionId={props.sessionId}
+            before={cursor}
+            cursorIndex={index}
+            onResolved={props.onPageResolved}
+            cwd={props.cwd}
+            muted={props.muted}
+          />
+        ))}
+    </>
   );
 }
 
@@ -164,6 +226,8 @@ function HistoryPage(props: {
     readonly cursorIndex: number;
     readonly nextBefore: number | null;
   }) => void;
+  readonly cwd: string | null;
+  readonly muted: boolean;
 }): ReactNode {
   const page = useHistoryEntriesPage({
     environmentId: props.environmentId,
@@ -202,7 +266,7 @@ function HistoryPage(props: {
   return (
     <div className="flex flex-col gap-3 pb-3 empty:hidden">
       {page.data.entries.map((entry: HistoryTranscriptEntry) => (
-        <HistoryMessage key={entry.offset} entry={entry} cwd={null} muted />
+        <HistoryMessage key={entry.offset} entry={entry} cwd={props.cwd} muted={props.muted} />
       ))}
     </div>
   );

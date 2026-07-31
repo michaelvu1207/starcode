@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
  * all "may this session act on the thread graph at all", and there has never
  * been a session that should hold one of them without the rest.
  *
- * `peers-operate` is the orchestrator's grant, and it is the answer to a
+ * `threads-operate` is the orchestrator's grant, and it is the answer to a
  * different question: may this session spend another machine's resources, or
  * reach a machine outside the toolkit entirely. It covers creating a thread on a
  * peer and reading the SSH login out of `peers_list`. It is issued only to
@@ -23,7 +23,14 @@ import * as Effect from "effect/Effect";
  * credential-mint time rather than in the tool handlers alone — a session that
  * is not a master never holds a token that carries it.
  */
-export type McpCapability = "preview" | "peers" | "peers-operate" | "features-operate";
+export type McpCapability =
+  | "preview"
+  | "threads"
+  | "threads-operate"
+  /** @deprecated one-release compatibility grants; issuance-only, policy does not read them. */
+  | "peers"
+  | "peers-operate"
+  | "features-operate";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

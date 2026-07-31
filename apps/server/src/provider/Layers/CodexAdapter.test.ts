@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -319,6 +320,67 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+});
+
+it.effect("captures one fleet snapshot when a Codex provider session starts", () => {
+  const runtimeFactory = makeRuntimeFactory();
+  let snapshotReads = 0;
+  const layer = Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: runtimeFactory.factory,
+        fleetSessionBootstrapSnapshot: () => {
+          snapshotReads += 1;
+          return Effect.succeed({
+            localNode: {
+              environmentId: EnvironmentId.make("local-node"),
+              label: "MacBook Pro",
+            },
+            reachableNodes: [
+              {
+                environmentId: EnvironmentId.make("remote-node"),
+                label: "SimForge",
+              },
+            ],
+            thread: {
+              threadId: asThreadId("fleet-bootstrap-thread"),
+              title: "Fleet bootstrap",
+            },
+            project: {
+              slug: "starcode",
+              title: "StarCode",
+              notes: "Implement the unified thread architecture.",
+            },
+            orchestrator: {
+              role: "project",
+            },
+          });
+        },
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("fleet-bootstrap-thread"),
+      runtimeMode: "full-access",
+    });
+
+    NodeAssert.equal(snapshotReads, 1);
+    NodeAssert.match(
+      runtimeFactory.lastRuntime?.options.fleetSessionBootstrapInstructions ?? "",
+      /MacBook Pro[\s\S]*SimForge[\s\S]*Never ask the user which machine/u,
+    );
+  }).pipe(Effect.provide(layer));
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();

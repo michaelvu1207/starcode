@@ -149,8 +149,15 @@ const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapabilit
     Layer.provideMerge(NodeServices.layer),
   );
 
-const MASTER = ["preview", "peers", "peers-operate", "features-operate"] as const;
-const WORKER = ["preview", "peers"] as const;
+const MASTER = [
+  "preview",
+  "threads",
+  "threads-operate",
+  "peers",
+  "peers-operate",
+  "features-operate",
+] as const;
+const WORKER = ["preview", "threads", "peers"] as const;
 
 type ToolResult = Partial<
   ProjectListResult & ProjectGetResult & ProjectFileThreadToolResult & ProjectSetIconToolResult

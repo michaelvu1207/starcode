@@ -11,9 +11,10 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { PeerEnvironment } from "./peers.ts";
+import { PeerEnvironment, PeersListInput } from "./peers.ts";
 
 const decode = Schema.decodeUnknownEffect(PeerEnvironment);
+const decodePeersListInput = Schema.decodeUnknownSync(PeersListInput);
 
 /** Exactly the shape a pre-sshUser server wrote, field for field. */
 const legacyPeer = {
@@ -30,9 +31,8 @@ it.effect("decodes a peers.json entry written before sshUser existed", () =>
   Effect.gen(function* () {
     const peer = yield* decode(legacyPeer);
     expect(peer.sshUser).toBeNull();
-    // The neighbouring default must not have regressed either: an entry with no
-    // credentialClass is a read peer, never an operate one.
-    expect(peer.credentialClass).toBe("read");
+    expect(peer).not.toHaveProperty("scopes");
+    expect(peer).not.toHaveProperty("credentialExpiresAt");
   }),
 );
 
@@ -49,3 +49,9 @@ it.effect("keeps an explicitly cleared login as null rather than dropping the ke
     expect(peer.sshUser).toBeNull();
   }),
 );
+
+it("emits peers_list input as a closed object schema", () => {
+  const document = Schema.toJsonSchemaDocument(PeersListInput);
+  expect(document.schema).toEqual({ type: "object", additionalProperties: false });
+  expect(decodePeersListInput({})).toEqual({});
+});

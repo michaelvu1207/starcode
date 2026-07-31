@@ -281,15 +281,13 @@
 /* ---------------------------------------------------------------------------
  * 3. Sidebar surface
  *
- * `index.css` re-declares the token set for the sidebar column so both sidebar
- * generations share one hierarchy, and its dark block uses literal `#000` /
- * `#f1f3f7` rather than variables. Those literals would punch a pure-black
- * hole in the middle of the ink palette, so both blocks are restated here.
- * Selectors copied verbatim from `index.css`.
+ * `index.css` re-declares the token set for the sidebar column, and its dark
+ * block uses literal `#000` / `#f1f3f7` rather than variables. Those literals
+ * would punch a pure-black hole in the middle of the ink palette, so both
+ * blocks are restated here. Selectors copied verbatim from `index.css`.
  * ------------------------------------------------------------------------ */
 
-[data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
+[data-app-sidebar] {
   --background: var(--sc-linen-100);
   --foreground: #22252f;
   --card: var(--sc-linen-50);
@@ -312,8 +310,7 @@
   background-color: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
+.dark [data-app-sidebar] {
   --background: var(--sc-ink-900);
   --foreground: var(--sc-cream-100);
   --card: var(--sc-ink-850);
@@ -702,8 +699,7 @@ html.dark body {
  *     `.starcode-speck-field` in section 4b. Set it to 0 for a starless noon.
  * ------------------------------------------------------------------------ */
 
-[data-sidebar-version="v1"] [data-slot="sidebar-inner"],
-[data-sidebar-version="v2"] [data-slot="sidebar-inner"] {
+[data-app-sidebar] [data-slot="sidebar-inner"] {
   background-color: color-mix(in srgb, var(--sidebar) var(--sc-glass-panel), transparent);
   /* The panel already carried `surface-grain`; setting a background-image here
      would clobber it, so it is restated. Same trap the old sidebar sky hit. */

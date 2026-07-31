@@ -1,5 +1,10 @@
 import * as React from "react";
-import { type ContextMenuItem, isListableThread } from "@starcode/contracts";
+import {
+  type AgentRun,
+  type ContextMenuItem,
+  type ThreadId,
+  isListableThread,
+} from "@starcode/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@starcode/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -15,9 +20,6 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-// Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 type SidebarProject = {
   id: string;
   title: string;
@@ -296,13 +298,6 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   return renderedProjects.flatMap((renderedProject) =>
     renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
   );
-}
-
-export function getSidebarThreadIdsToPrewarm<TThreadId>(
-  visibleThreadIds: readonly TThreadId[],
-  limit = SIDEBAR_THREAD_PREWARM_LIMIT,
-): TThreadId[] {
-  return visibleThreadIds.slice(0, Math.max(0, limit));
 }
 
 export function resolveAdjacentThreadId<T>(input: {
@@ -817,5 +812,65 @@ export function sortScopedProjectsForSidebar<
       left.title.localeCompare(right.title) ||
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
+  );
+}
+
+/**
+ * Child agent rows are context for the task currently shown in the main pane.
+ * Keeping them collapsed for every other task prevents the sidebar from
+ * becoming a persistent tree of background work.
+ */
+export function shouldShowSidebarSubagentRows(
+  isThreadActive: boolean,
+  liveSubagentCount: number,
+  finishedSubagentCount = 0,
+): boolean {
+  return isThreadActive && liveSubagentCount + finishedSubagentCount > 0;
+}
+
+/** Agent runs are already classified by the server; React only scopes them. */
+export function selectOwnedSidebarAgentRuns(
+  agentRuns: ReadonlyArray<AgentRun>,
+  parentThreadId: ThreadId,
+): ReadonlyArray<AgentRun> {
+  return agentRuns.filter((run) => run.parentThreadId === parentThreadId);
+}
+
+export function selectFinishedSidebarAgentRuns(
+  agentRuns: ReadonlyArray<AgentRun>,
+): ReadonlyArray<AgentRun> {
+  return agentRuns.filter(
+    (run) => run.status === "completed" || run.status === "failed" || run.status === "stopped",
+  );
+}
+
+export function shouldShowFinishedSubagentDisclosure(
+  isThreadActive: boolean,
+  finishedSubagentCount: number,
+): boolean {
+  return isThreadActive && finishedSubagentCount > 0;
+}
+
+export function shouldShowFinishedSubagentRows(
+  isThreadActive: boolean,
+  finishedSubagentCount: number,
+  isExpanded: boolean,
+): boolean {
+  return shouldShowFinishedSubagentDisclosure(isThreadActive, finishedSubagentCount) && isExpanded;
+}
+
+/**
+ * An already-selected agent row is a route back to its parent transcript.
+ * Every other click selects that agent in the normal thread viewer.
+ */
+export function shouldClearSelectedSidebarAgent(
+  isThreadActive: boolean,
+  selected: Pick<AgentRun, "provider" | "agentRunId"> | null,
+  clicked: Pick<AgentRun, "provider" | "agentRunId">,
+): boolean {
+  return (
+    isThreadActive &&
+    selected?.provider === clicked.provider &&
+    selected.agentRunId === clicked.agentRunId
   );
 }

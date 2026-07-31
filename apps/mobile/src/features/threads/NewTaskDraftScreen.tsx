@@ -684,7 +684,7 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentLabel =
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+    )?.environmentLabel ?? "Machine";
   const currentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
@@ -1011,7 +1011,7 @@ export function NewTaskDraftScreen(props: {
         onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
       >
         <ComposerToolbarTrigger
-          accessibilityLabel="Environment"
+          accessibilityLabel="Choose task machine"
           disabled={isIncomingShareTransferPending}
           icon="desktopcomputer"
           label={selectedEnvironmentLabel}

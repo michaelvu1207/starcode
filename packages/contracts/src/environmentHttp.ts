@@ -47,6 +47,18 @@ import {
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import { PeerEnvironment, PeerRegisterInput, PeerRemoveInput, PeerRemoveResult } from "./peers.ts";
+import {
+  FleetClientBootstrapResult,
+  FleetExchangeInput,
+  FleetExchangeResult,
+  FleetReconcileInput,
+  FleetReconcileResult,
+  FleetRegisterInput,
+  FleetRegisterResult,
+  FleetRemoveInput,
+  FleetRemoveResult,
+  FleetRoster,
+} from "./fleet.ts";
 import { FeatureFlowSnapshot } from "./featureFlow.ts";
 import { FeatureMapSnapshot } from "./featureMap.ts";
 import {
@@ -592,6 +604,59 @@ export class EnvironmentPeersHttpApi extends HttpApiGroup.make("peers")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/**
+ * Transitive fleet administration. Peer routes remain above as one-release
+ * compatibility aliases; all new callers use this group.
+ */
+export class EnvironmentFleetHttpApi extends HttpApiGroup.make("fleet")
+  .add(
+    HttpApiEndpoint.get("snapshot", "/api/fleet", {
+      headers: OptionalBearerHeaders,
+      success: FleetRoster,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("register", "/api/fleet/register", {
+      headers: OptionalBearerHeaders,
+      payload: FleetRegisterInput,
+      success: FleetRegisterResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("remove", "/api/fleet/remove", {
+      headers: OptionalBearerHeaders,
+      payload: FleetRemoveInput,
+      success: FleetRemoveResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("reconcile", "/api/fleet/reconcile", {
+      headers: OptionalBearerHeaders,
+      payload: FleetReconcileInput,
+      success: FleetReconcileResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("exchange", "/api/fleet/exchange", {
+      headers: OptionalBearerHeaders,
+      payload: FleetExchangeInput,
+      success: FleetExchangeResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("clientBootstrap", "/api/fleet/client-bootstrap", {
+      headers: OptionalBearerHeaders,
+      payload: FleetReconcileInput,
+      success: FleetClientBootstrapResult,
+      error: EnvironmentPeerMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 const EnvironmentMailboxParams = Schema.Struct({ threadId: ThreadId });
 
 const EnvironmentMailboxSendErrors = [
@@ -1010,6 +1075,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPeersHttpApi)
+  .add(EnvironmentFleetHttpApi)
   .add(EnvironmentMailboxHttpApi)
   .add(EnvironmentFeatureFlowHttpApi)
   .add(EnvironmentUsageHttpApi)

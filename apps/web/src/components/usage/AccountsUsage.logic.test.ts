@@ -597,7 +597,7 @@ describe("foldCliModelRows", () => {
 
   it("ranks by messages when nothing in the list has a price", () => {
     const { rows, shareBasis } = foldCliModelRows([
-      model("gpt-5.6-sol", 0, { messages: 400_000 }, false),
+      model("gpt-5.7-preview", 0, { messages: 400_000 }, false),
       model("unknown", 0, { messages: 100_000 }, false),
     ]);
     expect(shareBasis).toBe("messages");
@@ -930,8 +930,10 @@ describe("formatting", () => {
 
 describe("foldCliModelRows provenance", () => {
   it("carries an assigned price onto the row and marks it assignable", () => {
-    const { rows } = foldCliModelRows([{ ...model("gpt-5.6-sol", 4_120), pricedAs: "gpt-5.5" }]);
-    expect(rows[0]?.pricedAs).toBe("gpt-5.5");
+    const { rows } = foldCliModelRows([
+      { ...model("gpt-5.7-preview", 4_120), pricedAs: "gpt-5.6-sol" },
+    ]);
+    expect(rows[0]?.pricedAs).toBe("gpt-5.6-sol");
     expect(rows[0]?.priced).toBe(true);
     expect(rows[0]?.assignable).toBe(true);
   });

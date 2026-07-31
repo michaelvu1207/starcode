@@ -1,4 +1,5 @@
 import { ConnectionOnboarding } from "@starcode/client-runtime/connection";
+import { runFleetOnboarding } from "@starcode/client-runtime/onboarding";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -35,4 +36,14 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
   },
   execute: (input: { readonly target: DesktopSshEnvironmentTarget; readonly label?: string }) =>
     ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
+});
+
+export const onboardFleetHost = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:onboard-fleet-host",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly hostname: string }) => input.hostname.trim().toLocaleLowerCase(),
+  },
+  execute: (input: { readonly hostname: string }) => runFleetOnboarding(input),
 });

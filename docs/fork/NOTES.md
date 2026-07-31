@@ -68,7 +68,8 @@ into active / snoozed / settled.
   reorder rows so the screen only moves at lifecycle transitions. A dashboard sorted by
   activity is a deliberate divergence from that taste, not a bug fix. Decide explicitly.
 - **A route.** There is none; the sidebar is the only surface.
-- **Un-gating.** `sidebarV2Enabled` (`packages/contracts/src/settings.ts:117`) defaults `false`.
+- **Resolved by the fleet rework.** Sidebar V2 is now the only routed sidebar; the
+  feature flag and legacy implementation were deleted. See `docs/fork/PLAN.md`.
 
 The ingredients for ranking are already written:
 

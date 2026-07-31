@@ -693,7 +693,7 @@ export const connectCommand = Command.make("connect", {
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
         yield* Console.log(
           background
-            ? "\n✓ Background service ready\n\nstarcode will stay reachable after you log out."
+            ? "\n✓ Background service ready\n\nStarCode will start automatically and stay reachable in the background."
             : "\nNext\n  Start the server with `starcode serve` to make this machine reachable.",
         );
       }),

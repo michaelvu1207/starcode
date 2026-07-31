@@ -6,7 +6,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@starcode/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@starcode/contracts";
+import type { AgentRun, ScopedThreadRef, SidebarProjectGroupingMode } from "@starcode/contracts";
 import {
   CircleAlertIcon,
   CopyIcon,
@@ -26,9 +26,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { useParams, useRouter } from "@tanstack/react-router";
-import { useAgentViewStore, useSelectedAgentTaskId } from "~/agentViewStore";
+import { useLocation, useParams, useRouter } from "@tanstack/react-router";
+import { useAgentViewStore, useSelectedAgentRun } from "~/agentViewStore";
 import { SidebarAgentRow } from "./sidebar/SidebarAgentRow";
+import { SidebarFinishedAgentsRow } from "./sidebar/SidebarFinishedAgentsRow";
 
 import {
   isAtomCommandInterrupted,
@@ -44,6 +45,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -67,7 +69,12 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadAgentRuns,
+  useThreadShells,
+} from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -83,6 +90,12 @@ import {
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
+  selectFinishedSidebarAgentRuns,
+  selectOwnedSidebarAgentRuns,
+  shouldClearSelectedSidebarAgent,
+  shouldShowFinishedSubagentDisclosure,
+  shouldShowFinishedSubagentRows,
+  shouldShowSidebarSubagentRows,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
 } from "./Sidebar.logic";
@@ -109,22 +122,40 @@ import {
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
-import { SidebarChromeFooter } from "./sidebar/SidebarChrome";
+import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarConnectionsView } from "./sidebar/SidebarConnectionsView";
 import { SidebarThreadRow } from "./sidebar/SidebarThreadRow";
 import { openThreadInFocusedPane } from "./split/openThreadInFocusedPane";
-import { openThreadInSplit, useOpenInSplitState } from "./split/openInSplit";
+import { openThreadInSplit, useOpenInSplitState, type OpenInSplitState } from "./split/openInSplit";
 import { SidebarProjectsView } from "./sidebar/SidebarProjectsView";
 import { SidebarHeaderCompact } from "./sidebar/SidebarHeaderCompact";
 import { useAllProjectsScopeGuard } from "./sidebar/sidebarProjectScope";
 import { TooltipPopup, TooltipProvider } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  refreshProjectCatalogs,
+  useFileThreadIntoProject,
+  useProjectCatalogView,
+  useProjectMembership,
+} from "../state/projectCatalog";
+import { selectSidebarChatThreads } from "./Sidebar.projects";
+import { canForkConversation, useForkThread } from "./sidebar/SidebarThreadRowActions";
+import { readHistoryImports } from "../state/terminalHistory";
+import { resolveThreadProvenance } from "./chat/ThreadHistory.logic";
+import { planThreadFiling, resolveThreadFilingState } from "./sidebar/threadProjectFiling";
+import {
+  buildSidebarThreadContextMenuItems,
+  threadContextMoveTarget,
+} from "./sidebar/SidebarThreadContextMenu";
+import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+const EMPTY_AGENT_RUNS: ReadonlyArray<AgentRun> = Object.freeze([]);
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -244,6 +275,11 @@ function SidebarV2ThreadTooltip({
   );
 }
 
+interface SidebarThreadContextMenuState {
+  readonly splitState: OpenInSplitState;
+  readonly driverKind: ProviderInstanceEntry["driverKind"] | null;
+}
+
 const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
   isActive: boolean;
@@ -263,8 +299,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    state: SidebarThreadContextMenuState,
+  ) => void;
   onArchive: (threadRef: ScopedThreadRef) => void;
+  agentRuns: ReadonlyArray<AgentRun>;
 }) {
   const {
     isRenaming,
@@ -345,17 +386,31 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     />
   );
 
-  // Child rows appear only while agents are actually running, which is the
-  // whole point: a thread that spawns none looks exactly as it did before, and
-  // a list of mostly-quiet threads is not turned into a tree.
+  // The selected thread's AgentRun projection is the only child-row source.
+  // Lifecycle activities describe launches; they are not agent ownership or
+  // transcripts and are never folded by this component.
   //
   // Declared above the row handlers because they close over it: a `useCallback`
   // dependency array is evaluated during render, so a later `const` would be a
   // temporal-dead-zone crash rather than a lint nit.
-  const subagents = thread.subagents ?? [];
-  const selectedAgentTaskId = useSelectedAgentTaskId(threadRef);
+  const liveAgentRuns = props.agentRuns.filter(
+    (run) => run.status === "running" || run.status === "paused",
+  );
+  const finishedAgentRuns = selectFinishedSidebarAgentRuns(props.agentRuns);
+  const selectedAgentRun = useSelectedAgentRun(threadRef);
   const selectAgent = useAgentViewStore((store) => store.select);
   const clearSelectedAgent = useAgentViewStore((store) => store.clear);
+  const [finishedSubagentsExpanded, setFinishedSubagentsExpanded] = useState(false);
+  useEffect(() => {
+    if (!props.isActive) setFinishedSubagentsExpanded(false);
+  }, [props.isActive]);
+  // The context menu needs the same answer the old overflow menu did: whether
+  // this thread can go beside the one currently open, and if not, why.
+  const splitState = useOpenInSplitState({
+    threadRef,
+    isRouteThread: props.isActive,
+    hasRouteThread: props.hasRouteThread,
+  });
 
   const handleClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -371,18 +426,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
-      onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+      onContextMenu(threadRef, { x: event.clientX, y: event.clientY }, { splitState, driverKind });
     },
-    [onContextMenu, threadRef],
+    [driverKind, onContextMenu, splitState, threadRef],
   );
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       if (event.target !== event.currentTarget) return;
+      if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+        event.preventDefault();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        onContextMenu(
+          threadRef,
+          { x: bounds.left + 12, y: bounds.top + bounds.height / 2 },
+          { splitState, driverKind },
+        );
+        return;
+      }
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       onThreadActivate(threadRef);
     },
-    [onThreadActivate, threadRef],
+    [driverKind, onContextMenu, onThreadActivate, splitState, threadRef],
   );
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -414,11 +479,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onCancelRename, onCommitRename, renamingTitle, thread.title, threadRef],
   );
-  // The menu's Rename entry and the row's double-click are the same act, so
-  // they share one handler rather than one of them reaching around the row.
-  const handleStartRename = useCallback(() => {
-    onStartRename(threadRef, thread.title);
-  }, [onStartRename, thread.title, threadRef]);
   const handleArchiveClick = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
@@ -432,46 +492,41 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       onCommitRename(threadRef, renamingTitle, thread.title);
     }
   }, [onCommitRename, renamingTitle, thread.title, threadRef]);
-  // Whether this thread can go to the right of the one you are reading, and if
-  // not, why. Resolved here rather than in the row for the same reason as
-  // everything else on it: the row stays a function of its props.
-  const splitState = useOpenInSplitState({
-    threadRef,
-    isRouteThread: props.isActive,
-    hasRouteThread: props.hasRouteThread,
-  });
-  const handleOpenInSplit = useCallback(() => openThreadInSplit(threadRef), [threadRef]);
-
   const handleSelectAgent = useCallback(
-    (taskId: string) => {
+    (agentRun: AgentRun) => {
       // Clicking the agent you are already reading takes you back to the
       // thread — the row is a toggle, which is what a selected row that is
       // also the only way out has to be.
-      if (props.isActive && selectedAgentTaskId === taskId) {
+      if (shouldClearSelectedSidebarAgent(props.isActive, selectedAgentRun, agentRun)) {
         clearSelectedAgent(threadRef);
         return;
       }
       // Selecting an agent also activates its thread. Reading an agent while
       // the center pane shows a different thread would be incoherent.
       onThreadActivate(threadRef);
-      selectAgent(threadRef, taskId);
+      selectAgent(threadRef, {
+        provider: agentRun.provider,
+        agentRunId: agentRun.agentRunId,
+      });
     },
     [
       clearSelectedAgent,
       onThreadActivate,
       props.isActive,
       selectAgent,
-      selectedAgentTaskId,
+      selectedAgentRun,
       threadRef,
     ],
+  );
+  const toggleFinishedSubagents = useCallback(
+    () => setFinishedSubagentsExpanded((expanded) => !expanded),
+    [],
   );
 
   const row = (
     <SidebarThreadRow
       thread={thread}
       status={status}
-      splitState={splitState}
-      onOpenInSplit={handleOpenInSplit}
       flags={{
         isActive: props.isActive,
         isSelected,
@@ -487,43 +542,76 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         onRenameChange: onRenameTitleChange,
         onRenameKeyDown: handleRenameKeyDown,
         onRenameBlur: handleRenameBlur,
-        onStartRename: handleStartRename,
         onArchive: handleArchiveClick,
       }}
       timeLabel={threadTimeLabel(thread)}
-      driverKind={driverKind}
       jumpLabel={props.jumpLabel}
       renamingTitle={renamingTitle}
       tooltip={detailsTooltip}
     />
   );
 
-  if (subagents.length === 0) {
+  if (
+    !shouldShowSidebarSubagentRows(props.isActive, liveAgentRuns.length, finishedAgentRuns.length)
+  ) {
     return row;
   }
 
   return (
     <>
       {row}
-      {subagents.map((agent) => (
+      {liveAgentRuns.map((agent) => (
         <SidebarAgentRow
-          key={agent.taskId}
+          key={`live:${agent.provider}:${agent.agentRunId}`}
           agent={agent}
           // An agent is only "current" when its own thread is, so a selection
           // left behind on another thread cannot light up a row here.
-          isActive={props.isActive && selectedAgentTaskId === agent.taskId}
+          isActive={
+            props.isActive &&
+            selectedAgentRun?.provider === agent.provider &&
+            selectedAgentRun.agentRunId === agent.agentRunId
+          }
           onSelect={handleSelectAgent}
         />
       ))}
+      {shouldShowFinishedSubagentDisclosure(props.isActive, finishedAgentRuns.length) ? (
+        <SidebarFinishedAgentsRow
+          isExpanded={finishedSubagentsExpanded}
+          onToggle={toggleFinishedSubagents}
+        />
+      ) : null}
+      {shouldShowFinishedSubagentRows(
+        props.isActive,
+        finishedAgentRuns.length,
+        finishedSubagentsExpanded,
+      )
+        ? finishedAgentRuns.map((agent) => (
+            <SidebarAgentRow
+              key={`finished:${agent.provider}:${agent.agentRunId}`}
+              agent={agent}
+              isActive={
+                selectedAgentRun?.provider === agent.provider &&
+                selectedAgentRun.agentRunId === agent.agentRunId
+              }
+              onSelect={handleSelectAgent}
+            />
+          ))
+        : null}
     </>
   );
 });
 
 export default function SidebarV2() {
   const projects = useProjects();
+  const projectCatalogView = useProjectCatalogView();
+  const projectMembership = useProjectMembership(projectCatalogView);
+  const serverConfigs = useServerConfigs();
+  const fileThreadIntoProject = useFileThreadIntoProject();
+  const forkThread = useForkThread();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
+  const pathname = useLocation({ select: (location) => location.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -564,6 +652,8 @@ export default function SidebarV2() {
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
     null,
   );
+  const [showChats, setShowChats] = useState(false);
+  const toggleChats = useCallback(() => setShowChats((current) => !current), []);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -582,6 +672,14 @@ export default function SidebarV2() {
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeThreadAgentRuns = useThreadAgentRuns(routeThreadRef);
+  const ownedRouteThreadAgentRuns = useMemo(
+    () =>
+      routeThreadRef === null
+        ? EMPTY_AGENT_RUNS
+        : selectOwnedSidebarAgentRuns(routeThreadAgentRuns, routeThreadRef.threadId),
+    [routeThreadAgentRuns, routeThreadRef],
+  );
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-command navigation validates against the CURRENT route, not the one
@@ -696,7 +794,7 @@ export default function SidebarV2() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, projectScopeKey, showChats]);
 
   const handleRemoveProjectMembers = useCallback(
     async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
@@ -854,12 +952,18 @@ export default function SidebarV2() {
     [scopedProjectKeys, threadLastVisitedAtById, threadSortOrder, threads],
   );
 
+  const displayedThreads = useMemo(
+    () =>
+      showChats ? selectSidebarChatThreads(orderedThreads, projectMembership) : orderedThreads,
+    [orderedThreads, projectMembership, showChats],
+  );
+
   const orderedThreadKeys = useMemo(
     () =>
-      orderedThreads.map((thread) =>
+      displayedThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [orderedThreads],
+    [displayedThreads],
   );
   // Rows call back into the click handler without carrying the ordered list as
   // a prop — a fresh array identity per shell update would defeat every row's
@@ -870,12 +974,12 @@ export default function SidebarV2() {
   const threadByKey = useMemo(
     () =>
       new Map(
-        orderedThreads.map(
+        displayedThreads.map(
           (thread) =>
             [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
         ),
       ),
-    [orderedThreads],
+    [displayedThreads],
   );
   // Handlers read these through refs: depending on per-update Map/Set
   // identities would give every row a fresh callback prop on each shell
@@ -972,7 +1076,7 @@ export default function SidebarV2() {
       }
       if (event.shiftKey) {
         event.preventDefault();
-        if (supportsSidebarRangeSelect(viewMode)) {
+        if (showChats || supportsSidebarRangeSelect(viewMode)) {
           rangeSelectTo(threadKey, orderedThreadKeysRef.current);
         } else {
           toggleThreadSelection(threadKey);
@@ -984,7 +1088,7 @@ export default function SidebarV2() {
       }
       navigateToThread(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection, viewMode],
+    [navigateToThread, rangeSelectTo, showChats, toggleThreadSelection, viewMode],
   );
 
   // Archiving is the row's one-click verb and the menu's last entry — one
@@ -1084,7 +1188,11 @@ export default function SidebarV2() {
   );
 
   const handleThreadContextMenu = useCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      context: SidebarThreadContextMenuState,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -1096,26 +1204,85 @@ export default function SidebarV2() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const filingState = resolveThreadFilingState({
+          projects: projectCatalogView.projects,
+          thread: {
+            environmentId: thread.environmentId,
+            id: thread.id,
+            projectId: thread.projectId,
+          },
+        });
+        const catalogSupported =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.projectCatalog === true;
+        const projectTargets = catalogSupported
+          ? projectCatalogView.projects
+              .filter((project) => !project.archived)
+              .map((project) => ({
+                slug: project.slug,
+                title: project.display.title,
+                isCurrent: project.slug === filingState.currentSlug,
+              }))
+          : [];
+        const imports = readHistoryImports(thread.environmentId);
+        const carriesConversation = canForkConversation({
+          driverKind: context.driverKind,
+          thread,
+          inheritedConversation:
+            resolveThreadProvenance({
+              imports: imports?.imports ?? null,
+              forks: imports?.forks ?? null,
+              threadId: thread.id,
+            }) !== null,
+        });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...(thread.branch
-                ? [
-                    {
-                      id: "new-thread-on-branch",
-                      label: `New thread on ${thread.branch}`,
-                    },
-                  ]
-                : []),
-              { id: "rename", label: "Rename thread" },
-              { id: "mark-unread", label: "Mark unread" },
-              { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-            ],
+            buildSidebarThreadContextMenuItems({
+              branch: thread.branch,
+              splitState: context.splitState,
+              carriesConversation,
+              projectTargets,
+              canRemoveFromProject: catalogSupported && filingState.currentSlug !== null,
+            }),
             position,
           ),
         );
-        if (clicked._tag === "Failure") return;
+        if (clicked._tag === "Failure" || clicked.value === null) return;
+        const moveTarget = threadContextMoveTarget(clicked.value);
+        if (moveTarget !== undefined) {
+          const plan = planThreadFiling({
+            threadId: thread.id,
+            state: filingState,
+            target: moveTarget,
+          });
+          try {
+            for (const request of plan) {
+              const outcome = await fileThreadIntoProject({
+                environmentId: thread.environmentId,
+                request,
+              });
+              if (outcome.kind !== "ok") {
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title:
+                      moveTarget === null
+                        ? "Failed to remove from project"
+                        : "Failed to move thread",
+                    description: outcome.message,
+                  }),
+                );
+                return;
+              }
+            }
+          } finally {
+            refreshProjectCatalogs([thread.environmentId]);
+          }
+          return;
+        }
         switch (clicked.value) {
+          case "open-in-split":
+            if (context.splitState === "ready") openThreadInSplit(threadRef);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -1142,8 +1309,14 @@ export default function SidebarV2() {
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
+          case "fork":
+            await forkThread(thread, carriesConversation);
+            return;
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            return;
+          case "archive":
+            attemptArchive(threadRef);
             return;
           case "delete": {
             if (confirmThreadDelete) {
@@ -1179,9 +1352,14 @@ export default function SidebarV2() {
     [
       confirmThreadDelete,
       deleteThread,
+      fileThreadIntoProject,
+      forkThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      projectCatalogView.projects,
+      serverConfigs,
       startThreadRename,
+      attemptArchive,
     ],
   );
 
@@ -1256,23 +1434,28 @@ export default function SidebarV2() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
+  // Settings replaces the thread list with its own navigation, but keeping
+  // SidebarV2 mounted preserves the user's project, chat, and expansion state
+  // while they visit settings.
+  if (pathname === "/settings" || pathname.startsWith("/settings/")) {
+    return (
+      <>
+        <SidebarChromeHeader isElectron={isElectron} />
+        <SettingsSidebarNav pathname={pathname} />
+      </>
+    );
+  }
+
   return (
     <>
       <SidebarHeaderCompact
         onNewProject={openAddProjectCommandPalette}
         showProjectActions={projectGroups.length > 0}
+        showChats={showChats}
+        onToggleChats={toggleChats}
       />
-      {/* `min-h-full` reaches the scroll viewport, which is the only element in
-          this chain with a height to speak of: `SidebarContent` is a
-          `ScrollArea`, and its viewport is `h-full` while everything inside it
-          is sized by its content. Without this the whole chain is content-height
-          and a percentage inside it resolves against nothing. */}
+      {/* The content owns the one scrollbar shared by every sidebar surface. */}
       <SidebarContent className="min-h-full gap-0">
-        {/* No `overflow-y-auto` here. It never scrolled — the ScrollArea
-            viewport above is the sidebar's scroller — but an `overflow` value
-            other than `visible` makes this element the scrollport that any
-            `position: sticky` descendant sticks *within*, and this box has no
-            scroll range, so it silently cancelled the docked Chats section. */}
         <SidebarGroup className="min-h-0 flex-1 px-2 pb-1 pt-2 [scrollbar-gutter:stable]">
           <TooltipProvider
             key="sidebar-thread-tooltips-150"
@@ -1280,12 +1463,8 @@ export default function SidebarV2() {
             closeDelay={0}
             timeout={400}
           >
-            {/* `flex-1` rather than a percentage minimum, so a section can dock
-                itself to the bottom of the scroller with `mt-auto` (the projects
-                view's Chats) rather than sitting wherever the content happens to
-                end. Flex items keep `min-height: auto`, so a list taller than the
-                sidebar still grows past it. No effect on the views that do not
-                dock anything. */}
+            {/* `flex-1` lets short surfaces occupy the viewport while long ones
+                continue through the shared scroller. */}
             <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-1 flex-col gap-px">
               {(() => {
                 const renderThreadRow = (thread: EnvironmentThreadShell) => {
@@ -1319,9 +1498,22 @@ export default function SidebarV2() {
                       renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                       onContextMenu={handleThreadContextMenu}
                       onArchive={attemptArchive}
+                      agentRuns={
+                        routeThreadKey === threadKey ? ownedRouteThreadAgentRuns : EMPTY_AGENT_RUNS
+                      }
                     />
                   );
                 };
+                if (showChats) {
+                  return (
+                    <SidebarProjectsView
+                      mode="chats"
+                      threads={displayedThreads}
+                      routeThreadKey={routeThreadKey}
+                      renderThreadRow={renderThreadRow}
+                    />
+                  );
+                }
                 // Connections view: the same rows, grouped under the machine
                 // that runs them instead of merged into one stream.
                 if (viewMode === "connections") {
@@ -1339,6 +1531,7 @@ export default function SidebarV2() {
                 if (viewMode === "projects") {
                   return (
                     <SidebarProjectsView
+                      mode="projects"
                       threads={orderedThreads}
                       routeThreadKey={routeThreadKey}
                       renderThreadRow={renderThreadRow}
@@ -1349,7 +1542,7 @@ export default function SidebarV2() {
               })()}
             </ul>
           </TooltipProvider>
-          {viewMode === "inbox" && orderedThreads.length === 0 ? (
+          {!showChats && viewMode === "inbox" && orderedThreads.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>

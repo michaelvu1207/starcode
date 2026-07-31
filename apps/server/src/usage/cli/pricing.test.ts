@@ -26,7 +26,15 @@ describe("rateFor", () => {
 
   it("returns null rather than guessing at an unknown model", () => {
     assert.isNull(rateFor("claude", "claude-does-not-exist"));
-    assert.isNull(rateFor("codex", "gpt-5.6-sol"));
+    assert.isNull(rateFor("codex", "gpt-9-imaginary"));
+  });
+
+  it("prices gpt-5.6-sol at its published rate", () => {
+    const rate = rateFor("codex", "gpt-5.6-sol");
+    assert.isNotNull(rate);
+    assert.strictEqual(rate?.input, 5 / 1_000_000);
+    assert.strictEqual(rate?.output, 30 / 1_000_000);
+    assert.strictEqual(rate?.cacheRead, 0.5 / 1_000_000);
   });
 
   it("does not match a model by prefix", () => {
@@ -83,6 +91,7 @@ describe("costOf", () => {
 
 describe("codexFastMultiplier", () => {
   it("uses the per-model multiplier where one is known", () => {
+    assert.strictEqual(codexFastMultiplier("gpt-5.6-sol"), 2);
     assert.strictEqual(codexFastMultiplier("gpt-5.5"), 2.5);
     assert.strictEqual(codexFastMultiplier("gpt-5.4"), 2);
   });

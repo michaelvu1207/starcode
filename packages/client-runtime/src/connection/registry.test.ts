@@ -46,6 +46,10 @@ import * as EnvironmentRegistry from "./registry.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import * as Fleet from "./fleet.ts";
+import { startFleetConnectionCoordinator } from "./fleetCoordinator.ts";
+import { makeFleetHttpConnectionDiscovery } from "./fleetHttpDiscovery.ts";
+import { remoteHttpClientLayer } from "../rpc/http.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -308,6 +312,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         return next;
       }),
   });
+  const fleetCredentialStore = Fleet.makeFleetConnectionCredentialStore();
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
       Ref.get(storedRemoteTokens).pipe(
@@ -370,6 +375,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(Persistence.ConnectionRegistrationStore, registrationStore),
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
         Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
+        Layer.succeed(Fleet.FleetConnectionCredentialStore, fleetCredentialStore),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
         Layer.succeed(ClientCapabilities.SshEnvironmentGateway, sshGateway),
         Layer.succeed(Connectivity.Connectivity, connectivity),
@@ -395,6 +401,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     storedProfiles,
     profileReadCount,
     storedCredentials,
+    fleetCredentialStore,
     storedRemoteTokens,
     disconnectedSshTargets,
     networkStatus,
@@ -780,6 +787,145 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("reconciles a three-node fleet from one anchor without persisting credentials", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([]);
+      const betaEnvironmentId = EnvironmentId.make("environment-beta");
+      const gammaEnvironmentId = EnvironmentId.make("environment-gamma");
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
+        const calls: Array<readonly [RequestInfo | URL, RequestInit | undefined]> = [];
+        const fetchFn = ((input, init) => {
+          calls.push([input, init]);
+          return Promise.resolve(
+            Response.json({
+              revision: 1,
+              nodes: [
+                {
+                  nodeId: "alpha",
+                  environmentId: TARGET.environmentId,
+                  label: TARGET.label,
+                  endpoint: {
+                    httpBaseUrl: TARGET.httpBaseUrl,
+                    wsBaseUrl: TARGET.wsBaseUrl,
+                  },
+                  credential: { bearerToken: "self-token" },
+                },
+                {
+                  nodeId: "beta",
+                  environmentId: betaEnvironmentId,
+                  label: "Beta",
+                  endpoint: {
+                    httpBaseUrl: "https://beta.example.test",
+                    wsBaseUrl: "wss://beta.example.test",
+                  },
+                  credential: { bearerToken: "beta-token" },
+                },
+                {
+                  nodeId: "gamma",
+                  environmentId: gammaEnvironmentId,
+                  label: "Gamma",
+                  endpoint: {
+                    httpBaseUrl: "https://gamma.example.test",
+                    wsBaseUrl: "wss://gamma.example.test",
+                  },
+                  credential: { bearerToken: "gamma-token" },
+                },
+              ],
+            }),
+          );
+        }) satisfies typeof fetch;
+        const discovery = yield* makeFleetHttpConnectionDiscovery({
+          pollInterval: "1 hour",
+        }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
+        yield* startFleetConnectionCoordinator(registry, discovery);
+        const currentEntries = yield* SubscriptionRef.get(registry.entries);
+        if (currentEntries.size < 3) {
+          yield* SubscriptionRef.changes(registry.entries).pipe(
+            Stream.filter((next) => next.size === 3),
+            Stream.runHead,
+            Effect.timeout("1 second"),
+          );
+        }
+
+        const entries = yield* SubscriptionRef.get(registry.entries);
+        expect([...entries.keys()]).toEqual([
+          TARGET.environmentId,
+          betaEnvironmentId,
+          gammaEnvironmentId,
+        ]);
+        expect(yield* SubscriptionRef.get(registry.fleetEnvironmentIds)).toEqual(
+          new Set([betaEnvironmentId, gammaEnvironmentId]),
+        );
+        expect(yield* Ref.get(harness.storedTargets)).toEqual(new Map());
+        expect(yield* Ref.get(harness.storedCredentials)).toEqual(new Map());
+        expect(String(calls[0]?.[0])).toBe(
+          "https://environment.example.test/api/fleet/client-bootstrap",
+        );
+        expect(calls[0]?.[1]?.method).toBe("POST");
+        expect(calls[0]?.[1]?.credentials).toBe("include");
+        expect(calls[0]?.[1]?.headers).not.toEqual(
+          expect.objectContaining({ authorization: expect.any(String) }),
+        );
+        expect(
+          Option.getOrThrow(
+            yield* harness.fleetCredentialStore.get(Fleet.fleetConnectionId(betaEnvironmentId)),
+          ).token,
+        ).toBe("beta-token");
+
+        const routedEnvironmentId = yield* registry.run(
+          gammaEnvironmentId,
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) => supervisor.target.environmentId),
+          ),
+        );
+        expect(routedEnvironmentId).toBe(gammaEnvironmentId);
+
+        const directRemovalError = yield* Effect.flip(registry.remove(betaEnvironmentId));
+        expect(directRemovalError._tag).toBe("FleetEnvironmentRemovalError");
+
+        const sessionsBeforeRotation = (yield* Ref.get(harness.sessions)).length;
+        yield* registry.reconcileFleet(TARGET.environmentId, {
+          revision: 2,
+          nodes: [
+            {
+              nodeId: "gamma",
+              environmentId: gammaEnvironmentId,
+              label: "Gamma",
+              endpoint: {
+                httpBaseUrl: "https://gamma.example.test",
+                wsBaseUrl: "wss://gamma.example.test",
+              },
+              credential: { bearerToken: "rotated-gamma-token" },
+            },
+          ],
+        });
+        yield* awaitConnectionState(
+          registry,
+          gammaEnvironmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect((yield* SubscriptionRef.get(registry.entries)).has(betaEnvironmentId)).toBe(false);
+        expect(
+          Option.isNone(
+            yield* harness.fleetCredentialStore.get(Fleet.fleetConnectionId(betaEnvironmentId)),
+          ),
+        ).toBe(true);
+        expect(yield* Ref.get(harness.cacheClears)).toContain(betaEnvironmentId);
+        expect(yield* Ref.get(harness.ownedDataClears)).toContain(betaEnvironmentId);
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(sessionsBeforeRotation + 1);
+        expect(
+          Option.getOrThrow(
+            yield* harness.fleetCredentialStore.get(Fleet.fleetConnectionId(gammaEnvironmentId)),
+          ).token,
+        ).toBe("rotated-gamma-token");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 

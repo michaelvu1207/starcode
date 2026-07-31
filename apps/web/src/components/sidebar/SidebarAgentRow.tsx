@@ -7,62 +7,59 @@
  * everything that implies ownership — no rename, no archive, no menu — because
  * an agent is not yours to manage, only to watch.
  *
- * Only live agents ever reach this component; the parent decides that. A row
- * that vanished mid-read would be jarring, so the thread view keeps showing a
- * selected agent's transcript after its row disappears — see `ChatView`.
+ * Both live and disclosed finished `AgentRun` projections use this component.
+ * The parent decides which are visible; the thread view keeps a selected
+ * native transcript on the normal reading surface — see `ChatView`.
  */
-import type { OrchestrationThreadSubagent } from "@starcode/contracts";
-import { BotIcon, PauseIcon } from "lucide-react";
+import type { AgentRun } from "@starcode/contracts";
+import { PauseIcon } from "lucide-react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
-
-/**
- * Token counts are the number most likely to be *compared* between rows, so
- * they get a fixed shape rather than being printed in full: 81,724 and 4,200
- * are hard to rank at a glance; 81.7k and 4.2k are not.
- */
-function formatTokens(totalTokens: number | null): string | null {
-  if (totalTokens === null) return null;
-  if (totalTokens < 1000) return `${totalTokens}`;
-  if (totalTokens < 1_000_000) return `${(totalTokens / 1000).toFixed(1)}k`;
-  return `${(totalTokens / 1_000_000).toFixed(1)}M`;
-}
+import { HistoryProviderIcon, historyProviderLabel } from "./HistoryProviderIcon";
 
 /**
  * What to call an agent, in the order the data can supply it.
  *
- * The description is the caller's own words and always wins. The subagent type
+ * The description is the caller's own words and always wins. The agent type
  * is a fallback for an agent that never reported one, and "Agent" is the last
  * resort — a nameless row is still better than a dropped one, because the
  * alternative is the sidebar quietly under-reporting what is running.
  */
-export function agentRowLabel(agent: OrchestrationThreadSubagent): string {
-  return agent.description ?? agent.subagentType ?? "Agent";
+export function agentRowLabel(agent: AgentRun): string {
+  return agent.description ?? agent.agentType ?? `${historyProviderLabel(agent.provider)} agent`;
 }
 
 interface SidebarAgentRowProps {
-  readonly agent: OrchestrationThreadSubagent;
+  readonly agent: AgentRun;
   readonly isActive: boolean;
-  readonly onSelect: (taskId: string) => void;
+  readonly onSelect: (agent: AgentRun) => void;
 }
 
 export function SidebarAgentRow({ agent, isActive, onSelect }: SidebarAgentRowProps) {
   const label = agentRowLabel(agent);
-  const tokens = formatTokens(agent.totalTokens);
-  // What it is doing this second. This is the difference between "three agents
-  // are running" and knowing whether any of them is stuck.
-  const subtitle = agent.status === "paused" ? "Paused" : agent.lastToolName;
+  const statusLabel = agent.status[0]!.toUpperCase() + agent.status.slice(1);
+  const metadata = [
+    historyProviderLabel(agent.provider),
+    agent.agentType,
+    agent.model,
+    statusLabel,
+    agent.transcriptState === "pending"
+      ? "Transcript discovery in progress"
+      : agent.transcriptState === "unavailable"
+        ? "Transcript unavailable"
+        : "Transcript linked",
+  ].filter((value): value is string => value !== null);
 
   const handleClick = (event: ReactMouseEvent) => {
     event.stopPropagation();
-    onSelect(agent.taskId);
+    onSelect(agent);
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     event.stopPropagation();
-    onSelect(agent.taskId);
+    onSelect(agent);
   };
 
   return (
@@ -71,11 +68,14 @@ export function SidebarAgentRow({ agent, isActive, onSelect }: SidebarAgentRowPr
       tabIndex={0}
       aria-current={isActive ? "true" : undefined}
       data-testid="sidebar-v2-agent-row"
-      data-task-id={agent.taskId}
+      data-agent-run-id={agent.agentRunId}
+      data-provider={agent.provider}
       data-status={agent.status}
+      data-transcript-state={agent.transcriptState}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      title={subtitle ? `${label} — ${subtitle}` : label}
+      title={`${label} — ${metadata.join(" · ")}`}
+      aria-label={`${label} — ${metadata.join(", ")}`}
       className={cn(
         // The left inset is the whole hierarchy signal; a connector line would
         // fight the thread rows' own flat treatment.
@@ -96,18 +96,14 @@ export function SidebarAgentRow({ agent, isActive, onSelect }: SidebarAgentRowPr
         {agent.status === "paused" ? (
           <PauseIcon className="size-3" />
         ) : (
-          <BotIcon className="size-3" />
+          <HistoryProviderIcon provider={agent.provider} className="size-3" />
         )}
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {subtitle ? (
-        <span className="hidden shrink-0 truncate text-[10px] text-muted-foreground/50 group-hover/agent-row:inline">
-          {subtitle}
-        </span>
-      ) : null}
-      {tokens ? (
-        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/50">{tokens}</span>
-      ) : null}
+      <span className="hidden shrink-0 truncate text-[10px] text-muted-foreground/50 group-hover/agent-row:inline">
+        {[agent.agentType, agent.model].filter(Boolean).join(" · ") || statusLabel}
+      </span>
+      <span className="shrink-0 text-[10px] text-muted-foreground/50">{statusLabel}</span>
     </div>
   );
 }

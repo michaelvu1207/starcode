@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - resolves the cwd recorded by an
+// observed shell launch against the provider session's cwd.
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -6,6 +8,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import * as NodePath from "node:path";
+
 import {
   type CanUseTool,
   query,
@@ -23,11 +27,16 @@ import {
 import { resolveClaudeInstanceContextDefault } from "@starcode/shared/claudeContextLimit";
 import { parseCliArgs } from "@starcode/shared/cliArgs";
 import {
+  detectCodexCliSubagent,
+  type CodexCliSubagentInvocation,
+} from "@starcode/shared/codexCliSubagent";
+import {
   ApprovalRequestId,
   type CanonicalItemType,
   type CanonicalRequestType,
   type ClaudeSettings,
   EventId,
+  type HistorySessionId,
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -69,9 +78,19 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { agentTranscriptHistoryIndex } from "../../history/HistoryIndex.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import {
+  type FleetSessionBootstrapSnapshotProvider,
+  resolveFleetSessionBootstrapInstructions,
+} from "../FleetSessionBootstrap.ts";
+import {
+  type CodexCliRolloutLink,
+  discoverCodexCliRollout,
+  readCodexCliRolloutTerminalState,
+} from "./CodexCliRolloutDiscovery.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -176,6 +195,7 @@ interface ToolInFlight {
   readonly input: Record<string, unknown>;
   readonly partialInputJson: string;
   readonly lastEmittedInputFingerprint?: string;
+  readonly codexCli?: CodexCliSubagentInvocation;
 }
 
 /**
@@ -193,6 +213,7 @@ interface SubagentToolInFlight {
   readonly detail?: string;
   readonly input: Record<string, unknown>;
   readonly parentToolUseId: string;
+  readonly codexCli?: CodexCliSubagentInvocation;
 }
 
 interface ClaudeTaskState {
@@ -200,6 +221,12 @@ interface ClaudeTaskState {
   subject: string;
   status: PlanStep["status"];
   readonly blockedBy: Set<string>;
+}
+
+interface ClaudeBackgroundTaskRosterItem {
+  readonly taskId: string;
+  readonly taskType?: string;
+  readonly description?: string;
 }
 
 interface ClaudeSessionContext {
@@ -234,6 +261,18 @@ interface ClaudeSessionContext {
    */
   readonly subagentModels: Map<string, string>;
   /**
+   * Task ids which Claude has reported as live through lifecycle messages.
+   */
+  readonly activeSubagentTaskIds: Set<string>;
+  /**
+   * The preceding authoritative `background_tasks_changed` roster.
+   *
+   * Kept separately from all active subagents because an empty background
+   * roster must not stop a foreground subagent. Only a task that was present
+   * in the previous roster and is absent from the next one is reconciled.
+   */
+  readonly backgroundSubagentTaskIds: Set<string>;
+  /**
    * Fork: a subagent's in-flight tool calls, keyed by `tool_use` id.
    *
    * The main thread's counterpart is `inFlightTools`, keyed by content-block
@@ -247,6 +286,8 @@ interface ClaudeSessionContext {
    * dropped when the turn ends.
    */
   readonly subagentTools: Map<string, SubagentToolInFlight>;
+  /** Unique rollout proved for a cwd; null marks concurrent ambiguity. */
+  readonly codexCliRolloutByCwd: Map<string, CodexCliRolloutLink | null>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   /** Fork: the context this thread was set to; caps what the meter reports. */
@@ -272,6 +313,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly fleetSessionBootstrapSnapshot?: FleetSessionBootstrapSnapshotProvider;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -761,6 +803,35 @@ function readStringArray(value: unknown): Array<string> {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     : [];
+}
+
+function readClaudeBackgroundTaskRoster(
+  message: SDKMessage,
+): Array<ClaudeBackgroundTaskRosterItem> {
+  const tasks = (message as unknown as { readonly tasks?: unknown }).tasks;
+  if (!Array.isArray(tasks)) {
+    return [];
+  }
+
+  const roster: Array<ClaudeBackgroundTaskRosterItem> = [];
+  for (const value of tasks) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const task = value as Record<string, unknown>;
+    const taskId = readString(task.task_id);
+    if (!taskId) {
+      continue;
+    }
+    const taskType = readString(task.task_type);
+    const description = readString(task.description);
+    roster.push({
+      taskId,
+      ...(taskType ? { taskType } : {}),
+      ...(description ? { description } : {}),
+    });
+  }
+  return roster;
 }
 
 function readClaudeToolUseResult(message: SDKMessage): Record<string, unknown> | undefined {
@@ -1969,6 +2040,189 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const codexCliTaskId = (toolUseId: string): RuntimeTaskId =>
+    RuntimeTaskId.make(`codex-cli:${toolUseId}`);
+
+  const emitCodexCliTaskCompleted = Effect.fn("emitCodexCliTaskCompleted")(function* (
+    context: ClaudeSessionContext,
+    toolUseId: string,
+    input: {
+      readonly status: "completed" | "failed" | "stopped";
+      readonly summary: string;
+      readonly historySessionId?: HistorySessionId;
+      readonly rawPayload: unknown;
+    },
+  ) {
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.completed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        taskId: codexCliTaskId(toolUseId),
+        status: input.status,
+        summary: input.summary,
+        toolUseId,
+        ...(input.historySessionId ? { historySessionId: input.historySessionId } : {}),
+      },
+      providerRefs: nativeProviderRefs(context, { providerItemId: toolUseId }),
+      raw: {
+        source: "claude.sdk.message",
+        method: "starcode/codex-cli-rollout",
+        payload: input.rawPayload,
+      },
+    });
+  });
+
+  const watchCodexCliRollout = Effect.fn("watchCodexCliRollout")(function* (
+    context: ClaudeSessionContext,
+    toolUseId: string,
+    invocation: CodexCliSubagentInvocation,
+    startedAt: string,
+  ) {
+    const parentCwd = context.session.cwd ?? process.cwd();
+    const shellCwd = NodePath.resolve(parentCwd, invocation.shellCwd ?? ".");
+    const cwd = NodePath.resolve(shellCwd, invocation.cwd ?? ".");
+    const codexHome = options?.environment?.CODEX_HOME ?? process.env.CODEX_HOME;
+    let link: CodexCliRolloutLink | null =
+      invocation.resumeLast === true ? (context.codexCliRolloutByCwd.get(cwd) ?? null) : null;
+
+    if (!invocation.resumeLast && invocation.prompt) {
+      for (let attempt = 0; attempt < 30 && link === null; attempt += 1) {
+        link = yield* Effect.promise(async () => {
+          try {
+            return await discoverCodexCliRollout({
+              ...(codexHome ? { codexHome } : {}),
+              cwd,
+              prompt: invocation.prompt!,
+              startedAt,
+            });
+          } catch {
+            return null;
+          }
+        });
+        if (link === null) yield* Effect.sleep("1 second");
+      }
+    }
+
+    if (link === null) {
+      if (invocation.detached) {
+        yield* emitCodexCliTaskCompleted(context, toolUseId, {
+          status: "stopped",
+          summary:
+            "Detached Codex CLI launch observed, but no unique rollout matched its prompt, cwd, and launch time.",
+          rawPayload: {
+            toolUseId,
+            reason: invocation.resumeLast
+              ? "resume_rollout_ambiguous"
+              : "rollout_not_uniquely_matched",
+          },
+        });
+      }
+      return;
+    }
+
+    if (!invocation.resumeLast) {
+      const previous = context.codexCliRolloutByCwd.get(cwd);
+      context.codexCliRolloutByCwd.set(
+        cwd,
+        previous === undefined || previous?.nativeSessionId === link.nativeSessionId ? link : null,
+      );
+    }
+
+    const linkedStamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.updated",
+      eventId: linkedStamp.eventId,
+      provider: PROVIDER,
+      createdAt: linkedStamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        taskId: codexCliTaskId(toolUseId),
+        status: "running",
+        description: invocation.description,
+        isBackgrounded: invocation.detached,
+        historySessionId: link.historySessionId,
+      },
+      providerRefs: nativeProviderRefs(context, { providerItemId: toolUseId }),
+      raw: {
+        source: "claude.sdk.message",
+        method: "starcode/codex-cli-rollout-linked",
+        payload: { nativeSessionId: link.nativeSessionId },
+      },
+    });
+
+    // A terminal record is authoritative. The one-day ceiling is only a leak
+    // guard for a killed process that never got to append one.
+    for (let attempt = 0; attempt < 43_200; attempt += 1) {
+      const terminal = yield* Effect.promise(async () => {
+        try {
+          return await readCodexCliRolloutTerminalState(link.path, startedAt);
+        } catch {
+          return null;
+        }
+      });
+      if (terminal !== null) {
+        yield* emitCodexCliTaskCompleted(context, toolUseId, {
+          status: terminal,
+          summary:
+            terminal === "completed"
+              ? "Codex CLI rollout completed."
+              : "Codex CLI rollout stopped with an error.",
+          historySessionId: link.historySessionId,
+          rawPayload: { nativeSessionId: link.nativeSessionId, terminal },
+        });
+        return;
+      }
+      yield* Effect.sleep("2 seconds");
+    }
+
+    yield* emitCodexCliTaskCompleted(context, toolUseId, {
+      status: "stopped",
+      summary: "Codex CLI rollout stopped reporting before a terminal record was written.",
+      historySessionId: link.historySessionId,
+      rawPayload: { nativeSessionId: link.nativeSessionId, reason: "terminal_timeout" },
+    });
+  });
+
+  const emitCodexCliTaskStarted = Effect.fn("emitCodexCliTaskStarted")(function* (
+    context: ClaudeSessionContext,
+    toolUseId: string,
+    invocation: CodexCliSubagentInvocation,
+    startedAt: string,
+    rawPayload: unknown,
+  ) {
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.started",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        taskId: codexCliTaskId(toolUseId),
+        description: invocation.description,
+        taskType: "codex_cli",
+        subagentType: "Codex CLI",
+        toolUseId,
+        ...(context.resumeSessionId ? { parentNativeSessionId: context.resumeSessionId } : {}),
+        ...(invocation.model ? { model: invocation.model } : {}),
+      },
+      providerRefs: nativeProviderRefs(context, { providerItemId: toolUseId }),
+      raw: {
+        source: "claude.sdk.message",
+        method: "starcode/codex-cli-launch",
+        payload: rawPayload,
+      },
+    });
+    yield* Effect.forkDetach(watchCodexCliRollout(context, toolUseId, invocation, startedAt));
+  });
+
   const completeTurn = Effect.fn("completeTurn")(function* (
     context: ClaudeSessionContext,
     status: ProviderRuntimeTurnStatus,
@@ -2091,6 +2345,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: status === "completed" ? "completed" : "failed",
           title: tool.title,
+          ...(tool.codexCli ? { parentToolUseId: tool.itemId } : {}),
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: {
             toolName: tool.toolName,
@@ -2106,6 +2361,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: result ?? { status },
         },
       });
+      if (tool.codexCli && !tool.codexCli.detached) {
+        yield* emitCodexCliTaskCompleted(context, tool.itemId, {
+          status: status === "completed" ? "completed" : "stopped",
+          summary:
+            status === "completed"
+              ? "Codex CLI command completed."
+              : "Codex CLI observation stopped with the parent turn.",
+          rawPayload: result ?? { status },
+        });
+      }
       context.inFlightTools.delete(index);
     }
     // Clear any remaining stale entries (e.g. from interrupted content blocks)
@@ -2268,11 +2533,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const partialInputJson = tool.partialInputJson + event.delta.partial_json;
         const parsedInput = tryParseJsonRecord(partialInputJson);
         const detail = parsedInput ? summarizeToolRequest(tool.toolName, parsedInput) : tool.detail;
+        const detectedCodexCli = parsedInput
+          ? detectCodexCliSubagent(tool.toolName, parsedInput)
+          : null;
+        const codexCli = tool.codexCli ?? detectedCodexCli ?? undefined;
+        const discoveredCodexCliNow = tool.codexCli === undefined && codexCli !== undefined;
         let nextTool: ToolInFlight = {
           ...tool,
           partialInputJson,
           ...(parsedInput ? { input: parsedInput } : {}),
           ...(detail ? { detail } : {}),
+          ...(codexCli ? { codexCli } : {}),
         };
 
         const nextFingerprint =
@@ -2312,6 +2583,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             itemType: nextTool.itemType,
             status: "inProgress",
             title: nextTool.title,
+            ...(nextTool.codexCli ? { parentToolUseId: nextTool.itemId } : {}),
             ...(nextTool.detail ? { detail: nextTool.detail } : {}),
             data: {
               toolName: nextTool.toolName,
@@ -2327,6 +2599,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             payload: message,
           },
         });
+        if (discoveredCodexCliNow && nextTool.codexCli) {
+          yield* emitCodexCliTaskStarted(
+            context,
+            nextTool.itemId,
+            nextTool.codexCli,
+            stamp.createdAt,
+            message,
+          );
+        }
 
         // Emit plan update when TodoWrite input is parsed
         if (parsedInput && isTodoTool(nextTool.toolName)) {
@@ -2381,6 +2662,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const detail = summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;
+      const codexCli = detectCodexCliSubagent(toolName, toolInput);
 
       const tool: ToolInFlight = {
         itemId,
@@ -2391,6 +2673,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         input: toolInput,
         partialInputJson: "",
         ...(inputFingerprint ? { lastEmittedInputFingerprint: inputFingerprint } : {}),
+        ...(codexCli ? { codexCli } : {}),
       };
       context.inFlightTools.set(index, tool);
 
@@ -2417,6 +2700,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: "inProgress",
           title: tool.title,
+          ...(tool.codexCli ? { parentToolUseId: tool.itemId } : {}),
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: {
             toolName: tool.toolName,
@@ -2432,6 +2716,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: message,
         },
       });
+      if (tool.codexCli) {
+        yield* emitCodexCliTaskStarted(
+          context,
+          tool.itemId,
+          tool.codexCli,
+          stamp.createdAt,
+          message,
+        );
+      }
       return;
     }
 
@@ -2534,6 +2827,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? (typed.input as Record<string, unknown>)
           : {};
       const detail = summarizeToolRequest(toolName, toolInput);
+      const codexCli = detectCodexCliSubagent(toolName, toolInput);
       const tool: SubagentToolInFlight = {
         itemId: typed.id,
         itemType,
@@ -2542,6 +2836,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(detail ? { detail } : {}),
         input: toolInput,
         parentToolUseId,
+        ...(codexCli ? { codexCli } : {}),
       };
       context.subagentTools.set(tool.itemId, tool);
 
@@ -2558,7 +2853,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: "inProgress",
           title: tool.title,
-          parentToolUseId,
+          parentToolUseId: tool.codexCli ? tool.itemId : parentToolUseId,
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: { toolName: tool.toolName, input: toolInput },
         },
@@ -2569,6 +2864,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: block,
         },
       });
+      if (tool.codexCli) {
+        yield* emitCodexCliTaskStarted(context, tool.itemId, tool.codexCli, stamp.createdAt, block);
+      }
     }
   });
 
@@ -2605,8 +2903,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: toolResult.isError ? "failed" : "completed",
           title: tool.title,
-          parentToolUseId: tool.parentToolUseId,
+          parentToolUseId: tool.codexCli ? tool.itemId : tool.parentToolUseId,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...(toolResult.text.length > 0 ? { output: toolResult.text } : {}),
           data: {
             toolName: tool.toolName,
             input: tool.input,
@@ -2620,6 +2919,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: toolResult.block,
         },
       });
+      if (tool.codexCli && !tool.codexCli.detached) {
+        yield* emitCodexCliTaskCompleted(context, tool.itemId, {
+          status: toolResult.isError ? "failed" : "completed",
+          summary: toolResult.isError
+            ? "Codex CLI command failed."
+            : "Codex CLI command completed; linked rollout details remain available when discovered.",
+          rawPayload: toolResult.block,
+        });
+      }
     }
   });
 
@@ -2674,6 +2982,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
+          ...(tool.codexCli ? { parentToolUseId: tool.itemId } : {}),
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: toolData,
         },
@@ -2701,6 +3010,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {
             streamKind,
             delta: toolResult.text,
+            ...(tool.codexCli ? { parentToolUseId: tool.itemId } : {}),
           },
           providerRefs: nativeProviderRefs(context, {
             providerItemId: tool.itemId,
@@ -2726,6 +3036,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: itemStatus,
           title: tool.title,
+          ...(tool.codexCli ? { parentToolUseId: tool.itemId } : {}),
           ...(tool.detail ? { detail: tool.detail } : {}),
           // The SDK reports failure via `is_error` rather than an exit status,
           // so `exitCode` stays absent here and the UI falls back to `status`.
@@ -2741,6 +3052,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: message,
         },
       });
+
+      if (tool.codexCli && !tool.codexCli.detached) {
+        yield* emitCodexCliTaskCompleted(context, tool.itemId, {
+          status: toolResult.isError ? "failed" : "completed",
+          summary: toolResult.isError
+            ? "Codex CLI command failed."
+            : "Codex CLI command completed; linked rollout details remain available when discovered.",
+          rawPayload: message,
+        });
+      }
 
       if (
         !toolResult.isError &&
@@ -2908,14 +3229,59 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
     };
 
-    // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
-    // be switch cases): consumed intentionally without emitting, otherwise
-    // they fall through to the unknown-subtype warning and surface as spurious
-    // error rows in client work logs. `background_tasks_changed` is a roster
-    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source.
+    // Undeclared-but-real subtype (absent from the SDK's union, so it cannot be
+    // a switch case): this is an authoritative roster snapshot. Claude does
+    // not guarantee a terminal notification for every background task, so ids
+    // missing from the new roster must be closed here or their last progress
+    // event leaves them looking live forever.
     if ((message.subtype as string) === "background_tasks_changed") {
+      const roster = readClaudeBackgroundTaskRoster(message);
+      const rosterTaskIds = new Set(roster.map((task) => task.taskId));
+
+      for (const taskId of context.backgroundSubagentTaskIds) {
+        if (rosterTaskIds.has(taskId)) {
+          continue;
+        }
+        context.backgroundSubagentTaskIds.delete(taskId);
+        if (!context.activeSubagentTaskIds.has(taskId)) {
+          continue;
+        }
+        const reconciliationStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          ...base,
+          eventId: reconciliationStamp.eventId,
+          createdAt: reconciliationStamp.createdAt,
+          type: "task.completed",
+          payload: {
+            taskId: RuntimeTaskId.make(taskId),
+            status: "stopped",
+          },
+        });
+        context.activeSubagentTaskIds.delete(taskId);
+      }
+
+      for (const task of roster) {
+        const wasAlreadyBackgrounded = context.backgroundSubagentTaskIds.has(task.taskId);
+        context.backgroundSubagentTaskIds.add(task.taskId);
+        if (wasAlreadyBackgrounded || context.activeSubagentTaskIds.has(task.taskId)) {
+          continue;
+        }
+        const reconciliationStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          ...base,
+          eventId: reconciliationStamp.eventId,
+          createdAt: reconciliationStamp.createdAt,
+          type: "task.started",
+          payload: {
+            taskId: RuntimeTaskId.make(task.taskId),
+            ...(task.description ? { description: task.description } : {}),
+            ...(task.taskType ? { taskType: task.taskType } : {}),
+            ...(context.resumeSessionId ? { parentNativeSessionId: context.resumeSessionId } : {}),
+          },
+        });
+        context.activeSubagentTaskIds.add(task.taskId);
+      }
+
       return;
     }
 
@@ -3000,6 +3366,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "task_started":
+        context.activeSubagentTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
@@ -3012,11 +3379,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             // already on the wire and simply dropped here.
             ...(message.subagent_type ? { subagentType: message.subagent_type } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            ...(context.resumeSessionId ? { parentNativeSessionId: context.resumeSessionId } : {}),
             ...subagentModelForTask(context, message.tool_use_id),
           },
         });
         return;
       case "task_progress":
+        context.activeSubagentTaskIds.add(message.task_id);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3047,6 +3416,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // terminal notification reports the outcome — true, but a subagent that
       // was killed never reaches one, so it read as running forever.
       case "task_updated":
+        if (
+          message.patch?.status === "completed" ||
+          message.patch?.status === "failed" ||
+          message.patch?.status === "killed"
+        ) {
+          context.activeSubagentTaskIds.delete(message.task_id);
+        } else {
+          context.activeSubagentTaskIds.add(message.task_id);
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "task.updated",
@@ -3062,6 +3440,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "task_notification":
+        context.activeSubagentTaskIds.delete(message.task_id);
+        const historyEntry =
+          context.resumeSessionId && message.tool_use_id
+            ? yield* agentTranscriptHistoryIndex.findClaudeSubagent({
+                parentNativeSessionId: context.resumeSessionId,
+                agentRunId: message.task_id,
+                launchToolUseId: message.tool_use_id,
+              })
+            : null;
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3079,6 +3466,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            ...(historyEntry ? { historySessionId: historyEntry.id } : {}),
           },
         });
         // The task is over, so the model parked for it is dead weight. Dropped
@@ -3528,6 +3916,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
       }
 
+      const fleetSessionBootstrapInstructions = yield* resolveFleetSessionBootstrapInstructions(
+        options?.fleetSessionBootstrapSnapshot,
+        { threadId: input.threadId },
+      );
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
@@ -3558,6 +3950,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const subagentModels = new Map<string, string>();
+      const activeSubagentTaskIds = new Set<string>();
+      const backgroundSubagentTaskIds = new Set<string>();
       const subagentTools = new Map<string, SubagentToolInFlight>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
@@ -3911,7 +4305,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          ...(fleetSessionBootstrapInstructions
+            ? { append: fleetSessionBootstrapInstructions }
+            : {}),
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
@@ -4035,7 +4435,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         subagentModels,
+        activeSubagentTaskIds,
+        backgroundSubagentTaskIds,
         subagentTools,
+        codexCliRolloutByCwd: new Map(),
         turnState: undefined,
         lastKnownContextWindow: effectiveContextTokens,
         contextWindowCeiling: effectiveContextTokens,

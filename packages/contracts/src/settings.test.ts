@@ -49,19 +49,28 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
-describe("ClientSettings sidebar v2", () => {
-  it("defaults on and activity-ranked", () => {
-    const settings = decodeClientSettings({});
-    expect(settings.sidebarV2Enabled).toBe(true);
-    expect(settings.sidebarV2ThreadSortOrder).toBe("activity");
+describe("ClientSettings sidebar", () => {
+  it("defaults to activity-ranked", () => {
+    expect(decodeClientSettings({}).sidebarV2ThreadSortOrder).toBe("activity");
   });
 
-  it("keeps an explicit opt-out and the static creation order selectable", () => {
+  it("ignores the retired sidebar opt-out in persisted settings and patches", () => {
     const settings = decodeClientSettings({
       sidebarV2Enabled: false,
+    });
+    const patch = decodeClientSettingsPatch({
+      sidebarV2Enabled: false,
+    });
+
+    expect(settings).not.toHaveProperty("sidebarV2Enabled");
+    expect(patch).not.toHaveProperty("sidebarV2Enabled");
+  });
+
+  it("keeps the static creation order selectable", () => {
+    const settings = decodeClientSettings({
       sidebarV2ThreadSortOrder: "created_at",
     });
-    expect(settings.sidebarV2Enabled).toBe(false);
+
     expect(settings.sidebarV2ThreadSortOrder).toBe("created_at");
   });
 

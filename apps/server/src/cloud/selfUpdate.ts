@@ -13,6 +13,7 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@starcode/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as Context from "effect/Context";
@@ -24,11 +25,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically, writeSymbolicLinkAtomically } from "../atomicWrite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  BOOT_SERVICE_LAUNCH_AGENT_LABEL,
   BOOT_SERVICE_UNIT_ENV,
   BOOT_SERVICE_UNIT_FILE,
+  launchAgentPaths,
   quoteSystemdValue,
   renderBootServiceUnit,
 } from "./bootService.ts";
@@ -101,11 +104,10 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
  * The update path the host process shape would support, ignoring the fork
  * switch. "desktop-managed" — the starcode desktop app spawned this
  * backend and owns its version; only updating the app updates it.
- * "boot-service" — this is the systemd-supervised process from
- * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
- * foreground POSIX process running a published artifact: replace it with a
- * detached child. Windows foreground runs are unsupported for now (no
- * equivalent of the detach-and-exec handoff below).
+ * "boot-service" — this is the systemd- or launchd-supervised process from
+ * bootService.ts: switch the service to the verified runtime and restart it.
+ * "respawn" — a foreground POSIX process running a published artifact:
+ * replace it with a detached child. Windows foreground runs are unsupported.
  */
 export const resolveHostServerSelfUpdateCapability = Effect.fn(
   "cloud.server_self_update.resolve_host_capability",
@@ -120,6 +122,7 @@ export const resolveHostServerSelfUpdateCapability = Effect.fn(
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
   const hostArguments = yield* HostProcessArguments;
+  const userId = yield* HostProcessUserId;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -129,6 +132,23 @@ export const resolveHostServerSelfUpdateCapability = Effect.fn(
   }
 
   const homeDir = env.HOME ?? "";
+  if (platform === "darwin" && homeDir !== "" && userId !== null) {
+    const launchAgent = launchAgentPaths(path, homeDir, env.STARCODE_HOME ?? "", userId);
+    const unitExists = yield* fs
+      .exists(launchAgent.unitPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (
+      unitExists &&
+      entryPath === launchAgent.activeEntryPath &&
+      env[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_LAUNCH_AGENT_LABEL
+    ) {
+      return "boot-service" as const;
+    }
+    if (env[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_LAUNCH_AGENT_LABEL) {
+      return null;
+    }
+  }
+
   if (platform === "linux" && homeDir !== "") {
     const unitPath = path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
     const unitReferencesEntry = yield* fs.readFileString(unitPath).pipe(
@@ -178,6 +198,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const env = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const userId = yield* HostProcessUserId;
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
   const capability: ServerSelfUpdateCapability | null = yield* resolveServerSelfUpdateCapability({
@@ -240,6 +262,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
     );
   const writeUnitAtomically = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+  const writeRuntimeLinkAtomically = (linkPath: string, targetPath: string) =>
+    writeSymbolicLinkAtomically({ linkPath, targetPath }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
@@ -318,7 +345,57 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         );
       }
 
-      if (activeMethod === "boot-service") {
+      if (activeMethod === "boot-service" && platform === "darwin" && userId !== null) {
+        const homeDir = env.HOME ?? "";
+        const launchAgent = launchAgentPaths(path, homeDir, serverConfig.baseDir, userId);
+        const previousRuntime = yield* fs
+          .readLink(launchAgent.activeRuntimeLinkPath)
+          .pipe(
+            Effect.mapError((cause) =>
+              failWith("Could not read the active launchd runtime.", cause),
+            ),
+          );
+        yield* writeRuntimeLinkAtomically(
+          launchAgent.activeRuntimeLinkPath,
+          runtimePaths.versionDir,
+        ).pipe(
+          Effect.mapError((cause) =>
+            failWith("Could not activate the requested launchd runtime.", cause),
+          ),
+        );
+        yield* Effect.logInfo("Server self-update installed; restarting LaunchAgent.", {
+          targetVersion,
+        });
+        yield* Effect.gen(function* () {
+          const kickstart = yield* runner
+            .run({
+              command: "/bin/launchctl",
+              args: ["kickstart", "-k", launchAgent.serviceTarget],
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                failWith("Could not restart the StarCode LaunchAgent.", cause),
+              ),
+            );
+          if (kickstart.code !== 0) {
+            return yield* failWith(
+              `Restarting the StarCode LaunchAgent failed (exit code ${String(kickstart.code)}).`,
+            );
+          }
+        }).pipe(
+          Effect.catch((restartError) =>
+            writeRuntimeLinkAtomically(launchAgent.activeRuntimeLinkPath, previousRuntime).pipe(
+              Effect.mapError((rollbackCause) =>
+                failWith("Could not restore the previous launchd runtime.", {
+                  restartError,
+                  rollbackCause,
+                }),
+              ),
+              Effect.andThen(Effect.fail(restartError)),
+            ),
+          ),
+        );
+      } else if (activeMethod === "boot-service") {
         const homeDir = env.HOME ?? "";
         const unitPath = path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
         const previousUnit = yield* fs

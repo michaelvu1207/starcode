@@ -30,11 +30,14 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as PeerThreadReader from "../peers/PeerThreadReader.ts";
-import * as PeerThreadWriter from "../peers/PeerThreadWriter.ts";
+import { ThreadService } from "../threads/ThreadService.ts";
 
-const ordinary = new Set<McpInvocationContext.McpCapability>(["preview", "peers"]);
-const master = new Set<McpInvocationContext.McpCapability>(["preview", "peers", "peers-operate"]);
+const ordinary = new Set<McpInvocationContext.McpCapability>(["preview", "threads"]);
+const master = new Set<McpInvocationContext.McpCapability>([
+  "preview",
+  "threads",
+  "threads-operate",
+]);
 
 const toolsListPayload = (...names: ReadonlyArray<string>) => ({
   jsonrpc: "2.0",
@@ -47,11 +50,57 @@ const namesIn = (payload: unknown): ReadonlyArray<string> =>
     (tool) => tool.name,
   );
 
+interface ClaudeCompatibleListedTool {
+  readonly name: string;
+  readonly inputSchema: Readonly<Record<string, unknown>> & { readonly type: "object" };
+}
+
+/**
+ * Mirrors the structural check Claude's Zod-backed MCP client applies while
+ * parsing `tools/list`: every tool must have a named, object-root input schema.
+ */
+const parseClaudeCompatibleToolList = (
+  payload: unknown,
+): ReadonlyArray<ClaudeCompatibleListedTool> => {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("tools/list payload must be an object");
+  }
+  const result = (payload as { readonly result?: unknown }).result;
+  if (typeof result !== "object" || result === null) {
+    throw new Error("tools/list result must be an object");
+  }
+  const tools = (result as { readonly tools?: unknown }).tools;
+  if (!Array.isArray(tools)) throw new Error("tools/list result must contain tools");
+  return tools.map((tool) => {
+    if (typeof tool !== "object" || tool === null || Array.isArray(tool)) {
+      throw new Error("listed tool must be an object");
+    }
+    const record = tool as Readonly<Record<string, unknown>>;
+    if (typeof record.name !== "string") throw new Error("listed tool must have a name");
+    const inputSchema = record.inputSchema;
+    if (
+      typeof inputSchema !== "object" ||
+      inputSchema === null ||
+      Array.isArray(inputSchema) ||
+      (inputSchema as Readonly<Record<string, unknown>>).type !== "object"
+    ) {
+      throw new Error(`${record.name} must have an object-root input schema`);
+    }
+    return tool as unknown as ClaudeCompatibleListedTool;
+  });
+};
+
 const ALL_PEER_TOOLS = [
   "peer_threads_list",
   "peer_thread_read",
   "peer_thread_send",
   "peer_thread_create",
+] as const;
+const CANONICAL_THREAD_TOOLS = [
+  "threads_list",
+  "thread_read",
+  "thread_send",
+  "thread_create",
 ] as const;
 
 it("gates the tools that spend another machine's turn, and the ones that rewrite the map", () => {
@@ -81,6 +130,53 @@ it("leaves a master session's list untouched", () => {
   // `null` means "nothing to change", which is what lets the caller keep the
   // original response object and its headers.
   expect(filterToolsListPayload(toolsListPayload(...ALL_PEER_TOOLS), master)).toBeNull();
+});
+
+it("normalizes malformed input schemas even when capability filtering changes nothing", () => {
+  const payload = {
+    jsonrpc: "2.0",
+    id: 2,
+    result: {
+      tools: [
+        {
+          name: "peers_list",
+          inputSchema: { anyOf: [{ type: "object" }, { type: "array" }] },
+        },
+        {
+          name: "peer_thread_read",
+          inputSchema: { type: "object", properties: { threadId: { type: "string" } } },
+        },
+      ],
+    },
+  };
+  const normalized = filterToolsListPayload(payload, master);
+  expect(normalized).not.toBeNull();
+  const tools = parseClaudeCompatibleToolList(normalized);
+  expect(tools.map((tool) => tool.name)).toEqual(["peers_list", "peer_thread_read"]);
+  expect(tools[0]?.inputSchema).toEqual({
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  });
+  expect(tools[1]).toBe(payload.result.tools[1]);
+});
+
+it("normalizes visible schemas in the same pass that removes capability-gated tools", () => {
+  const normalized = filterToolsListPayload(
+    {
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        tools: [
+          { name: "peers_list", inputSchema: {} },
+          { name: "peer_thread_create", inputSchema: {} },
+        ],
+      },
+    },
+    ordinary,
+  );
+  const tools = parseClaudeCompatibleToolList(normalized);
+  expect(tools.map((tool) => tool.name)).toEqual(["peers_list"]);
 });
 
 it("ignores payloads that are not a tool list", () => {
@@ -148,8 +244,7 @@ const emptyProjectCatalogLive = Layer.mock(ProjectCatalogRegistry)({
  * ever lists tools, never calls one — so they are mocked to nothing.
  */
 const HandlerStubsLive = Layer.mergeAll(
-  Layer.mock(PeerThreadReader.PeerThreadReader)({}),
-  Layer.mock(PeerThreadWriter.PeerThreadWriter)({}),
+  Layer.mock(ThreadService)({}),
   Layer.mock(ProjectionSnapshotQuery)({}),
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
   Layer.mock(FeatureMapRegistry)({}),
@@ -163,8 +258,8 @@ const RegistryLive = McpSessionRegistry.layer.pipe(
   Layer.provide(serverSettingsLayerTest({ workbenchMasterThreadId: masterThreadId })),
 );
 
-/** Drives a real `tools/list` for one thread and returns the tool names it sees. */
-const listToolsFor = (threadId: ThreadId) =>
+/** Drives a real `tools/list` for one thread and parses the exact wire result. */
+const listToolDefinitionsFor = (threadId: ThreadId) =>
   Effect.scoped(
     Effect.gen(function* () {
       // `provideMerge` so the very registry the server authenticates against
@@ -204,13 +299,29 @@ const listToolsFor = (threadId: ThreadId) =>
       });
       expect(listed.status).toBe(200);
       // @effect-diagnostics-next-line preferSchemaOverJson:off - Asserting on the raw wire body is the point of this test.
-      return namesIn(JSON.parse(yield* listed.text));
+      return parseClaudeCompatibleToolList(JSON.parse(yield* listed.text));
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeServices.layer)));
+
+const listToolsFor = (threadId: ThreadId) =>
+  listToolDefinitionsFor(threadId).pipe(Effect.map((tools) => tools.map((tool) => tool.name)));
+
+it.effect("serves only Claude-compatible object input schemas over the real transport", () =>
+  Effect.gen(function* () {
+    const tools = yield* listToolDefinitionsFor(masterThreadId);
+    expect(tools.length).toBeGreaterThan(0);
+    expect(tools.every((tool) => tool.inputSchema.type === "object")).toBe(true);
+    expect(tools.find((tool) => tool.name === "peers_list")?.inputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+    });
+  }),
+);
 
 it.effect("an ordinary session is never shown the master-only tools", () =>
   Effect.gen(function* () {
     const tools = yield* listToolsFor(workerThreadId);
+    for (const tool of CANONICAL_THREAD_TOOLS) expect(tools).toContain(tool);
     expect(tools).toContain("peer_threads_list");
     expect(tools).toContain("peer_thread_read");
     expect(tools).toContain("peer_thread_send");
@@ -254,6 +365,7 @@ it.effect("shows every session thread_create, which is the point of not gating i
 it.effect("the designated master session is shown all of them", () =>
   Effect.gen(function* () {
     const tools = yield* listToolsFor(masterThreadId);
+    for (const tool of CANONICAL_THREAD_TOOLS) expect(tools).toContain(tool);
     expect(tools).toContain("peer_thread_send");
     expect(tools).toContain("peer_thread_create");
   }),

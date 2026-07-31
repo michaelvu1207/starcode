@@ -15,6 +15,7 @@ const NOW = Date.parse("2026-07-24T12:00:00.000Z");
 const DAY = 24 * 60 * 60 * 1_000;
 
 const entry = (id: string, mtimeMs: number): HistoryIndexEntry => ({
+  kind: "session",
   id: id as HistorySessionId,
   provider: "claude",
   path: `/store/${id}.jsonl`,

@@ -2,7 +2,6 @@ import type { EnvironmentThreadShell } from "@starcode/client-runtime/state/mode
 import {
   EnvironmentId,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationThreadPlanSummary,
@@ -22,7 +21,6 @@ const actions: SidebarThreadRowActions = {
   onRenameChange: noop,
   onRenameKeyDown: noop,
   onRenameBlur: noop,
-  onStartRename: noop,
   onArchive: noop,
 };
 
@@ -66,14 +64,9 @@ function render(
     },
     actions,
     timeLabel: "4h",
-    driverKind: null,
     jumpLabel: null,
     renamingTitle: "",
     tooltip: null,
-    // Hidden by default: whether a split can hold this thread is a property of
-    // the window and of what is already on screen.
-    splitState: "hidden",
-    onOpenInSplit: noop,
     ...overrides,
   } as Parameters<typeof SidebarThreadRow>[0];
   return renderToStaticMarkup(<SidebarThreadRow {...props} />);
@@ -114,19 +107,10 @@ describe("SidebarThreadRow", () => {
   });
 
   it("draws no agent glyph — which of Claude or Codex is driving is tooltip detail", () => {
-    // Asserted for a known driver rather than only for `null`: the row still
-    // takes `driverKind`, because the menu forks a session with it, so "the
-    // prop is absent" and "the glyph is absent" are different claims and it is
-    // the second one that survives a later change.
-    for (const driverKind of [
-      ProviderDriverKind.make("codex"),
-      ProviderDriverKind.make("claude"),
-      null,
-    ]) {
-      const markup = render({ driverKind });
-      expect(markup).not.toContain('data-testid="sidebar-v2-row-provider"');
-      expect(markup).not.toContain("data-driver-kind");
-    }
+    const markup = render();
+
+    expect(markup).not.toContain('data-testid="sidebar-v2-row-provider"');
+    expect(markup).not.toContain("data-driver-kind");
   });
 
   it("draws the machine as the status glyph's colour rather than a mark of its own", () => {
@@ -152,15 +136,26 @@ describe("SidebarThreadRow", () => {
     expect(render()).not.toContain('data-testid="sidebar-v2-row-status"');
   });
 
-  it("draws the task list along the row rather than on a line of its own", () => {
+  it("places the live status before the thread title", () => {
+    const markup = render({ status: "working" });
+
+    expect(markup.indexOf('data-testid="sidebar-v2-row-status"')).toBeLessThan(
+      markup.indexOf("Teach the sidebar one row"),
+    );
+  });
+
+  it("draws task progress only while the thread is actively working", () => {
     const planSummary = {
       total: 4,
       completed: 2,
       activeStep: "Wire the row",
     } as unknown as OrchestrationThreadPlanSummary;
 
-    expect(render(undefined, { planSummary })).toContain('role="progressbar"');
-    expect(render()).not.toContain('role="progressbar"');
+    expect(render({ status: "working" }, { planSummary })).toContain('role="progressbar"');
+    for (const status of ["ready", "approval", "input", "agents", "failed"] as const) {
+      expect(render({ status }, { planSummary })).not.toContain('role="progressbar"');
+    }
+    expect(render({ status: "working" })).not.toContain('role="progressbar"');
   });
 
   it("holds still under the pointer — only the time gives way to the actions", () => {
@@ -172,21 +167,19 @@ describe("SidebarThreadRow", () => {
     const hoverFades = markup.match(/group-hover\/v2-row:opacity-0/g) ?? [];
 
     expect(hoverFades).toHaveLength(1);
-    // …and the one that does fade is the time, so the icons keep their place.
+    // …and the one that does fade is the time, so the archive button can take
+    // its place without moving the status or title.
     const timeSlot = markup.slice(markup.lastIndexOf("group-hover/v2-row:opacity-0"));
     expect(timeSlot).toContain("4h");
-    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
   });
 
   it("puts archive on the row itself, one click from the pointer", () => {
     const markup = render();
 
-    // Archive is the one thing you do to a thread you are finished with, so it
-    // does not wait behind the `···` — it sits beside it in the same hover
-    // strip. (The menu keeps its own copy, which SSR does not open.)
+    // Archive remains the one thing you do to a thread you are finished with
+    // often enough to deserve a direct pointer and keyboard target.
     expect(markup).toContain('data-testid="sidebar-v2-row-archive"');
     expect(markup).toContain('aria-label="Archive thread"');
-    expect(markup).toContain('aria-label="Thread actions"');
   });
 
   it("gives the hover strip the row's own background so it does not float over the title", () => {
@@ -198,86 +191,16 @@ describe("SidebarThreadRow", () => {
     expect(strip).toContain("bg-sidebar-row-hover");
   });
 
-  it("offers the same menu on every row", () => {
-    // This used to be capability-gated: when every entry in the menu depended
-    // on a server capability, an older server left rows wearing an empty
-    // `···`. Rename, move, fork and archive ask the server for nothing, so the
-    // menu always has entries.
+  it("does not render a visible overflow control", () => {
     const markup = render();
 
-    expect(markup).toContain('data-testid="sidebar-v2-row-menu"');
-    // And the time makes way for it, on every row, for the same reason.
-    expect(markup).toContain("group-hover/v2-row:opacity-0");
+    expect(markup).not.toContain('data-testid="sidebar-v2-row-menu"');
+    expect(markup).not.toContain('aria-label="Thread actions"');
+    expect(rowSource).toContain("onContextMenu={actions.onContextMenu}");
   });
 
-  it("mounts the thread verbs only while the popup is open", () => {
-    // They carry hooks — the project catalog, the thread commands, the router —
-    // and this component is rendered once per thread in a list that runs to
-    // hundreds. Gating on `open` is what keeps one row's menu from charging
-    // every other row for it. Source-level: SSR never opens a base-ui popup, so
-    // a render cannot tell the two apart.
-    //
-    // Asserted as "each mount sits inside an `open ?` guard" rather than as one
-    // exact line, because the formatter reflows these across lines the moment a
-    // prop is added — and a discriminator that breaks on reformatting is a
-    // discriminator that gets deleted rather than fixed.
-    const at = rowSource.indexOf("<ThreadRowFilingActions");
-    expect(at).toBeGreaterThan(-1);
-    expect(rowSource.slice(Math.max(0, at - 60), at)).toContain("{open ? ");
-  });
-
-  it("puts archive last, alone, below its own separator", () => {
-    // Ordering is the whole safety story for this entry: it is the only one in
-    // the menu that takes the thread off the list.
-    const archiveAt = rowSource.indexOf("<ThreadRowArchiveAction");
-    const filingAt = rowSource.indexOf("<ThreadRowFilingActions");
-
-    expect(filingAt).toBeLessThan(archiveAt);
-    expect(rowSource.slice(0, archiveAt).lastIndexOf("<MenuSeparator />")).toBeGreaterThan(
-      filingAt,
-    );
-  });
-
-  it("routes the row button and the menu entry at one archive handler", () => {
-    // Two ways in, one act. Two implementations would eventually disagree
-    // about what archiving does.
+  it("routes the direct archive control through the row action handler", () => {
     expect(rowSource).toContain("onClick={actions.onArchive}");
-    expect(rowSource).toContain("onArchive={actions.onArchive}");
-  });
-
-  it("greys the split entry out rather than letting it look clickable", () => {
-    // Checked against the source: a base-ui menu only mounts its items once it
-    // is open, and SSR never opens one, so the rendered markup of every case
-    // above is identical inside the popup. This is the one property of the
-    // entry that a render cannot see, and "disabled" is half of what makes an
-    // already-open thread explain itself instead of appearing to do nothing.
-    expect(rowSource).toContain('disabled={splitState !== "ready"}');
-    // Belt and braces, because the two say different things: the first makes it
-    // *look* inert, the second makes it *be* inert.
-    expect(rowSource).toContain('if (splitState === "ready") onOpenInSplit();');
-  });
-
-  it("stops the split click from reaching the row underneath it", () => {
-    // Found in a browser, not here: the menu popup is portalled to the body,
-    // but a React portal's events bubble up the *component* tree, so a click on
-    // this item also fires the row's own handler — and the row navigates. The
-    // symptom was that opening a thread on the right dragged the left pane onto
-    // it too, which is precisely what this entry exists not to do.
-    //
-    // Source-level for the same reason as above: SSR never opens the popup, so
-    // there is no item to dispatch a click at.
-    const splitItem = rowSource.slice(
-      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]") - 900,
-      rowSource.indexOf("SPLIT_MENU_LABEL[splitState]"),
-    );
-    expect(splitItem).toContain("event.stopPropagation()");
-  });
-
-  it("routes the menu's Rename at the same handler double-click uses", () => {
-    // Two ways in, one act: the rename input is row state, so the entry cannot
-    // own it and must call back out. Source-level — the entry lives inside the
-    // popup, which SSR never opens.
-    expect(rowSource).toContain("onRename={actions.onStartRename}");
   });
 
   it("swaps the title for an input while renaming", () => {

@@ -20,6 +20,8 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./peers.ts";
+export * from "./fleet.ts";
+export * from "./fleetOnboarding.ts";
 export * from "./threads.ts";
 export * from "./threadGoal.ts";
 export * from "./mailbox.ts";

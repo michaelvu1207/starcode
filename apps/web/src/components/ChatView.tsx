@@ -79,9 +79,7 @@ import {
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  deriveSubagentTasks,
   mainThreadActivities,
-  agentActivities,
   findSidebarProposedPlan,
   findLatestProposedPlan,
   deriveReasoningEntries,
@@ -139,10 +137,15 @@ import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
-import SubagentsSidebar from "./SubagentsSidebar";
 import { SidePanelThread } from "./chat/SidePanelThread";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, GitBranchIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  GitBranchIcon,
+  PanelRightIcon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+} from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -204,8 +207,8 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { ImportedThreadPrelude } from "./chat/ImportedThreadPrelude";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
-import AgentTranscript from "./chat/AgentTranscript";
-import { useAgentViewStore, useSelectedAgentTaskId } from "~/agentViewStore";
+import AgentThreadView from "./chat/AgentThreadView";
+import { useAgentViewStore, useSelectedAgentRun } from "~/agentViewStore";
 import { ComposerPaneMenu } from "./chat/ComposerPaneMenu";
 import { PanelLayoutControls } from "./chat/PanelLayoutControls";
 import { ComposerRunContext } from "./chat/ComposerRunContext";
@@ -271,6 +274,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Toggle } from "./ui/toggle";
 import { ServerUpdateAction } from "./ServerUpdateAction";
 import {
   buildVersionMismatchDismissalKey,
@@ -1971,10 +1975,9 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const allThreadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  // Every derivation below reads the thread's *own* activities. Subagent rows
-  // live in the same stream but belong to the agent views, not here — see
-  // `mainThreadActivities`. `deriveSubagentTasks` is the exception: it reads
-  // `task.*` rows, which the main thread emits about its agents.
+  // Every derivation below reads the thread's own activities. Agent identity
+  // and native transcript linkage come from `activeThread.agentRuns`; React
+  // never reconstructs them from lifecycle rows.
   const threadActivities = useMemo(
     () => mainThreadActivities(allThreadActivities),
     [allThreadActivities],
@@ -2048,24 +2051,22 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const subagentTasks = useMemo(() => deriveSubagentTasks(threadActivities), [threadActivities]);
-
   // The agent being read, if any. Resolved from the full task list rather than
-  // the shell's live-only rollup so a selection survives the agent finishing —
-  // having the view close itself out from under you mid-read is worse than
-  // showing a completed agent's transcript until you leave it.
-  const selectedAgentTaskId = useSelectedAgentTaskId(activeThreadRef);
+  // the shell's live-only rollup so a selection survives the agent finishing.
+  // Provider is part of the identity because two runtimes may reuse an id.
+  const selectedAgentRunRef = useSelectedAgentRun(activeThreadRef);
   const clearSelectedAgent = useAgentViewStore((store) => store.clear);
-  const selectedAgentTask = useMemo(
+  const selectedAgentRun = useMemo(
     () =>
-      selectedAgentTaskId === null
+      selectedAgentRunRef === null
         ? null
-        : (subagentTasks.find((task) => task.taskId === selectedAgentTaskId) ?? null),
-    [selectedAgentTaskId, subagentTasks],
-  );
-  const selectedAgentActivities = useMemo(
-    () => agentActivities(allThreadActivities, selectedAgentTask?.toolUseId ?? null),
-    [allThreadActivities, selectedAgentTask?.toolUseId],
+        : (activeThread?.agentRuns.find(
+            (run) =>
+              run.parentThreadId === activeThread.id &&
+              run.provider === selectedAgentRunRef.provider &&
+              run.agentRunId === selectedAgentRunRef.agentRunId,
+          ) ?? null),
+    [activeThread, selectedAgentRunRef],
   );
   const handleLeaveAgentView = useCallback(() => {
     if (activeThreadRef) clearSelectedAgent(activeThreadRef);
@@ -2910,10 +2911,6 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
-  const addSubagentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "subagents");
-  }, [activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4993,167 +4990,170 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, [activeProposedPlan, onSubmitPlanFollowUp]);
 
-  const onImplementPlanInNewThread = useCallback(async (runAsGoal: boolean) => {
-    if (
-      !activeThread ||
-      !activeProject ||
-      !activeProposedPlan ||
-      !isServerThread ||
-      isSendBusy ||
-      isConnecting ||
-      activeEnvironmentUnavailable ||
-      sendInFlightRef.current
-    ) {
-      return;
-    }
+  const onImplementPlanInNewThread = useCallback(
+    async (runAsGoal: boolean) => {
+      if (
+        !activeThread ||
+        !activeProject ||
+        !activeProposedPlan ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
 
-    const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
-      return;
-    }
-    const {
-      selectedProvider: ctxSelectedProvider,
-      selectedModel: ctxSelectedModel,
-      selectedProviderModels: ctxSelectedProviderModels,
-      selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
-    } = sendCtx;
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx?.providerAvailable) {
+        return;
+      }
+      const {
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedProviderModels: ctxSelectedProviderModels,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        selectedModelSelection: ctxSelectedModelSelection,
+      } = sendCtx;
 
-    const createdAt = new Date().toISOString();
-    const nextThreadId = newThreadId();
-    const planMarkdown = activeProposedPlan.planMarkdown;
-    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const goalObjective = runAsGoal ? buildPlanGoalObjective(planMarkdown) : undefined;
-    const outgoingImplementationPrompt = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: implementationPrompt,
-    });
-    const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const planMarkdown = activeProposedPlan.planMarkdown;
+      const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
+      const goalObjective = runAsGoal ? buildPlanGoalObjective(planMarkdown) : undefined;
+      const outgoingImplementationPrompt = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: implementationPrompt,
+      });
+      const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
+      const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
 
-    sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
-    const finish = () => {
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
-    };
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      };
 
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      },
-    });
-    let failure: AtomCommandResult<unknown, unknown> | null =
-      createResult._tag === "Failure" ? createResult : null;
-
-    if (failure === null) {
-      const startResult = await startThreadTurn({
+      const createResult = await createThread({
         environmentId,
         input: {
           threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: nextThreadTitle,
+          projectId: activeProject.id,
+          title: nextThreadTitle,
+          modelSelection: nextThreadModelSelection,
           runtimeMode,
           interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
-          ...(goalObjective ? { goalObjective } : {}),
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
           createdAt,
         },
       });
-      failure = startResult._tag === "Failure" ? startResult : null;
-    }
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        createResult._tag === "Failure" ? createResult : null;
 
-    if (failure === null) {
-      const startedResult = await settlePromise(() =>
-        waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
-      );
-      failure = startedResult._tag === "Failure" ? startedResult : null;
-    }
-
-    if (failure === null) {
-      // Signal that the plan sidebar should open on the new thread when enabled.
-      planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
-      const navigateResult = await settlePromise(() =>
-        navigate({
-          to: "/$environmentId/$threadId",
-          params: {
-            environmentId: activeThread.environmentId,
+      if (failure === null) {
+        const startResult = await startThreadTurn({
+          environmentId,
+          input: {
             threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: outgoingImplementationPrompt,
+              attachments: [],
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: nextThreadTitle,
+            runtimeMode,
+            interactionMode: "default",
+            sourceProposedPlan: {
+              threadId: activeThread.id,
+              planId: activeProposedPlan.id,
+            },
+            ...(goalObjective ? { goalObjective } : {}),
+            createdAt,
           },
-        }),
-      );
-      failure = navigateResult._tag === "Failure" ? navigateResult : null;
-    }
-
-    if (failure !== null) {
-      const cleanupResult = await deleteThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-        },
-      });
-      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
-        console.warn(
-          "Failed to clean up implementation thread after start failure.",
-          squashAtomCommandFailure(cleanupResult),
-        );
+        });
+        failure = startResult._tag === "Failure" ? startResult : null;
       }
-      if (!isAtomCommandInterrupted(failure)) {
-        const error = squashAtomCommandFailure(failure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start implementation thread",
-            description:
-              error instanceof Error
-                ? error.message
-                : "An error occurred while creating the new thread.",
+
+      if (failure === null) {
+        const startedResult = await settlePromise(() =>
+          waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+        );
+        failure = startedResult._tag === "Failure" ? startedResult : null;
+      }
+
+      if (failure === null) {
+        // Signal that the plan sidebar should open on the new thread when enabled.
+        planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
+        const navigateResult = await settlePromise(() =>
+          navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: nextThreadId,
+            },
           }),
         );
+        failure = navigateResult._tag === "Failure" ? navigateResult : null;
       }
-    }
-    finish();
-  }, [
-    activeProject,
-    activeProposedPlan,
-    activeThreadBranch,
-    activeThread,
-    beginLocalDispatch,
-    activeEnvironmentUnavailable,
-    createThread,
-    deleteThread,
-    isConnecting,
-    isSendBusy,
-    isServerThread,
-    navigate,
-    resetLocalDispatch,
-    runtimeMode,
-    startThreadTurn,
-    autoOpenPlanSidebar,
-    environmentId,
-    composerRef,
-  ]);
+
+      if (failure !== null) {
+        const cleanupResult = await deleteThread({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+          },
+        });
+        if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+          console.warn(
+            "Failed to clean up implementation thread after start failure.",
+            squashAtomCommandFailure(cleanupResult),
+          );
+        }
+        if (!isAtomCommandInterrupted(failure)) {
+          const error = squashAtomCommandFailure(failure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start implementation thread",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "An error occurred while creating the new thread.",
+            }),
+          );
+        }
+      }
+      finish();
+    },
+    [
+      activeProject,
+      activeProposedPlan,
+      activeThreadBranch,
+      activeThread,
+      beginLocalDispatch,
+      activeEnvironmentUnavailable,
+      createThread,
+      deleteThread,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      resetLocalDispatch,
+      runtimeMode,
+      startThreadTurn,
+      autoOpenPlanSidebar,
+      environmentId,
+      composerRef,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -5509,12 +5509,6 @@ function ChatViewContent(props: ChatViewProps) {
         timestampFormat={timestampFormat}
         mode="embedded"
       />
-    ) : activeRightPanelSurface?.kind === "subagents" ? (
-      <SubagentsSidebar
-        tasks={subagentTasks}
-        threadModel={activeThread?.modelSelection.model ?? null}
-        mode="embedded"
-      />
     ) : activeRightPanelSurface?.kind === "side" ? (
       <SidePanelThread
         // Keyed by the side thread so switching between two side tabs remounts
@@ -5555,9 +5549,46 @@ function ChatViewContent(props: ChatViewProps) {
     // container, both split panes, the workbench master pane, the project home —
     // rather than only where this happens to land as a direct child of the inset.
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {/* The thread pane's persistent panel affordance mirrors the main-sidebar
+          control at the opposite edge. It floats over the headerless content
+          so neither control reintroduces a titlebar-sized layout row. Keeping
+          it at the outer pane edge also leaves it reachable while the right
+          panel is open or maximized. The sheet owns its own layout controls
+          while open on compact screens. */}
+      {props.suppressRightPanel !== true && !(shouldUsePlanSidebarSheet && rightPanelOpen) ? (
+        <div
+          className="pointer-events-none absolute right-[var(--workspace-controls-right)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center"
+          data-thread-panel-controls=""
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="pointer-events-auto size-[var(--workspace-titlebar-control-size)]! shrink-0 [-webkit-app-region:no-drag]"
+                  pressed={rightPanelOpen}
+                  onPressedChange={toggleRightPanel}
+                  aria-label={rightPanelOpen ? "Hide thread side panel" : "Show thread side panel"}
+                  variant="ghost"
+                  size="sm"
+                  data-testid="thread-right-panel-toggle"
+                >
+                  <PanelRightIcon className="size-3.5" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {`${rightPanelOpen ? "Hide" : "Show"} thread side panel${
+                shortcutLabelForCommand(keybindings, "rightPanel.toggle")
+                  ? ` (${shortcutLabelForCommand(keybindings, "rightPanel.toggle")})`
+                  : ""
+              }`}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
+      ) : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
+          "relative flex min-h-0 min-w-0 flex-col overflow-x-hidden",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
@@ -5566,18 +5597,18 @@ function ChatViewContent(props: ChatViewProps) {
             edge to edge; everything the header used to carry now rides in the
             composer footer.
 
-            The desktop app still needs this band. It is the window's drag
-            handle over the chat column, and on macOS the traffic lights
-            physically occupy its left 90px when the sidebar is collapsed —
-            hence the inset class, which upstream also applies here. It draws
-            nothing, so the living-sky backdrop runs to the top edge behind
-            it. */}
+            The desktop app still needs a drag surface over the chat column.
+            It is absolutely positioned so it does not reserve a header-sized
+            blank row: the transcript owns the pane all the way to the top and
+            draws beneath it. On macOS the traffic lights physically occupy
+            its left 90px when the sidebar is collapsed — hence the inset
+            class, which upstream also applies here. */}
         {isElectron ? (
           <div
             aria-hidden
             data-chat-titlebar-band
             className={cn(
-              "workspace-topbar drag-region relative shrink-0 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+              "workspace-topbar drag-region absolute inset-x-0 top-0 z-10 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
               reserveTitleBarControlInset &&
                 !inlineRightPanelOwnsTitleBar &&
                 "wco:pr-[var(--workspace-native-controls-inset)]",
@@ -5603,21 +5634,21 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
-              <ImportedThreadPrelude
-                environmentId={activeThread.environmentId}
-                threadId={activeThread.id}
-              />
-              {/* An agent's transcript replaces the thread's rather than
-                  sitting beside it: they are two readings of the same column,
-                  and showing both would halve each. The composer below stays
-                  addressed to the thread, which is the only thing you can
-                  actually talk to. */}
-              {selectedAgentTask ? (
-                <AgentTranscript
-                  task={selectedAgentTask}
-                  activities={selectedAgentActivities}
-                  threadModel={activeThread.modelSelection.model ?? null}
+              {selectedAgentRun ? null : (
+                <ImportedThreadPrelude
+                  environmentId={activeThread.environmentId}
+                  threadId={activeThread.id}
+                />
+              )}
+              {/* A selected agent occupies the same reading surface as the
+                  parent thread. It is read-only, so the composer is also
+                  removed below instead of misleadingly remaining addressed
+                  to the parent. */}
+              {selectedAgentRun ? (
+                <AgentThreadView
+                  agentRun={selectedAgentRun}
                   markdownCwd={gitCwd ?? undefined}
+                  environmentId={activeThread.environmentId}
                   onBack={handleLeaveAgentView}
                 />
               ) : (
@@ -5680,164 +5711,174 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
-            <div
-              ref={setComposerOverlayElement}
-              data-chat-composer-overlay="true"
-              className={
-                isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
-            >
+            {/* A nested agent is a read-only thread surface. Do not leave the
+                parent's composer visible under it: that implies the message
+                would guide the agent when it would actually go elsewhere. */}
+            {selectedAgentRun ? null : (
               <div
-                ref={attachDraftHeroTransitionGroupRef}
-                className="chat-composer-horizontal-inset w-full"
+                ref={setComposerOverlayElement}
+                data-chat-composer-overlay="true"
+                className={
+                  isDraftHeroState
+                    ? "pointer-events-none absolute inset-0 z-20 flex items-center"
+                    : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+                }
               >
-                <div className="pointer-events-auto relative z-10">
-                  {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full z-0">
-                      <div
-                        className="pb-8"
-                        style={
-                          forceExpandedMobileComposer
-                            ? {
-                                viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
-                              }
-                            : undefined
-                        }
-                      >
-                        <DraftHeroHeadline
-                          activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
-                        />
-                      </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-                    </div>
-                  ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-                  )}
-                  <div
-                    className="relative"
-                    style={
-                      forceExpandedMobileComposer
-                        ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
-                        : undefined
-                    }
-                  >
-                    {isServerThread ? (
-                      <div className="mx-auto w-full max-w-3xl">
-                        <ThreadGoalBar
-                          goal={activeThread.goal}
-                          supported={activeThread.session?.providerName === "codex"}
-                          disabled={activeEnvironmentUnavailableState !== null}
-                          onSet={handleSetGoal}
-                          onStatusChange={handleSetGoalStatus}
-                          onClear={handleClearGoal}
-                        />
-                      </div>
-                    ) : null}
-                    <div className="chat-composer-glass-shell relative mx-auto w-full max-w-3xl">
-                      <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
-                        <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
-                          <ChatComposer
-                            composerRef={composerRef}
-                            composerDraftTarget={composerDraftTarget}
-                            environmentId={environmentId}
-                            routeKind={routeKind}
-                            routeThreadRef={routeThreadRef}
-                            draftId={draftId}
-                            activeThreadId={activeThreadId}
-                            activeThreadEnvironmentId={activeThread?.environmentId}
-                            activeThread={activeThread}
-                            isServerThread={isServerThread}
-                            isLocalDraftThread={isLocalDraftThread}
-                            forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
-                            projectSelectionRequired={isLocalDraftThread && activeProject === null}
-                            phase={phase}
-                            isConnecting={isConnecting}
-                            isSendBusy={isSendBusy}
-                            isPreparingWorktree={isPreparingWorktree}
-                            environmentUnavailable={activeEnvironmentUnavailableState}
-                            activePendingApproval={activePendingApproval}
-                            pendingApprovals={pendingApprovals}
-                            pendingUserInputs={pendingUserInputs}
-                            activePendingProgress={activePendingProgress}
-                            activePendingResolvedAnswers={activePendingResolvedAnswers}
-                            activePendingIsResponding={activePendingIsResponding}
-                            activePendingDraftAnswers={activePendingDraftAnswers}
-                            activePendingQuestionIndex={activePendingQuestionIndex}
-                            respondingRequestIds={respondingRequestIds}
-                            showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-                            activeProposedPlan={activeProposedPlan}
-                            activePlan={activePlan as { turnId?: TurnId } | null}
-                            sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
-                            planSidebarLabel={planSidebarLabel}
-                            planSidebarOpen={planSidebarOpen}
-                            runtimeMode={runtimeMode}
-                            interactionMode={interactionMode}
-                            lockedProvider={lockedProvider}
-                            providerStatuses={providerStatuses as ServerProvider[]}
-                            activeProjectDefaultModelSelection={
-                              activeProject?.defaultModelSelection
-                            }
-                            activeThreadModelSelection={activeThread?.modelSelection}
-                            activeThreadActivities={activeThread?.activities}
-                            runContext={composerRunContext}
-                            paneMenu={composerPaneMenu}
-                            resolvedTheme={resolvedTheme}
-                            settings={settings}
-                            keybindings={keybindings}
-                            terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                            gitCwd={gitCwd}
-                            promptRef={promptRef}
-                            composerImagesRef={composerImagesRef}
-                            composerTerminalContextsRef={composerTerminalContextsRef}
-                            composerElementContextsRef={composerElementContextsRef}
-                            onSend={onSend}
-                            onInterrupt={onInterrupt}
-                            onImplementPlanOnce={onImplementPlanOnce}
-                            onImplementPlanInNewThread={onImplementPlanInNewThread}
-                            onRespondToApproval={onRespondToApproval}
-                            onSelectActivePendingUserInputOption={
-                              onSelectActivePendingUserInputOption
-                            }
-                            onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
-                            onPreviousActivePendingUserInputQuestion={
-                              onPreviousActivePendingUserInputQuestion
-                            }
-                            onChangeActivePendingUserInputCustomAnswer={
-                              onChangeActivePendingUserInputCustomAnswer
-                            }
-                            onProviderModelSelect={onProviderModelSelect}
-                            getModelDisabledReason={getModelDisabledReason}
-                            toggleInteractionMode={toggleInteractionMode}
-                            handleRuntimeModeChange={handleRuntimeModeChange}
-                            handleInteractionModeChange={handleInteractionModeChange}
-                            onThreadForkCommand={
-                              isServerThread
-                                ? (mode) => {
-                                    void runThreadForkCommand(mode);
-                                  }
-                                : undefined
-                            }
-                            togglePlanSidebar={togglePlanSidebar}
-                            focusComposer={focusComposer}
-                            scheduleComposerFocus={scheduleComposerFocus}
-                            setThreadError={setThreadError}
-                            onExpandImage={onExpandTimelineImage}
+                <div
+                  ref={attachDraftHeroTransitionGroupRef}
+                  className="chat-composer-horizontal-inset w-full"
+                >
+                  <div className="pointer-events-auto relative z-10">
+                    {isDraftHeroState ? (
+                      <div className="absolute inset-x-0 bottom-full z-0">
+                        <div
+                          className="pb-8"
+                          style={
+                            forceExpandedMobileComposer
+                              ? {
+                                  viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+                                }
+                              : undefined
+                          }
+                        >
+                          <DraftHeroHeadline
+                            activeProjectRef={activeProjectRef}
+                            activeProjectTitle={activeProject?.title ?? null}
                           />
                         </div>
+                        <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                       </div>
-                    </div>
+                    ) : (
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    )}
                     <div
-                      aria-hidden
-                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
-                    />
+                      className="relative"
+                      style={
+                        forceExpandedMobileComposer
+                          ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
+                          : undefined
+                      }
+                    >
+                      {isServerThread ? (
+                        <div className="mx-auto w-full max-w-3xl">
+                          <ThreadGoalBar
+                            goal={activeThread.goal}
+                            supported={activeThread.session?.providerName === "codex"}
+                            disabled={activeEnvironmentUnavailableState !== null}
+                            onSet={handleSetGoal}
+                            onStatusChange={handleSetGoalStatus}
+                            onClear={handleClearGoal}
+                          />
+                        </div>
+                      ) : null}
+                      <div className="chat-composer-glass-shell relative mx-auto w-full max-w-3xl">
+                        <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
+                          <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                            <ChatComposer
+                              composerRef={composerRef}
+                              composerDraftTarget={composerDraftTarget}
+                              environmentId={environmentId}
+                              routeKind={routeKind}
+                              routeThreadRef={routeThreadRef}
+                              draftId={draftId}
+                              activeThreadId={activeThreadId}
+                              activeThreadEnvironmentId={activeThread?.environmentId}
+                              activeThread={activeThread}
+                              isServerThread={isServerThread}
+                              isLocalDraftThread={isLocalDraftThread}
+                              forceExpandedOnMobile={
+                                forceExpandedMobileComposer && isDraftHeroState
+                              }
+                              projectSelectionRequired={
+                                isLocalDraftThread && activeProject === null
+                              }
+                              phase={phase}
+                              isConnecting={isConnecting}
+                              isSendBusy={isSendBusy}
+                              isPreparingWorktree={isPreparingWorktree}
+                              environmentUnavailable={activeEnvironmentUnavailableState}
+                              activePendingApproval={activePendingApproval}
+                              pendingApprovals={pendingApprovals}
+                              pendingUserInputs={pendingUserInputs}
+                              activePendingProgress={activePendingProgress}
+                              activePendingResolvedAnswers={activePendingResolvedAnswers}
+                              activePendingIsResponding={activePendingIsResponding}
+                              activePendingDraftAnswers={activePendingDraftAnswers}
+                              activePendingQuestionIndex={activePendingQuestionIndex}
+                              respondingRequestIds={respondingRequestIds}
+                              showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                              activeProposedPlan={activeProposedPlan}
+                              activePlan={activePlan as { turnId?: TurnId } | null}
+                              sidebarProposedPlan={
+                                sidebarProposedPlan as { turnId?: TurnId } | null
+                              }
+                              planSidebarLabel={planSidebarLabel}
+                              planSidebarOpen={planSidebarOpen}
+                              runtimeMode={runtimeMode}
+                              interactionMode={interactionMode}
+                              lockedProvider={lockedProvider}
+                              providerStatuses={providerStatuses as ServerProvider[]}
+                              activeProjectDefaultModelSelection={
+                                activeProject?.defaultModelSelection
+                              }
+                              activeThreadModelSelection={activeThread?.modelSelection}
+                              activeThreadActivities={activeThread?.activities}
+                              runContext={composerRunContext}
+                              paneMenu={composerPaneMenu}
+                              resolvedTheme={resolvedTheme}
+                              settings={settings}
+                              keybindings={keybindings}
+                              terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                              gitCwd={gitCwd}
+                              promptRef={promptRef}
+                              composerImagesRef={composerImagesRef}
+                              composerTerminalContextsRef={composerTerminalContextsRef}
+                              composerElementContextsRef={composerElementContextsRef}
+                              onSend={onSend}
+                              onInterrupt={onInterrupt}
+                              onImplementPlanOnce={onImplementPlanOnce}
+                              onImplementPlanInNewThread={onImplementPlanInNewThread}
+                              onRespondToApproval={onRespondToApproval}
+                              onSelectActivePendingUserInputOption={
+                                onSelectActivePendingUserInputOption
+                              }
+                              onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                              onPreviousActivePendingUserInputQuestion={
+                                onPreviousActivePendingUserInputQuestion
+                              }
+                              onChangeActivePendingUserInputCustomAnswer={
+                                onChangeActivePendingUserInputCustomAnswer
+                              }
+                              onProviderModelSelect={onProviderModelSelect}
+                              getModelDisabledReason={getModelDisabledReason}
+                              toggleInteractionMode={toggleInteractionMode}
+                              handleRuntimeModeChange={handleRuntimeModeChange}
+                              handleInteractionModeChange={handleInteractionModeChange}
+                              onThreadForkCommand={
+                                isServerThread
+                                  ? (mode) => {
+                                      void runThreadForkCommand(mode);
+                                    }
+                                  : undefined
+                              }
+                              togglePlanSidebar={togglePlanSidebar}
+                              focusComposer={focusComposer}
+                              scheduleComposerFocus={scheduleComposerFocus}
+                              setThreadError={setThreadError}
+                              onExpandImage={onExpandTimelineImage}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        aria-hidden
+                        className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <AlertDialog open={branchRestoreConfirmOpen} onOpenChange={setBranchRestoreConfirmOpen}>
               <AlertDialogPopup>
@@ -5929,7 +5970,6 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
-          onAddSubagents={addSubagentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -5957,7 +5997,6 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
-            onAddSubagents={addSubagentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}

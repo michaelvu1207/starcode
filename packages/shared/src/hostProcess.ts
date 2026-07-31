@@ -30,6 +30,13 @@ export const HostProcessEnvironment = Context.Reference<NodeJS.ProcessEnv>(
   },
 );
 
+export const HostProcessWorkingDirectory = Context.Reference<string>(
+  "@starcode/shared/hostProcess/HostProcessWorkingDirectory",
+  {
+    defaultValue: () => process.cwd(),
+  },
+);
+
 export const HostProcessExecutablePath = Context.Reference<string>(
   "@starcode/shared/hostProcess/HostProcessExecutablePath",
   {
@@ -41,6 +48,13 @@ export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
   "@starcode/shared/hostProcess/HostProcessArguments",
   {
     defaultValue: () => process.argv,
+  },
+);
+
+export const HostProcessUserId = Context.Reference<number | null>(
+  "@starcode/shared/hostProcess/HostProcessUserId",
+  {
+    defaultValue: () => (typeof process.getuid === "function" ? process.getuid() : null),
   },
 );
 

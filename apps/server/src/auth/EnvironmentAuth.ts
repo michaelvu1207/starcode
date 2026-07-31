@@ -712,7 +712,12 @@ export const make = Effect.gen(function* () {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
                     }
-                  : { ttl: SessionStore.MACHINE_SESSION_TTL }),
+                  : {
+                      ttl:
+                        grant.subject === "fleet-client-bootstrap"
+                          ? Duration.minutes(10)
+                          : SessionStore.MACHINE_SESSION_TTL,
+                    }),
                 client: {
                   ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),
@@ -872,7 +877,7 @@ export const make = Effect.gen(function* () {
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
     issuePairingCredentialForSubject({
       scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: "one-time-token",
+      subject: input?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 

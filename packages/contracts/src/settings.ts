@@ -130,7 +130,6 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
-  sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarV2ThreadSortOrder: SidebarV2ThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER)),
   ),
@@ -696,7 +695,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
-  sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   sidebarV2ThreadSortOrder: Schema.optionalKey(SidebarV2ThreadSortOrder),
   sidebarV2ViewMode: Schema.optionalKey(SidebarV2ViewMode),
   timestampFormat: Schema.optionalKey(TimestampFormat),

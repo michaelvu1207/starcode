@@ -54,11 +54,8 @@ type ArchivedThreadListItem =
     };
 
 function ArchivedThreadsHeader(props: {
-  readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
   readonly sortOrder: ArchivedThreadSortOrder;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onRefresh: () => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
@@ -66,32 +63,13 @@ function ArchivedThreadsHeader(props: {
   const { width } = useWindowDimensions();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const hasCustomFilter = props.sortOrder !== "newest";
   const searchIconColor = useThemeColor("--color-icon");
   const searchTextColor = useThemeColor("--color-foreground");
   const usesNativeChrome = Platform.OS === "ios";
   const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
   const androidFilterActions = useMemo<MenuAction[]>(
     () => [
-      {
-        id: "environment",
-        title: "Environment",
-        subactions: [
-          {
-            id: "environment:all",
-            title: "All environments",
-            state: props.selectedEnvironmentId === null ? ("on" as const) : undefined,
-          },
-          ...props.environments.map((environment) => ({
-            id: `environment:${environment.environmentId}`,
-            title: environment.label,
-            state:
-              props.selectedEnvironmentId === environment.environmentId
-                ? ("on" as const)
-                : undefined,
-          })),
-        ],
-      },
       {
         id: "sort",
         title: "Sort by archived date",
@@ -109,22 +87,18 @@ function ArchivedThreadsHeader(props: {
         ],
       },
     ],
-    [props.environments, props.selectedEnvironmentId, props.sortOrder],
+    [props.sortOrder],
   );
   const handleAndroidFilterAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const action = event.nativeEvent.event;
-      if (action === "environment:all") {
-        props.onEnvironmentChange(null);
-      } else if (action.startsWith("environment:")) {
-        props.onEnvironmentChange(action.slice("environment:".length) as EnvironmentId);
-      } else if (action === "sort:newest") {
+      if (action === "sort:newest") {
         props.onSortOrderChange("newest");
       } else if (action === "sort:oldest") {
         props.onSortOrderChange("oldest");
       }
     },
-    [props.onEnvironmentChange, props.onSortOrderChange],
+    [props.onSortOrderChange],
   );
 
   if (Platform.OS === "android") {
@@ -177,7 +151,7 @@ function ArchivedThreadsHeader(props: {
               onPressAction={handleAndroidFilterAction}
             >
               <Pressable
-                accessibilityLabel="Filter and sort archived threads"
+                accessibilityLabel="Sort archived threads"
                 accessibilityRole="button"
                 className="size-11 items-center justify-center rounded-full bg-subtle"
               >
@@ -199,29 +173,8 @@ function ArchivedThreadsHeader(props: {
     );
   }
   const archiveFilterMenu = {
-    title: "Archived thread options",
+    title: "Sort archived threads",
     items: [
-      {
-        type: "submenu" as const,
-        title: "Environment",
-        items: [
-          {
-            type: "action" as const,
-            title: "All environments",
-            state: props.selectedEnvironmentId === null ? ("on" as const) : ("off" as const),
-            onPress: () => props.onEnvironmentChange(null),
-          },
-          ...props.environments.map((environment) => ({
-            type: "action" as const,
-            title: environment.label,
-            state:
-              props.selectedEnvironmentId === environment.environmentId
-                ? ("on" as const)
-                : ("off" as const),
-            onPress: () => props.onEnvironmentChange(environment.environmentId),
-          })),
-        ],
-      },
       {
         type: "submenu" as const,
         title: "Sort by archived date",
@@ -302,34 +255,15 @@ function ArchivedThreadsHeader(props: {
             />
           ) : null}
           <NativeHeaderToolbar.Menu
-            accessibilityLabel="Filter and sort archived threads"
+            accessibilityLabel="Sort archived threads"
             icon={
               hasCustomFilter
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
             separateBackground
-            title="Archived thread options"
+            title="Sort archived threads"
           >
-            <NativeHeaderToolbar.Menu title="Environment">
-              <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
-                isOn={props.selectedEnvironmentId === null}
-                onPress={() => props.onEnvironmentChange(null)}
-              >
-                <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-              {props.environments.map((environment) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={environment.environmentId}
-                  isOn={props.selectedEnvironmentId === environment.environmentId}
-                  onPress={() => props.onEnvironmentChange(environment.environmentId)}
-                >
-                  <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
-
             <NativeHeaderToolbar.Menu title="Sort by archived date">
               <NativeHeaderToolbar.Label>Sort by archived date</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
@@ -492,10 +426,8 @@ export function ArchivedThreadsScreen(props: {
   readonly groups: ReadonlyArray<ArchivedThreadGroup>;
   readonly isLoading: boolean;
   readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
   readonly sortOrder: ArchivedThreadSortOrder;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onRefresh: () => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
@@ -548,7 +480,7 @@ export function ArchivedThreadsScreen(props: {
     }
   }, []);
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
-  const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
+  const isFiltered = props.searchQuery.trim().length > 0;
   const renderListItem = useCallback(
     ({ item }: { item: ArchivedThreadListItem }) => {
       if (item.kind === "project") {
@@ -593,11 +525,7 @@ export function ArchivedThreadsScreen(props: {
 
     return (
       <EmptyState
-        detail={
-          isFiltered
-            ? "Try another search or environment."
-            : "Threads you archive will appear here."
-        }
+        detail={isFiltered ? "Try another search." : "Threads you archive will appear here."}
         title={isFiltered ? "No matching threads" : "No archived threads"}
       />
     );
@@ -606,13 +534,10 @@ export function ArchivedThreadsScreen(props: {
   return (
     <View className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
-        environments={props.environments}
         searchQuery={props.searchQuery}
-        onEnvironmentChange={props.onEnvironmentChange}
         onRefresh={props.onRefresh}
         onSearchQueryChange={props.onSearchQueryChange}
         onSortOrderChange={props.onSortOrderChange}
-        selectedEnvironmentId={props.selectedEnvironmentId}
         sortOrder={props.sortOrder}
       />
 

@@ -100,7 +100,6 @@ export interface ThreadListV2Layout {
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly environmentId: EnvironmentId | null;
   readonly projectRefs?: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
@@ -115,7 +114,6 @@ export function buildThreadListV2Items(input: {
   const visible: EnvironmentThreadShell[] = [];
   for (const thread of input.threads) {
     // Callers pass live (unarchived) shells.
-    if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }

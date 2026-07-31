@@ -78,7 +78,6 @@ describe("buildArchivedThreadGroups", () => {
     const result = buildArchivedThreadGroups({
       snapshots: [makeSnapshot([project], [older, newer])],
       environmentLabels: { [environmentId]: "Julius's MacBook Pro" },
-      environmentId: null,
       searchQuery: "",
       sortOrder: "newest",
     });
@@ -86,7 +85,7 @@ describe("buildArchivedThreadGroups", () => {
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-newer", "thread-older"]);
   });
 
-  it("filters by environment and matches project, thread, and branch text", () => {
+  it("searches across every machine by project, thread, and branch text", () => {
     const secondEnvironmentId = EnvironmentId.make("environment-2");
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "starcode" });
     const secondProject = makeProject({ id: ProjectId.make("project-2"), title: "Website" });
@@ -112,7 +111,6 @@ describe("buildArchivedThreadGroups", () => {
         [environmentId]: "Local",
         [secondEnvironmentId]: "Remote",
       },
-      environmentId,
       searchQuery: "archive-screen",
       sortOrder: "oldest",
     });
@@ -134,7 +132,6 @@ describe("buildArchivedThreadGroups", () => {
     const result = buildArchivedThreadGroups({
       snapshots: [makeSnapshot([project], [active])],
       environmentLabels: {},
-      environmentId: null,
       searchQuery: "",
       sortOrder: "newest",
     });

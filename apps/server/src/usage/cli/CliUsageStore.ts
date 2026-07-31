@@ -216,7 +216,7 @@ export interface CliUsageStoreShape {
    * without touching the disk.
    *
    * This is the whole reason the cache stores tokens rather than dollars: a
-   * user who assigns `gpt-5.6-sol` a price waits for arithmetic over what is
+   * user who assigns `gpt-5.7-preview` a price waits for arithmetic over what is
    * already in memory, not for a second walk over nine gigabytes. Falls back
    * to a normal refresh when no pass has completed, because there is then
    * nothing in memory to re-price.

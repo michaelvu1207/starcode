@@ -32,6 +32,7 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { FeatureMapRegistry } from "../../../featureMap/FeatureMapRegistry.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectCatalogRegistry } from "../../../projectCatalog/ProjectCatalogRegistry.ts";
+import { permitsThreadOperation } from "../../../threads/ThreadCapability.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { ProjectsToolkit } from "./tools.ts";
 
@@ -44,7 +45,12 @@ import { ProjectsToolkit } from "./tools.ts";
 const requireRead = (operation: ProjectToolOperation) =>
   Effect.gen(function* () {
     const invocation = yield* McpInvocationContext.McpInvocationContext;
-    if (!invocation.capabilities.has("peers")) {
+    if (
+      !permitsThreadOperation(
+        { kind: "mcp", capabilities: invocation.capabilities },
+        { operation: "read" },
+      )
+    ) {
       return yield* new ProjectToolError({
         operation,
         reason: "capability_unavailable",
@@ -269,7 +275,13 @@ const handlers = {
       // The one gate on this tool. Filing yourself is a thread's own business;
       // filing someone else moves another agent's work under a different
       // heading, which is an orchestrator's act.
-      if (threadId !== invocation.threadId && !invocation.capabilities.has("peers-operate")) {
+      if (
+        threadId !== invocation.threadId &&
+        !permitsThreadOperation(
+          { kind: "mcp", capabilities: invocation.capabilities },
+          { operation: "create", remote: true },
+        )
+      ) {
         return yield* new ProjectToolError({
           operation: "file_thread",
           reason: "capability_unavailable",
@@ -383,7 +395,13 @@ const handlers = {
       // display: it is what the project *is*, and it lands on every surface on
       // every machine. Restyling the project you are working in is housekeeping;
       // restyling somebody else's is an orchestrator's act.
-      if (slug !== ownSlug && !invocation.capabilities.has("peers-operate")) {
+      if (
+        slug !== ownSlug &&
+        !permitsThreadOperation(
+          { kind: "mcp", capabilities: invocation.capabilities },
+          { operation: "create", remote: true },
+        )
+      ) {
         return yield* new ProjectToolError({
           operation: "set_icon",
           reason: "capability_unavailable",
