@@ -1,6 +1,6 @@
 # StarCode fleet plan
 
-Status: active implementation and rollout checklist
+Status: implemented and rolled out
 Updated: 2026-07-31
 
 This is the living plan for the StarCode fork. The former F1–F17 design diary was
@@ -8,6 +8,31 @@ useful while the fork was exploratory, but it mixed shipped behavior, abandoned
 alternatives, and future ideas. `docs/fork/REWORK.md` records the architectural
 decision that replaced it. This file now contains only the operating model,
 current feature disposition, permanent gates, and remaining release work.
+
+## Release evidence
+
+The fleet rework passed its final gates on 2026-07-31.
+
+- Focused implementation verification covered 94 test files and 1,304 tests,
+  plus affected typechecks, lint, formatting, and deployable builds.
+- The production three-node rig passed canonical local/remote list, read, send,
+  and create; compatibility aliases; partial-node failure; transitive roster
+  convergence; tombstone removal; and restart persistence.
+- The integrated web client and an iOS Simulator showed fleet-wide threads and
+  projects from one anchor connection, including cross-node open/send and
+  new-thread placement.
+- A fresh Ubuntu ARM64 target joined through the Connections onboarding flow,
+  converged into the roster, ran its verification thread, and was then removed
+  through the same shipped UI.
+- The real four-node roster contains the Mac, simforge1, path-pc, and
+  simforgelaptop with no reconciliation failures.
+- Final G0 ran in packaged StarCode on the Mac. It surfaced exactly 27 StarCode
+  MCP tools with no fetch error, found the current local thread across all four
+  nodes with zero failures, verified the credential-free `<starcode_fleet>`
+  bootstrap, and received the exact simforge1 acknowledgment through
+  `thread_send` in approximately 28 seconds.
+- The packaged desktop and all three remote services were rebuilt and restarted
+  from the final `hub` source state.
 
 ## Product model
 
@@ -203,7 +228,7 @@ For normal changes:
 
 Do not use repo-wide suites as a routine local gate. CI owns the full matrix.
 
-## Rollout checklist
+## Rollout procedure
 
 Rollouts run from a different connection than the server being restarted.
 

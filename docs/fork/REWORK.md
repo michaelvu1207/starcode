@@ -1,11 +1,19 @@
 # REWORK — one thread model, one roster, one auth
 
-Status: PROPOSED (2026-07-30)
+Status: IMPLEMENTED AND ROLLED OUT (2026-07-31)
 
-This plan reworks the fork's architecture so the features it already claims actually
-work, without changing how the app feels. It is a refactor with a spine, not a
-rewrite: ~417k lines of hand-written source (470k including generated schemas) is
-far past the size where a clean-sheet rebuild is honest.
+This plan reworked the fork's architecture so the features it already claimed
+actually work, without changing how the app feels. It was a refactor with a
+spine, not a rewrite: ~417k lines of hand-written source (470k including
+generated schemas) was far past the size where a clean-sheet rebuild was honest.
+
+The implementation completed Phases 0–5. The rollout passed G0–G6 on 2026-07-31:
+the three-node disposable rig, integrated web and iOS clients, a fresh Ubuntu
+ARM64 onboarding target, the four-node tailnet fleet, and the packaged macOS
+desktop app all exercised the same architecture. The live G0 provider session
+surfaced 27 StarCode tools with no fetch error, discovered all four nodes with
+zero failures, and received an exact simforge1 reply through `thread_send` in
+approximately 28 seconds.
 
 ---
 
@@ -180,8 +188,9 @@ Prove the features work _before_ restructuring. Nothing here is throwaway.
 1. Normalize tool `inputSchema` in `capabilityToolFilter` — the seam already
    parses and rewrites `tools/list`. Any schema lacking `type: "object"` becomes
    `{type:"object",properties:{},additionalProperties:false}`. Also fix
-   `PeersListInput`. Immunizes the whole class. → 24 tools return to every Claude
-   thread.
+   `PeersListInput`. Immunizes the whole class. The repaired legacy surface
+   returned 24 tools; the completed architecture exposes 27 after adding the
+   canonical thread family.
 2. Re-pair the three peers with `--operate`. Config only. → cross-machine send
    works.
 3. Add a local `threads_list`, shipped inside the existing toolkit. → discovery
@@ -297,14 +306,16 @@ explicitly in G4 and G6.
 the live fleet.
 
 1. Start a Claude thread; assert `mcp-logs-starcode` contains **no**
-   `Failed to fetch tools`, and that the session lists 24 tools.
+   `Failed to fetch tools`, and that the current session lists 27 tools.
 2. From a thread on `mac`, `thread_send` to a thread on `simforge1`. Assert a
    turn starts there within 60s — not a mailbox row with a null `delivered_at`.
 3. `threads_list` from a thread returns its **own machine's** threads.
 4. Assert the session bootstrap block is present in the thread's system prompt.
 
-Pass: all four, unattended, no human in the loop. This is the milestone that
-retires "I'm not sure it could be working right now."
+Pass: all four, unattended, no human in the loop. The final live run passed from
+thread `86e46de1-3f0e-4054-90e2-eb25b02a48df`: all four fleet nodes responded,
+the session bootstrap identified the Mac thread and node, and simforge1 returned
+the exact requested acknowledgment in approximately 28 seconds.
 
 **G1 — one thread API.** 3-node rig, pairwise-paired manually (Phase 2 has not
 landed yet).
