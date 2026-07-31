@@ -11,6 +11,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type ThreadMailboxEntry,
+  type ThreadGoal,
   type TurnId,
 } from "@starcode/contracts";
 import {
@@ -60,7 +61,10 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.goal-set-requested"
+      | "thread.goal-status-set-requested"
+      | "thread.goal-clear-requested";
   }
 >;
 
@@ -229,7 +233,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.goal.update.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -285,6 +290,25 @@ const make = Effect.gen(function* () {
           commandId,
           threadId: input.threadId,
           session: input.session,
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const syncThreadGoal = (input: {
+    readonly threadId: ThreadId;
+    readonly goal: ThreadGoal | null;
+    readonly observedAt: string;
+    readonly createdAt: string;
+  }) =>
+    serverCommandId("provider-goal-sync").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId,
+          threadId: input.threadId,
+          goal: input.goal,
+          observedAt: input.observedAt,
           createdAt: input.createdAt,
         }),
       ),
@@ -1112,6 +1136,94 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processGoalSetRequested = Effect.fn("processGoalSetRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-set-requested" }>,
+  ) {
+    yield* providerService
+      .setGoal({
+        threadId: event.payload.threadId,
+        objective: event.payload.objective,
+        ...(event.payload.tokenBudget !== undefined
+          ? { tokenBudget: event.payload.tokenBudget }
+          : {}),
+      })
+      .pipe(
+        Effect.flatMap((goal) =>
+          syncThreadGoal({
+            threadId: event.payload.threadId,
+            goal,
+            observedAt: goal.updatedAt,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.goal.update.failed",
+            summary: "Goal update failed",
+            detail: formatFailureDetail(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+  });
+
+  const processGoalStatusSetRequested = Effect.fn("processGoalStatusSetRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-status-set-requested" }>,
+  ) {
+    yield* providerService
+      .setGoal({
+        threadId: event.payload.threadId,
+        status: event.payload.status,
+      })
+      .pipe(
+        Effect.flatMap((goal) =>
+          syncThreadGoal({
+            threadId: event.payload.threadId,
+            goal,
+            observedAt: goal.updatedAt,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.goal.update.failed",
+            summary: "Goal status update failed",
+            detail: formatFailureDetail(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+  });
+
+  const processGoalClearRequested = Effect.fn("processGoalClearRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-clear-requested" }>,
+  ) {
+    yield* providerService.clearGoal(event.payload.threadId).pipe(
+      Effect.andThen(
+        syncThreadGoal({
+          threadId: event.payload.threadId,
+          goal: null,
+          observedAt: event.payload.createdAt,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.update.failed",
+          summary: "Goal clear failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1152,6 +1264,15 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.goal-set-requested":
+        yield* processGoalSetRequested(event);
+        return;
+      case "thread.goal-status-set-requested":
+        yield* processGoalStatusSetRequested(event);
+        return;
+      case "thread.goal-clear-requested":
+        yield* processGoalClearRequested(event);
+        return;
     }
   });
 
@@ -1178,7 +1299,10 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.goal-set-requested" ||
+        event.type === "thread.goal-status-set-requested" ||
+        event.type === "thread.goal-clear-requested"
       ) {
         return yield* worker.enqueue(event);
       }

@@ -116,6 +116,19 @@ export class ProviderUnsupportedError extends Schema.TaggedErrorClass<ProviderUn
   }
 }
 
+export class ProviderFeatureUnsupportedError extends Schema.TaggedErrorClass<ProviderFeatureUnsupportedError>()(
+  "ProviderFeatureUnsupportedError",
+  {
+    provider: Schema.String,
+    feature: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider '${this.provider}' does not support ${this.feature}`;
+  }
+}
+
 /**
  * ProviderInstanceNotFoundError - Lookup against the instance registry failed.
  *
@@ -197,6 +210,7 @@ export type ProviderAdapterError =
 export type ProviderServiceError =
   | ProviderValidationError
   | ProviderUnsupportedError
+  | ProviderFeatureUnsupportedError
   | ProviderInstanceNotFoundError
   | ProviderSessionNotFoundError
   | ProviderSessionDirectoryPersistenceError

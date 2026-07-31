@@ -15,6 +15,7 @@ import {
   RuntimeMode,
   ThreadId,
   ThreadTitleSource,
+  ThreadGoal,
   TurnId,
 } from "@starcode/contracts";
 import * as Option from "effect/Option";
@@ -47,6 +48,7 @@ export const ProjectionThread = Schema.Struct({
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
+  goal: Schema.NullOr(ThreadGoal),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

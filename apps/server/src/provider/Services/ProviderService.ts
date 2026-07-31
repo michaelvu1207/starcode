@@ -23,6 +23,8 @@ import type {
   ProviderStopSessionInput,
   ThreadId,
   ProviderTurnStartResult,
+  ProviderSetGoalInput,
+  ThreadGoal,
 } from "@starcode/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -104,6 +106,14 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly getGoal: (threadId: ThreadId) => Effect.Effect<ThreadGoal | null, ProviderServiceError>;
+
+  readonly setGoal: (
+    input: ProviderSetGoalInput,
+  ) => Effect.Effect<ThreadGoal, ProviderServiceError>;
+
+  readonly clearGoal: (threadId: ThreadId) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

@@ -244,6 +244,24 @@ describe("hasUnseenCompletion", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not report completion while a provider goal is active", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        session: null,
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {
@@ -677,6 +695,32 @@ describe("resolveSidebarV2Status", () => {
         session: { ...session, status: "starting" as const },
       }),
     ).toBe("working");
+  });
+
+  it("reports an active provider goal as working while the session is ready", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "ready" as const, activeTurnId: null },
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe("working");
+  });
+
+  it("does not hide a provider error behind an active goal", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe("failed");
   });
 
   it("reports failed only while the session status is error", () => {

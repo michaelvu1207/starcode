@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@starcode/contracts";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -96,9 +97,85 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        goal: null,
       },
     ]);
   });
+
+  effectIt.effect("keeps the newest provider goal when events arrive out of order", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const newerAt = "2026-01-01T00:02:00.000Z";
+      const olderAt = "2026-01-01T00:01:00.000Z";
+      const created = yield* projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+      const withGoal = yield* projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.goal-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: newerAt,
+          commandId: null,
+          payload: {
+            threadId: "thread-1",
+            goal: {
+              objective: "Finish the release",
+              status: "active",
+              tokenBudget: 10_000,
+              tokensUsed: 2_000,
+              timeUsedSeconds: 120,
+              createdAt,
+              updatedAt: newerAt,
+            },
+          },
+        }),
+      );
+      const afterStaleClear = yield* projectEvent(
+        withGoal,
+        makeEvent({
+          sequence: 3,
+          type: "thread.goal-cleared",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: olderAt,
+          commandId: null,
+          payload: {
+            threadId: "thread-1",
+            observedAt: olderAt,
+          },
+        }),
+      );
+
+      expect(afterStaleClear.threads[0]?.goal?.objective).toBe("Finish the release");
+      expect(afterStaleClear.snapshotSequence).toBe(3);
+    }),
+  );
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = "2026-01-01T00:00:00.000Z";

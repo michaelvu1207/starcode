@@ -18,6 +18,7 @@ import {
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
+  ProviderSetGoalInput,
   ProviderStopSessionInput,
   type ProviderInstanceId,
   type ProviderDriverKind,
@@ -45,7 +46,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderFeatureUnsupportedError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -973,6 +978,81 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
+  const requireGoalControl = (
+    operation: string,
+    adapter: ProviderAdapterShape<ProviderAdapterError>,
+  ) =>
+    adapter.capabilities.goalControl === "native"
+      ? Effect.succeed(adapter)
+      : Effect.fail(
+          new ProviderFeatureUnsupportedError({
+            provider: adapter.provider,
+            feature: "goals",
+          }),
+        ).pipe(Effect.withSpan(operation));
+
+  const getGoal: ProviderServiceMethod<"getGoal"> = Effect.fn("getGoal")(function* (threadId) {
+    const routed = yield* resolveRoutableSession({
+      threadId,
+      operation: "ProviderService.getGoal",
+      allowRecovery: true,
+    });
+    const adapter = yield* requireGoalControl("ProviderService.getGoal", routed.adapter);
+    if (!adapter.getGoal) {
+      return yield* Effect.die(
+        new Error(`${adapter.provider} declares native goal control without getGoal`),
+      );
+    }
+    return yield* adapter.getGoal(threadId);
+  });
+
+  const setGoal: ProviderServiceMethod<"setGoal"> = Effect.fn("setGoal")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.setGoal",
+      schema: ProviderSetGoalInput,
+      payload: rawInput,
+    });
+    if (
+      input.objective === undefined &&
+      input.status === undefined &&
+      input.tokenBudget === undefined
+    ) {
+      return yield* toValidationError(
+        "ProviderService.setGoal",
+        "At least one goal field must be provided",
+      );
+    }
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.setGoal",
+      allowRecovery: true,
+    });
+    const adapter = yield* requireGoalControl("ProviderService.setGoal", routed.adapter);
+    if (!adapter.setGoal) {
+      return yield* Effect.die(
+        new Error(`${adapter.provider} declares native goal control without setGoal`),
+      );
+    }
+    return yield* adapter.setGoal(input);
+  });
+
+  const clearGoal: ProviderServiceMethod<"clearGoal"> = Effect.fn("clearGoal")(
+    function* (threadId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.clearGoal",
+        allowRecovery: true,
+      });
+      const adapter = yield* requireGoalControl("ProviderService.clearGoal", routed.adapter);
+      if (!adapter.clearGoal) {
+        return yield* Effect.die(
+          new Error(`${adapter.provider} declares native goal control without clearGoal`),
+        );
+      }
+      return yield* adapter.clearGoal(threadId);
+    },
+  );
+
   const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = Effect.fn(
     "rollbackConversation",
   )(function* (rawInput) {
@@ -1165,6 +1245,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     listSessions,
     getCapabilities,
     getInstanceInfo,
+    getGoal,
+    setGoal,
+    clearGoal,
     rollbackConversation,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each

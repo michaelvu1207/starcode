@@ -1710,6 +1710,22 @@ const make = Effect.gen(function* () {
         });
 
       const now = event.createdAt;
+
+      if (event.type === "thread.goal.updated" || event.type === "thread.goal.cleared") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId: yield* providerCommandId(event, "thread-goal-sync"),
+          threadId: thread.id,
+          goal: event.type === "thread.goal.updated" ? event.payload.goal : null,
+          observedAt:
+            event.type === "thread.goal.updated"
+              ? event.payload.goal.updatedAt
+              : event.payload.observedAt,
+          createdAt: now,
+        });
+        return;
+      }
+
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({

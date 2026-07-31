@@ -16,6 +16,9 @@ import {
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
   type UpdateThreadMetadataInput,
+  type SetThreadGoalInput,
+  type SetThreadGoalStatusInput,
+  type ClearThreadGoalInput,
   archiveThread,
   createThread,
   deleteThread,
@@ -29,6 +32,9 @@ import {
   stopThreadSession,
   unarchiveThread,
   updateThreadMetadata,
+  setThreadGoal,
+  setThreadGoalStatus,
+  clearThreadGoal,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -46,6 +52,9 @@ export type {
   StopThreadSessionInput,
   UnarchiveThreadInput,
   UpdateThreadMetadataInput,
+  SetThreadGoalInput,
+  SetThreadGoalStatusInput,
+  ClearThreadGoalInput,
 } from "../operations/commands.ts";
 
 export function createThreadEnvironmentAtoms<R, E>(
@@ -133,6 +142,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:stop-session",
       execute: (input: StopThreadSessionInput) => stopThreadSession(input),
+      scheduler,
+      concurrency,
+    }),
+    setGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-goal",
+      execute: (input: SetThreadGoalInput) => setThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    setGoalStatus: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-goal-status",
+      execute: (input: SetThreadGoalStatusInput) => setThreadGoalStatus(input),
+      scheduler,
+      concurrency,
+    }),
+    clearGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:clear-goal",
+      execute: (input: ClearThreadGoalInput) => clearThreadGoal(input),
       scheduler,
       concurrency,
     }),

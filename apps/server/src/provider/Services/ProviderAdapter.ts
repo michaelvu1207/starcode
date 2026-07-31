@@ -18,18 +18,22 @@ import type {
   ProviderSessionStartInput,
   ThreadId,
   ProviderTurnStartResult,
+  ProviderSetGoalInput,
+  ThreadGoal,
   TurnId,
 } from "@starcode/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderGoalControlMode = "native" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly goalControl?: ProviderGoalControlMode;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -118,6 +122,12 @@ export interface ProviderAdapterShape<TError> {
    * Stop all sessions owned by this adapter.
    */
   readonly stopAll: () => Effect.Effect<void, TError>;
+
+  readonly getGoal?: (threadId: ThreadId) => Effect.Effect<ThreadGoal | null, TError>;
+
+  readonly setGoal?: (input: ProviderSetGoalInput) => Effect.Effect<ThreadGoal, TError>;
+
+  readonly clearGoal?: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
   /**
    * Canonical runtime event stream emitted by this adapter.

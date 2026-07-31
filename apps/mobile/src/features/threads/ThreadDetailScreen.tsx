@@ -13,6 +13,7 @@ import type {
   RuntimeMode,
   ServerConfig as StarcodeServerConfig,
   ThreadId,
+  ThreadGoal,
 } from "@starcode/contracts";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -40,10 +41,12 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThreadGoalBar } from "./ThreadGoalBar";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
+  readonly goal: ThreadGoal | null | undefined;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -96,6 +99,9 @@ export interface ThreadDetailScreenProps {
     customAnswer: string,
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
+  readonly onSetGoal: (objective: string) => Promise<boolean>;
+  readonly onSetGoalStatus: (status: "active" | "paused") => Promise<boolean>;
+  readonly onClearGoal: () => Promise<boolean>;
   readonly showContent?: boolean;
 }
 
@@ -388,6 +394,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+              <ThreadGoalBar
+                goal={props.goal}
+                supported={props.selectedThread.session?.providerName === "codex"}
+                disabled={props.connectionStateLabel !== "available"}
+                onSet={props.onSetGoal}
+                onStatusChange={props.onSetGoalStatus}
+                onClear={props.onClearGoal}
+              />
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
                   className="shrink-0 gap-3 px-4 pb-3"

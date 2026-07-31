@@ -97,6 +97,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        goal: null,
       });
 
       const rows = yield* sql<{
@@ -127,6 +128,51 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
+    }),
+  );
+
+  it.effect("round-trips provider goal state", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const goal = {
+        objective: "Finish the release",
+        status: "active" as const,
+        tokenBudget: 25_000,
+        tokensUsed: 1_500,
+        timeUsedSeconds: 90,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:01:30.000Z",
+      };
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-with-goal"),
+        projectId: ProjectId.make("project-null-options"),
+        title: "Goal thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        sideOfThreadId: null,
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: goal.updatedAt,
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+        goal,
+      });
+
+      const persisted = yield* threads.getById({
+        threadId: ThreadId.make("thread-with-goal"),
+      });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.goal, goal);
     }),
   );
 });

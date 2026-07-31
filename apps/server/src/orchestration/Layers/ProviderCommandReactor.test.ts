@@ -239,6 +239,18 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const setGoal = vi.fn<ProviderServiceShape["setGoal"]>((goalInput) =>
+      Effect.succeed({
+        objective: goalInput.objective ?? "Existing goal",
+        status: goalInput.status ?? "active",
+        tokenBudget: goalInput.tokenBudget ?? null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const clearGoal = vi.fn<ProviderServiceShape["clearGoal"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -316,6 +328,9 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      getGoal: () => unsupported(),
+      setGoal,
+      clearGoal,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
@@ -434,6 +449,8 @@ describe("ProviderCommandReactor", () => {
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      clearGoal,
       stopSession,
       renameBranch,
       refreshStatus,
@@ -444,6 +461,37 @@ describe("ProviderCommandReactor", () => {
       drain,
     };
   }
+
+  effectIt.effect("sets and projects a provider-owned thread goal", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-goal-set"),
+        threadId: ThreadId.make("thread-1"),
+        objective: "Finish the release",
+        tokenBudget: 25_000,
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.setGoal.mock.calls.length === 1));
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.setGoal.mock.calls[0]?.[0]).toEqual({
+        threadId: ThreadId.make("thread-1"),
+        objective: "Finish the release",
+        tokenBudget: 25_000,
+      });
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads[0]?.goal).toMatchObject({
+        objective: "Finish the release",
+        status: "active",
+        tokenBudget: 25_000,
+      });
+    }),
+  );
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();

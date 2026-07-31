@@ -26,6 +26,8 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadGoalUpdatedPayload,
+  ThreadGoalClearedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -292,6 +294,7 @@ export function projectEvent(
             activities: [],
             checkpoints: [],
             session: null,
+            goal: null,
           },
           event.type,
           "thread",
@@ -689,6 +692,40 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.goal-updated":
+      return decodeForEvent(ThreadGoalUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || (thread.goal && thread.goal.updatedAt > payload.goal.updatedAt)) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              goal: payload.goal,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.goal-cleared":
+      return decodeForEvent(ThreadGoalClearedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || (thread.goal && thread.goal.updatedAt > payload.observedAt)) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              goal: null,
               updatedAt: event.occurredAt,
             }),
           };
