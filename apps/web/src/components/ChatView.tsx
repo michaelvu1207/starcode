@@ -5299,6 +5299,8 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread ? (
         <ComposerPaneMenu
           activeThreadEnvironmentId={activeThread.environmentId}
+          activeThreadActivities={activeThread.activities}
+          activeLatestTurn={activeThread.latestTurn}
           threadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           onEnvModeChange={onEnvModeChange}
@@ -5333,6 +5335,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeProject,
       activeThread,
+      activeThread?.activities,
       activeThreadBranch,
       canCheckoutPullRequestIntoThread,
       canOverrideServerThreadEnvMode,
