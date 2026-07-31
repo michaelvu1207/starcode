@@ -660,6 +660,7 @@ NODE
     ensure_remote_build_tools
     NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes pnpm@@@STARCODE_SOURCE_PACKAGE_MANAGER_VERSION@@ \\
       --filter @starcode/monorepo \\
+      --filter @starcode/scripts... \\
       --filter starcode... \\
       install --frozen-lockfile --ignore-scripts --reporter=append-only
     NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes pnpm@@@STARCODE_SOURCE_PACKAGE_MANAGER_VERSION@@ \\

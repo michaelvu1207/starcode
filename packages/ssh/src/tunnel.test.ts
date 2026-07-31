@@ -163,6 +163,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "pacman -Sy --noconfirm --needed base-devel");
     assert.include(script, "Install build tools or allow passwordless sudo for onboarding.");
     assert.include(script, "--filter @starcode/monorepo");
+    assert.include(script, "--filter @starcode/scripts...");
     assert.include(script, "--filter starcode...");
     assert.include(script, "install --frozen-lockfile");
     assert.include(script, "--ignore-scripts");
