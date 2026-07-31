@@ -55,8 +55,23 @@ const operationError = (
   action: string,
 ) => new FleetOnboardingOperationError(stage, { category, summary, action });
 
-function networkBaseUrl(host: FleetOnboardingHost, port: number): string {
-  const hostname = host.dnsName ?? host.addresses[0] ?? host.hostname;
+function isIpv4Address(value: string): boolean {
+  const octets = value.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => {
+      if (!/^\d{1,3}$/u.test(octet)) {
+        return false;
+      }
+      const number = Number(octet);
+      return number >= 0 && number <= 255;
+    })
+  );
+}
+
+export function __networkBaseUrl(host: FleetOnboardingHost, port: number): string {
+  const hostname =
+    host.addresses.find(isIpv4Address) ?? host.dnsName ?? host.addresses[0] ?? host.hostname;
   const bracketed =
     hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
   return `http://${bracketed}:${port}/`;
@@ -179,7 +194,7 @@ export function makeFleetOnboardingPlatform(
           const remotePort = bootstrap.remotePort ?? preflight.port.number;
           pendingCredentials.set(descriptor.environmentId, {
             pairingToken,
-            baseUrl: networkBaseUrl(host, remotePort),
+            baseUrl: __networkBaseUrl(host, remotePort),
           });
           return {
             environmentId: descriptor.environmentId,

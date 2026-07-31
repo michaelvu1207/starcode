@@ -8,6 +8,7 @@ import type {
 } from "@starcode/client-runtime/onboarding";
 import {
   __hasCompletedAssistantVerification,
+  __networkBaseUrl,
   __resetFleetOnboardingForTests,
   __rosterContainsExpectedEnvironments,
   makeFleetOnboardingPlatform,
@@ -36,6 +37,20 @@ const preflight: FleetOnboardingPreflight = {
 };
 
 describe("web fleet onboarding platform", () => {
+  it("prefers the peer's reachable Tailscale IPv4 address over MagicDNS", () => {
+    expect(__networkBaseUrl(host, 3773)).toBe("http://100.64.0.23:3773/");
+    expect(
+      __networkBaseUrl(
+        {
+          ...host,
+          addresses: ["fd7a:115c:a1e0::23"],
+          dnsName: null,
+        },
+        3773,
+      ),
+    ).toBe("http://[fd7a:115c:a1e0::23]:3773/");
+  });
+
   it.effect(
     "uses desktop discovery, preflight, and provisioning without returning credentials",
     () =>
