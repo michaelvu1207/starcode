@@ -285,7 +285,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --fleet --json',
     );
     assert.include(buildRemotePairingScript(target), 'STATE_DIR="$HOME/.starcode/ssh-launch/');
     assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');

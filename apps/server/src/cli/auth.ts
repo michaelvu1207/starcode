@@ -126,6 +126,13 @@ const baseUrlFlag = Flag.string("base-url").pipe(
   Flag.optional,
 );
 
+const fleetPairingFlag = Flag.boolean("fleet").pipe(
+  Flag.withDescription(
+    "Issue an administrative one-time token for joining this server to a trusted StarCode fleet.",
+  ),
+  Flag.withDefault(false),
+);
+
 const tokenOnlyFlag = Flag.boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -136,6 +143,7 @@ const pairingCreateCommand = Command.make("create", {
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
+  fleet: fleetPairingFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
@@ -145,8 +153,8 @@ const pairingCreateCommand = Command.make("create", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.createPairingLink({
-            scopes: AuthStandardClientScopes,
-            subject: "one-time-token",
+            scopes: flags.fleet ? AuthAdministrativeScopes : AuthStandardClientScopes,
+            subject: flags.fleet ? "fleet-pairing" : "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           });

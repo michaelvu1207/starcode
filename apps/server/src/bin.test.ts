@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentOrchestrationHttpApi,
   ProviderInstanceId,
@@ -348,6 +350,15 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
+        readonly scopes: ReadonlyArray<string>;
+      };
+      const fleetCreatedOutput = yield* captureStdout(
+        runCli(["auth", "pairing", "create", "--base-dir", baseDir, "--fleet", "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const fleetCreated = JSON.parse(fleetCreatedOutput.output) as {
+        readonly id: string;
+        readonly scopes: ReadonlyArray<string>;
       };
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -361,9 +372,21 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal(typeof created.id, "string");
       assert.equal(typeof created.credential, "string");
       assert.equal(created.credential.length > 0, true);
-      assert.equal(listed.length, 1);
-      assert.equal(listed[0]?.id, created.id);
-      assert.equal("credential" in (listed[0] ?? {}), false);
+      assert.deepEqual(created.scopes, AuthStandardClientScopes);
+      assert.deepEqual(fleetCreated.scopes, AuthAdministrativeScopes);
+      assert.equal(listed.length, 2);
+      assert.equal(
+        listed.some((entry) => entry.id === created.id),
+        true,
+      );
+      assert.equal(
+        listed.some((entry) => entry.id === fleetCreated.id),
+        true,
+      );
+      assert.equal(
+        listed.every((entry) => !("credential" in entry)),
+        true,
+      );
     }),
   );
 

@@ -911,7 +911,7 @@ cat >"$RUNNER_FILE" <<'SH'
 SH
 chmod 700 "$RUNNER_FILE"
 PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --fleet --json
 `;
 
 export const REMOTE_STOP_SCRIPT = `set -eu
