@@ -1,12 +1,14 @@
-import { ConnectionOnboarding } from "@starcode/client-runtime/connection";
+import { ConnectionOnboarding, EnvironmentRegistry } from "@starcode/client-runtime/connection";
 import { runFleetOnboarding } from "@starcode/client-runtime/onboarding";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@starcode/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@starcode/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 
+import { PrimaryEnvironmentHttpClient } from "../environments/primary/httpClient";
+import { runPrimaryHttp } from "../lib/runtime";
 import { connectionAtomRuntime } from "./runtime";
 
 const onboardingScheduler = createAtomCommandScheduler();
@@ -46,4 +48,36 @@ export const onboardFleetHost = createRuntimeCommand(connectionAtomRuntime, {
     key: (input: { readonly hostname: string }) => input.hostname.trim().toLocaleLowerCase(),
   },
   execute: (input: { readonly hostname: string }) => runFleetOnboarding(input),
+});
+
+export const removeFleetEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:remove-fleet-environment",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (environmentId: EnvironmentId) => environmentId,
+  },
+  execute: (environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry;
+      const bootstrap = yield* Effect.tryPromise(() =>
+        runPrimaryHttp(
+          PrimaryEnvironmentHttpClient.pipe(
+            Effect.flatMap((client) =>
+              Effect.gen(function* () {
+                yield* client.fleet.remove({
+                  headers: {},
+                  payload: { environmentId },
+                });
+                return yield* Effect.all({
+                  descriptor: client.metadata.descriptor(),
+                  snapshot: client.fleet.clientBootstrap({ headers: {}, payload: {} }),
+                });
+              }),
+            ),
+          ),
+        ),
+      );
+      yield* registry.reconcileFleet(bootstrap.descriptor.environmentId, bootstrap.snapshot);
+    }),
 });

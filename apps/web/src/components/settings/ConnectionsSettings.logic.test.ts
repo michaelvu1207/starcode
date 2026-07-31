@@ -1,6 +1,10 @@
 import type { DesktopWslState } from "@starcode/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { applyWslEnableSelection, compareSavedConnectionRows } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  compareSavedConnectionRows,
+  isFleetManagedConnectionTarget,
+} from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
   enabled: false,
@@ -107,5 +111,28 @@ describe("compareSavedConnectionRows", () => {
 
   it("holds a fixed order for two servers announcing the same host", () => {
     expect(order(hub.toReversed())).toEqual(["env-b", "env-a", "env-c"]);
+  });
+});
+
+describe("isFleetManagedConnectionTarget", () => {
+  it("identifies only fleet-derived bearer connections", () => {
+    expect(
+      isFleetManagedConnectionTarget("environment-a", {
+        _tag: "BearerConnectionTarget",
+        connectionId: "fleet:environment-a",
+      }),
+    ).toBe(true);
+    expect(
+      isFleetManagedConnectionTarget("environment-a", {
+        _tag: "BearerConnectionTarget",
+        connectionId: "saved:environment-a",
+      }),
+    ).toBe(false);
+    expect(
+      isFleetManagedConnectionTarget("environment-a", {
+        _tag: "SshConnectionTarget",
+        connectionId: "fleet:environment-a",
+      }),
+    ).toBe(false);
   });
 });

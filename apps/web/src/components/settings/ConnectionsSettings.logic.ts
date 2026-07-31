@@ -9,6 +9,18 @@ export interface SavedConnectionRowOrder {
   readonly serverLabel: string;
 }
 
+export function isFleetManagedConnectionTarget(
+  environmentId: string,
+  target: {
+    readonly _tag: string;
+    readonly connectionId?: string;
+  },
+): boolean {
+  return (
+    target._tag === "BearerConnectionTarget" && target.connectionId === `fleet:${environmentId}`
+  );
+}
+
 /**
  * Row order for Settings → Connections.
  *

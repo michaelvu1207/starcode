@@ -41,7 +41,11 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { applyWslEnableSelection, compareSavedConnectionRows } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  compareSavedConnectionRows,
+  isFleetManagedConnectionTarget,
+} from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -117,6 +121,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  removeFleetEnvironment as removeFleetEnvironmentAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -1413,6 +1418,10 @@ function SavedBackendListRow({
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
+  const isFleetEnvironment = isFleetManagedConnectionTarget(
+    environmentId,
+    environment.entry.target,
+  );
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -1514,8 +1523,12 @@ function SavedBackendListRow({
               >
                 {isConnected
                   ? removingEnvironmentId === environmentId
-                    ? "Disconnecting…"
-                    : "Disconnect"
+                    ? isFleetEnvironment
+                      ? "Removing…"
+                      : "Disconnecting…"
+                    : isFleetEnvironment
+                      ? "Remove"
+                      : "Disconnect"
                   : isConnecting
                     ? "Connecting…"
                     : "Connect"}
@@ -1741,6 +1754,9 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const removeFleetEnvironment = useAtomCommand(removeFleetEnvironmentAtom, {
+    reportFailure: false,
+  });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
@@ -2255,7 +2271,14 @@ export function ConnectionsSettings() {
     async (environmentId: EnvironmentId) => {
       setRemovingSavedEnvironmentId(environmentId);
       setSavedBackendError(null);
-      const result = await removeEnvironment(environmentId);
+      const environment = savedEnvironments.find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      const result =
+        environment !== undefined &&
+        isFleetManagedConnectionTarget(environmentId, environment.entry.target)
+          ? await removeFleetEnvironment(environmentId)
+          : await removeEnvironment(environmentId);
       setRemovingSavedEnvironmentId(null);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2270,7 +2293,7 @@ export function ConnectionsSettings() {
         );
       }
     },
-    [removeEnvironment],
+    [removeEnvironment, removeFleetEnvironment, savedEnvironments],
   );
 
   const handleConnectSshHost = useCallback(
