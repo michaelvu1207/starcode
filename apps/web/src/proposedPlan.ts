@@ -2,6 +2,7 @@
 // same function, and the sidebar name has to match the plan's own heading.
 // Re-exported because this module is where the web app already looks for it.
 import { proposedPlanTitle } from "@starcode/shared/proposedPlanTitle";
+import { THREAD_GOAL_OBJECTIVE_MAX_CHARS } from "@starcode/contracts";
 
 export { proposedPlanTitle };
 
@@ -76,9 +77,25 @@ export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
 }
 
-export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
+export function buildPlanGoalObjective(planMarkdown: string): string {
+  const title = proposedPlanTitle(planMarkdown);
+  if (!title) {
+    return "Implement the approved plan completely. Continue until every plan item is finished and verified.";
+  }
+  const prefix = 'Implement the approved plan "';
+  const suffix = '" completely. Continue until every plan item is finished and verified.';
+  const titleLimit = THREAD_GOAL_OBJECTIVE_MAX_CHARS - prefix.length - suffix.length;
+  return `${prefix}${title.slice(0, titleLimit)}${suffix}`;
+}
+
+export function resolvePlanFollowUpSubmission(input: {
+  draftText: string;
+  planMarkdown: string;
+  runAsGoal?: boolean;
+}): {
   text: string;
   interactionMode: "default" | "plan";
+  goalObjective?: string;
 } {
   const trimmedDraftText = input.draftText.trim();
   if (trimmedDraftText.length > 0) {
@@ -91,6 +108,7 @@ export function resolvePlanFollowUpSubmission(input: { draftText: string; planMa
   return {
     text: buildPlanImplementationPrompt(input.planMarkdown),
     interactionMode: "default",
+    ...(input.runAsGoal ? { goalObjective: buildPlanGoalObjective(input.planMarkdown) } : {}),
   };
 }
 

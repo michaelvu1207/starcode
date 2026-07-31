@@ -154,6 +154,7 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly setGoalEffect?: ProviderServiceShape["setGoal"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -239,16 +240,18 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
-    const setGoal = vi.fn<ProviderServiceShape["setGoal"]>((goalInput) =>
-      Effect.succeed({
-        objective: goalInput.objective ?? "Existing goal",
-        status: goalInput.status ?? "active",
-        tokenBudget: goalInput.tokenBudget ?? null,
-        tokensUsed: 0,
-        timeUsedSeconds: 0,
-        createdAt: now,
-        updatedAt: now,
-      }),
+    const setGoal = vi.fn<ProviderServiceShape["setGoal"]>(
+      (goalInput) =>
+        input?.setGoalEffect?.(goalInput) ??
+        Effect.succeed({
+          objective: goalInput.objective ?? "Existing goal",
+          status: goalInput.status ?? "active",
+          tokenBudget: goalInput.tokenBudget ?? null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: now,
+          updatedAt: now,
+        }),
     );
     const clearGoal = vi.fn<ProviderServiceShape["clearGoal"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
@@ -532,6 +535,94 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  effectIt.effect(
+    "activates a requested goal after session start and before sending the provider turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-plan-goal"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-plan-goal"),
+            role: "user",
+            text: "implement the approved plan",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          goalObjective: "Complete the approved plan and verify every item.",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(harness.startSession).toHaveBeenCalledTimes(1);
+        expect(harness.setGoal).toHaveBeenCalledWith({
+          threadId: ThreadId.make("thread-1"),
+          objective: "Complete the approved plan and verify every item.",
+        });
+        expect(harness.setGoal.mock.invocationCallOrder[0]).toBeLessThan(
+          harness.sendTurn.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        expect(readModel.threads[0]?.goal).toMatchObject({
+          objective: "Complete the approved plan and verify every item.",
+          status: "active",
+        });
+      }),
+  );
+
+  effectIt.effect("does not send the implementation turn when its goal cannot be activated", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          setGoalEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread/goal/set",
+                detail: "goal activation failed",
+              }),
+            ),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-plan-goal-failure"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-plan-goal-failure"),
+          role: "user",
+          text: "implement the approved plan",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        goalObjective: "Complete the approved plan and verify every item.",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads[0]?.activities.some(
+              (activity) => activity.kind === "provider.turn.start.failed",
+            ) ?? false
+          );
+        }),
+      );
+      expect(harness.setGoal).toHaveBeenCalledTimes(1);
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    }),
+  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {

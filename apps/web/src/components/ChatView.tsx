@@ -100,6 +100,7 @@ import {
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
 import {
+  buildPlanGoalObjective,
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
@@ -2075,6 +2076,7 @@ function ChatViewContent(props: ChatViewProps) {
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
+  const canRunActivePlanAsGoal = activeThread?.session?.providerName === "codex";
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
     beginLocalDispatch,
@@ -4262,6 +4264,7 @@ function ChatViewContent(props: ChatViewProps) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
+        runAsGoal: canRunActivePlanAsGoal,
       });
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -4269,6 +4272,7 @@ function ChatViewContent(props: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        ...(followUp.goalObjective ? { goalObjective: followUp.goalObjective } : {}),
       });
       return;
     }
@@ -4810,9 +4814,11 @@ function ChatViewContent(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      goalObjective,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      goalObjective?: string;
     }) => {
       if (
         !activeThread ||
@@ -4925,6 +4931,7 @@ function ChatViewContent(props: ChatViewProps) {
                   },
                 }
               : {}),
+            ...(goalObjective ? { goalObjective } : {}),
             createdAt: messageCreatedAt,
           },
         });
@@ -4978,7 +4985,15 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onImplementPlanInNewThread = useCallback(async () => {
+  const onImplementPlanOnce = useCallback(() => {
+    if (!activeProposedPlan) return;
+    void onSubmitPlanFollowUp({
+      text: buildPlanImplementationPrompt(activeProposedPlan.planMarkdown),
+      interactionMode: "default",
+    });
+  }, [activeProposedPlan, onSubmitPlanFollowUp]);
+
+  const onImplementPlanInNewThread = useCallback(async (runAsGoal: boolean) => {
     if (
       !activeThread ||
       !activeProject ||
@@ -5008,6 +5023,7 @@ function ChatViewContent(props: ChatViewProps) {
     const nextThreadId = newThreadId();
     const planMarkdown = activeProposedPlan.planMarkdown;
     const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
+    const goalObjective = runAsGoal ? buildPlanGoalObjective(planMarkdown) : undefined;
     const outgoingImplementationPrompt = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -5061,6 +5077,7 @@ function ChatViewContent(props: ChatViewProps) {
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
           },
+          ...(goalObjective ? { goalObjective } : {}),
           createdAt,
         },
       });
@@ -5779,6 +5796,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onInterrupt={onInterrupt}
+                            onImplementPlanOnce={onImplementPlanOnce}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={

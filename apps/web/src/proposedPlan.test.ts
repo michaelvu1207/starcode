@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
+  buildPlanGoalObjective,
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
@@ -24,6 +25,20 @@ describe("buildPlanImplementationPrompt", () => {
   it("formats the plan exactly like the Codex follow-up handoff prompt", () => {
     expect(buildPlanImplementationPrompt("## Ship it\n\n- step 1\n")).toBe(
       "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
+    );
+  });
+});
+
+describe("buildPlanGoalObjective", () => {
+  it("turns the plan title into a completion-oriented goal", () => {
+    expect(buildPlanGoalObjective("## Ship it\n\n- step 1\n")).toBe(
+      'Implement the approved plan "Ship it" completely. Continue until every plan item is finished and verified.',
+    );
+  });
+
+  it("uses a useful fallback for a plan without a title", () => {
+    expect(buildPlanGoalObjective("- step 1")).toBe(
+      "Implement the approved plan completely. Continue until every plan item is finished and verified.",
     );
   });
 });
@@ -84,6 +99,32 @@ describe("resolvePlanFollowUpSubmission", () => {
       }),
     ).toEqual({
       text: "Refine step 2 first",
+      interactionMode: "plan",
+    });
+  });
+
+  it("attaches the suggested goal only when implementing an empty follow-up", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+        runAsGoal: true,
+      }),
+    ).toEqual({
+      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
+      interactionMode: "default",
+      goalObjective:
+        'Implement the approved plan "Ship it" completely. Continue until every plan item is finished and verified.',
+    });
+
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "Add another step",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+        runAsGoal: true,
+      }),
+    ).toEqual({
+      text: "Add another step",
       interactionMode: "plan",
     });
   });
