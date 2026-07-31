@@ -11,6 +11,8 @@ import {
   fleetRosterRecordsEqual,
   fleetRosterRequiresExchange,
   fleetRegistrationFailureDetail,
+  nextFleetRegistrationTimestamp,
+  reassertRegisteredFleetMember,
   resolveSelfBaseUrl,
 } from "./FleetReconciler.ts";
 
@@ -81,6 +83,55 @@ describe("fleet self metadata", () => {
     ];
 
     assert.isTrue(details.every((detail) => detail?.includes(sensitiveValue) === false));
+  });
+
+  it("reasserts the reachable registration endpoint after initial reconciliation", () => {
+    const initial = member("remote", "2026-07-30T00:00:00.000Z");
+    const registered: FleetMember = {
+      ...initial,
+      node: {
+        ...initial.node,
+        endpoints: [
+          {
+            id: "fleet-default",
+            label: "Remote",
+            provider: {
+              id: "fleet",
+              label: "StarCode fleet",
+              kind: "private-network",
+              isAddon: false,
+            },
+            httpBaseUrl: "http://100.64.0.23:3773/",
+            wsBaseUrl: "ws://100.64.0.23:3773/",
+            reachability: "private-network",
+            compatibility: {
+              hostedHttpsApp: "mixed-content-blocked",
+              desktopApp: "compatible",
+            },
+            source: "server",
+            status: "available",
+            isDefault: true,
+          },
+        ],
+      },
+    };
+
+    const reasserted = reassertRegisteredFleetMember(registered, "2026-07-30T00:00:01.000Z");
+
+    assert.equal(reasserted.node.endpoints[0]?.httpBaseUrl, "http://100.64.0.23:3773/");
+    assert.equal(reasserted.node.updatedAt, "2026-07-30T00:00:01.000Z");
+    assert.equal(reasserted.updatedAt, "2026-07-30T00:00:01.000Z");
+    assert.equal(reasserted.registeredAt, "2026-07-30T00:00:00.000Z");
+  });
+
+  it("advances beyond a remote self-record even when that machine's clock is ahead", () => {
+    assert.equal(
+      nextFleetRegistrationTimestamp("2026-07-30T00:00:01.000Z", [
+        "2026-07-30T00:00:00.000Z",
+        "2026-07-30T00:05:00.000Z",
+      ]),
+      "2026-07-30T00:05:00.001Z",
+    );
   });
 });
 

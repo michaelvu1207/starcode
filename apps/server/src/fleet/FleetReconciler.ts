@@ -198,6 +198,40 @@ export const fleetRosterRequiresExchange = (local: FleetRoster, remote: FleetRos
   !fleetRosterRecordsEqual(remote, mergeFleetRosters(remote, local));
 
 /**
+ * A newly contacted node may learn its own loopback fallback a few
+ * milliseconds after the registering node records the reachable address.
+ * Reassert the observed registration metadata after the first reconciliation
+ * so last-writer-wins convergence keeps the endpoint that actually worked.
+ */
+export const reassertRegisteredFleetMember = (
+  member: FleetMember,
+  updatedAt: string,
+): FleetMember => ({
+  ...member,
+  node: {
+    ...member.node,
+    updatedAt,
+  },
+  updatedAt,
+});
+
+export const nextFleetRegistrationTimestamp = (
+  now: string,
+  observedTimestamps: ReadonlyArray<string>,
+): string => {
+  const observedEpochMs = observedTimestamps.map(
+    (timestamp) => DateTime.makeUnsafe(timestamp).epochMilliseconds,
+  );
+  const latestObservedEpochMs =
+    observedEpochMs.length === 0 ? Number.NEGATIVE_INFINITY : Math.max(...observedEpochMs);
+  return DateTime.formatIso(
+    DateTime.makeUnsafe(
+      Math.max(DateTime.makeUnsafe(now).epochMilliseconds, latestObservedEpochMs + 1),
+    ),
+  );
+};
+
+/**
  * Viewer credentials can never gain authority through fleet discovery.
  * Administrative-only scopes are omitted and every retained client scope must
  * already exist on the authenticated anchor session.
@@ -685,7 +719,20 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
-    return { node, roster: yield* registry.snapshot };
+    const reconciledRoster = yield* registry.snapshot;
+    const reconciledMember = reconciledRoster.members.find(
+      (candidate) => candidate.node.environmentId === member.node.environmentId,
+    );
+    const reasserted = reassertRegisteredFleetMember(
+      member,
+      nextFleetRegistrationTimestamp(DateTime.formatIso(yield* DateTime.now), [
+        member.updatedAt,
+        ...(reconciledMember === undefined ? [] : [reconciledMember.updatedAt]),
+      ]),
+    );
+    yield* registry.upsert(reasserted);
+    yield* clientBootstrapCache.invalidate;
+    return { node: reasserted.node, roster: yield* registry.snapshot };
   });
   const register: FleetReconcilerShape["register"] = (input) =>
     registerInternal(input).pipe(
