@@ -155,6 +155,13 @@ describe("ssh tunnel scripts", () => {
       'tar -xzf "$STARCODE_SOURCE_ARCHIVE" -C "$STARCODE_SOURCE_STAGING" --strip-components=1',
     );
     assert.include(script, "npx --yes pnpm@11.10.0");
+    assert.include(script, "ensure_remote_build_tools");
+    assert.include(script, "apt-get install -y -qq build-essential");
+    assert.include(script, "apk add --no-cache build-base");
+    assert.include(script, "dnf install -y make gcc-c++");
+    assert.include(script, "yum install -y make gcc-c++");
+    assert.include(script, "pacman -Sy --noconfirm --needed base-devel");
+    assert.include(script, "Install build tools or allow passwordless sudo for onboarding.");
     assert.include(script, "--filter @starcode/monorepo");
     assert.include(script, "--filter starcode...");
     assert.include(script, "install --frozen-lockfile");

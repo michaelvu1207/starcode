@@ -543,6 +543,42 @@ prepare_starcode_source_checkout() (
     printf 'The StarCode fork installer requires tar on the remote host.\\n' >&2
     exit 1
   fi
+  run_starcode_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+      "$@"
+      return
+    fi
+    sudo -n "$@"
+  }
+  ensure_remote_build_tools() {
+    if command -v make >/dev/null 2>&1 && command -v c++ >/dev/null 2>&1; then
+      return
+    fi
+    if [ "$(id -u)" -ne 0 ] &&
+      { ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; }; then
+      printf 'The StarCode fork installer needs make and a C++ compiler. Install build tools or allow passwordless sudo for onboarding.\\n' >&2
+      exit 1
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      run_starcode_privileged env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+      run_starcode_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential
+    elif command -v apk >/dev/null 2>&1; then
+      run_starcode_privileged apk add --no-cache build-base
+    elif command -v dnf >/dev/null 2>&1; then
+      run_starcode_privileged dnf install -y make gcc-c++
+    elif command -v yum >/dev/null 2>&1; then
+      run_starcode_privileged yum install -y make gcc-c++
+    elif command -v pacman >/dev/null 2>&1; then
+      run_starcode_privileged pacman -Sy --noconfirm --needed base-devel
+    else
+      printf 'The StarCode fork installer needs make and a C++ compiler, and could not identify a supported package manager.\\n' >&2
+      exit 1
+    fi
+    if ! command -v make >/dev/null 2>&1 || ! command -v c++ >/dev/null 2>&1; then
+      printf 'The StarCode fork installer could not prepare make and a C++ compiler.\\n' >&2
+      exit 1
+    fi
+  }
   mkdir -p "$STARCODE_SOURCE_ROOT"
   STARCODE_SOURCE_STAGING="$STARCODE_SOURCE_ROOT/.staging.$STARCODE_SOURCE_KEY.$$"
   trap 'rm -rf "$STARCODE_SOURCE_STAGING"' EXIT HUP INT TERM
@@ -621,6 +657,7 @@ NODE
   rm -f "$STARCODE_SOURCE_ARCHIVE" "$STARCODE_SOURCE_STAGING/commit.json"
   (
     cd "$STARCODE_SOURCE_STAGING"
+    ensure_remote_build_tools
     NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes pnpm@@@STARCODE_SOURCE_PACKAGE_MANAGER_VERSION@@ \\
       --filter @starcode/monorepo \\
       --filter starcode... \\
