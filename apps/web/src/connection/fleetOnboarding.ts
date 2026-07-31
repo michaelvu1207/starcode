@@ -20,6 +20,7 @@ import {
   ThreadId,
   type DesktopBridge,
   type EnvironmentId,
+  type FleetClientBootstrapResult,
   type ModelSelection,
   type OrchestrationShellSnapshot,
 } from "@starcode/contracts";
@@ -113,6 +114,27 @@ export function __rosterContainsExpectedEnvironments(
     registered.has(environmentId),
   );
 }
+
+export const __reconcileJoinedFleetSnapshot = Effect.fn(
+  "web.fleetOnboarding.reconcileJoinedSnapshot",
+)(function* (input: {
+  readonly registry: Pick<EnvironmentRegistry["Service"], "reconcileFleet">;
+  readonly anchorEnvironmentId: EnvironmentId;
+  readonly joinedEnvironmentId: EnvironmentId;
+  readonly snapshot: FleetClientBootstrapResult;
+}) {
+  if (!input.snapshot.nodes.some((node) => node.environmentId === input.joinedEnvironmentId)) {
+    return yield* Effect.fail(
+      operationError(
+        "join-fleet",
+        "fleet-join-failed",
+        "The new fleet node joined, but its client connection was not issued.",
+        "Keep both machines online, reconcile the fleet, and retry onboarding.",
+      ),
+    );
+  }
+  yield* input.registry.reconcileFleet(input.anchorEnvironmentId, input.snapshot);
+});
 
 export function makeFleetOnboardingPlatform(
   resolveBridge: () => DesktopBridge | undefined,
@@ -423,6 +445,32 @@ export const makeFleetOnboardingGateway = Effect.gen(function* () {
           ),
         );
       }
+      const bootstrap = yield* Effect.tryPromise({
+        try: () =>
+          runPrimaryHttp(
+            PrimaryEnvironmentHttpClient.pipe(
+              Effect.flatMap((client) =>
+                Effect.all({
+                  descriptor: client.metadata.descriptor(),
+                  snapshot: client.fleet.clientBootstrap({ headers: {}, payload: {} }),
+                }),
+              ),
+            ),
+          ),
+        catch: () =>
+          operationError(
+            "join-fleet",
+            "fleet-join-failed",
+            "The new fleet node joined, but its client connection could not be refreshed.",
+            "Keep both machines online, reconcile the fleet, and retry onboarding.",
+          ),
+      });
+      yield* __reconcileJoinedFleetSnapshot({
+        registry,
+        anchorEnvironmentId: bootstrap.descriptor.environmentId,
+        joinedEnvironmentId: result.node.environmentId,
+        snapshot: bootstrap.snapshot,
+      });
       return {
         environmentId: result.node.environmentId,
         nodeName: result.node.name,

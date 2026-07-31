@@ -9,6 +9,7 @@ import type {
 import {
   __hasCompletedAssistantVerification,
   __networkBaseUrl,
+  __reconcileJoinedFleetSnapshot,
   __resetFleetOnboardingForTests,
   __rosterContainsExpectedEnvironments,
   makeFleetOnboardingPlatform,
@@ -163,4 +164,67 @@ describe("web fleet onboarding platform", () => {
       false,
     );
   });
+
+  it.effect("installs the post-registration client bootstrap snapshot immediately", () =>
+    Effect.gen(function* () {
+      const anchorEnvironmentId = "environment-anchor" as EnvironmentId;
+      const joinedEnvironmentId = "environment-joined" as EnvironmentId;
+      const calls: Array<{
+        readonly anchorEnvironmentId: EnvironmentId;
+        readonly nodeIds: ReadonlyArray<EnvironmentId>;
+      }> = [];
+      const snapshot = {
+        revision: 2,
+        nodes: [
+          {
+            nodeId: "node-joined",
+            environmentId: joinedEnvironmentId,
+            label: "Joined",
+            endpoint: {
+              httpBaseUrl: "https://joined.example.test/",
+              wsBaseUrl: "wss://joined.example.test/",
+            },
+            credential: { bearerToken: "attenuated-client-token" },
+          },
+        ],
+      } as const;
+
+      yield* __reconcileJoinedFleetSnapshot({
+        registry: {
+          reconcileFleet: (environmentId, next) =>
+            Effect.sync(() => {
+              calls.push({
+                anchorEnvironmentId: environmentId,
+                nodeIds: next.nodes.map((node) => node.environmentId),
+              });
+            }),
+        },
+        anchorEnvironmentId,
+        joinedEnvironmentId,
+        snapshot,
+      });
+
+      expect(calls).toEqual([
+        {
+          anchorEnvironmentId,
+          nodeIds: [joinedEnvironmentId],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("rejects a stale bootstrap snapshot that omits the newly joined node", () =>
+    Effect.gen(function* () {
+      const error = yield* __reconcileJoinedFleetSnapshot({
+        registry: {
+          reconcileFleet: () => Effect.void,
+        },
+        anchorEnvironmentId: "environment-anchor" as EnvironmentId,
+        joinedEnvironmentId: "environment-joined" as EnvironmentId,
+        snapshot: { revision: 1, nodes: [] },
+      }).pipe(Effect.flip);
+
+      expect(error.diagnosis.summary).toContain("client connection was not issued");
+    }),
+  );
 });
