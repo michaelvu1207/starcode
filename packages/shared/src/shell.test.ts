@@ -81,7 +81,7 @@ describe("readPathFromLoginShell", () => {
     const [shell, args, options] = firstCall;
     expect(shell).toBe("/opt/homebrew/bin/fish");
     expect(args).toHaveLength(2);
-    expect(args?.[0]).toBe("-ilc");
+    expect(args?.[0]).toBe("-lc");
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__STARCODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__STARCODE_ENV_PATH_END__");
@@ -145,6 +145,11 @@ describe("readEnvironmentFromLoginShell", () => {
       SSH_AUTH_SOCK: "/tmp/secretive.sock",
     });
     expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith(
+      "/bin/zsh",
+      expect.arrayContaining(["-lc"]),
+      expect.objectContaining({ encoding: "utf8", timeout: 5000 }),
+    );
   });
 
   it("omits environment variables that are missing or empty", () => {

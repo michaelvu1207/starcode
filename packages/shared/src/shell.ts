@@ -311,7 +311,10 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  // We only need the login environment here. Interactive startup files may
+  // run completion frameworks, command scans, or terminal-only hooks that
+  // stall a background server launched without a TTY.
+  const output = execFile(shell, ["-lc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
   });

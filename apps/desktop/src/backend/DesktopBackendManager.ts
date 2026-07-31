@@ -58,7 +58,11 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 // failures may instead provide their own larger retryLimit when they should
 // self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
-const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
+// First launch may need to migrate a large local database and rebuild fleet
+// projections before the descriptor endpoint can answer. Keep the splash
+// alive long enough for that legitimate work instead of leaving a healthy
+// backend running with no desktop window.
+const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(2);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
