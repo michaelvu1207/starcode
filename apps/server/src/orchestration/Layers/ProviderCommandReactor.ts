@@ -989,6 +989,29 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    if (event.payload.goalObjective !== undefined) {
+      const goalPrepared = yield* providerService
+        .setGoal({
+          threadId: event.payload.threadId,
+          objective: event.payload.goalObjective,
+        })
+        .pipe(
+          Effect.flatMap((goal) =>
+            syncThreadGoal({
+              threadId: event.payload.threadId,
+              goal,
+              observedAt: goal.updatedAt,
+              createdAt: event.payload.createdAt,
+            }),
+          ),
+          Effect.as(true),
+          Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(false))),
+        );
+      if (!goalPrepared) {
+        return;
+      }
+    }
+
     yield* providerService
       .sendTurn(sendTurnRequest.value)
       .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
