@@ -283,7 +283,12 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        // A desktop app only needs the login environment. Loading interactive
+        // startup files here can run completion frameworks and command hash
+        // scans that never finish when launched without a terminal, leaving
+        // the app with no window. It can also import unrelated interactive
+        // secrets into the probe process.
+        args: ["-lc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
