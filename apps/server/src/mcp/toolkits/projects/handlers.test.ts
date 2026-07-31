@@ -2,12 +2,11 @@
  * The project tools' round trip, through the handlers an agent actually calls.
  *
  * Two things are worth testing here and they are not the same thing. One is the
- * gate: filing yourself is every worker's business, filing someone else is the
- * orchestrator's, and that split has to hold in the handler and not only in the
- * capability the credential carries. The other is the membership answer, which
- * is what every one of these tools is really reporting — derived from the
- * folder, overridden by hand, and re-derived after an unfile so the caller
- * learns where the thread actually landed rather than what it asked for.
+ * authority: every authenticated task may manage projects, including filing
+ * other threads. The other is the membership answer, which is what every one
+ * of these tools is really reporting — derived from the folder, overridden by
+ * hand, and re-derived after an unfile so the caller learns where the thread
+ * actually landed rather than what it asked for.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -19,7 +18,15 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ExecutionEnvironmentDescriptor,
+  type OrchestrationCommand,
   type OrchestrationShellSnapshot,
+  type ProjectBindLocationToolResult,
+  type ProjectLocationCreateToolResult,
+  type ProjectLocationRemoveToolResult,
+  type ProjectLocationUpdateToolResult,
+  type ProjectLocationsToolResult,
+  type ProjectRemoveToolResult,
+  type ProjectUpsertToolResult,
   type ProjectGetResult,
   type ProjectListResult,
   type ProjectFileThreadToolResult,
@@ -34,6 +41,8 @@ import {
   FeatureMapRegistry,
   layer as featureMapRegistryLayer,
 } from "../../../featureMap/FeatureMapRegistry.ts";
+import { FleetRegistry } from "../../../fleet/FleetRegistry.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   ProjectCatalogRegistry,
@@ -135,10 +144,26 @@ const environmentLayer = Layer.mock(ServerEnvironment.ServerEnvironment)({
   } as ExecutionEnvironmentDescriptor),
 });
 
+const dispatchedCommands: Array<OrchestrationCommand> = [];
+
+const fleetLayer = Layer.mock(FleetRegistry)({
+  snapshot: Effect.succeed({ version: 1, revision: 0, members: [], tombstones: [] }),
+});
+
+const orchestrationLayer = Layer.mock(OrchestrationEngineService)({
+  dispatch: (command: OrchestrationCommand) =>
+    Effect.sync(() => {
+      dispatchedCommands.push(command);
+      return { sequence: dispatchedCommands.length };
+    }),
+});
+
 const makeLayer = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) =>
   Layer.succeed(McpInvocationContext.McpInvocationContext)(invocation(capabilities)).pipe(
     Layer.provideMerge(projectionLayer),
     Layer.provideMerge(environmentLayer),
+    Layer.provideMerge(fleetLayer),
+    Layer.provideMerge(orchestrationLayer),
     Layer.provideMerge(projectCatalogRegistryLayer),
     Layer.provideMerge(featureMapRegistryLayer),
     Layer.provideMerge(
@@ -159,9 +184,19 @@ const MASTER = [
 ] as const;
 const WORKER = ["preview", "threads", "peers"] as const;
 
-type ToolResult = Partial<
-  ProjectListResult & ProjectGetResult & ProjectFileThreadToolResult & ProjectSetIconToolResult
->;
+interface ToolResults {
+  readonly project_list: ProjectListResult;
+  readonly project_get: ProjectGetResult;
+  readonly project_file_thread: ProjectFileThreadToolResult;
+  readonly project_set_icon: ProjectSetIconToolResult;
+  readonly project_locations: ProjectLocationsToolResult;
+  readonly project_upsert: ProjectUpsertToolResult;
+  readonly project_remove: ProjectRemoveToolResult;
+  readonly project_bind_location: ProjectBindLocationToolResult;
+  readonly project_location_create: ProjectLocationCreateToolResult;
+  readonly project_location_update: ProjectLocationUpdateToolResult;
+  readonly project_location_remove: ProjectLocationRemoveToolResult;
+}
 
 type ToolContext =
   | McpInvocationContext.McpInvocationContext
@@ -171,14 +206,14 @@ type ToolContext =
   | ServerEnvironment.ServerEnvironment;
 
 /** Calls one tool's handler directly — the same function MCP dispatches to. */
-const call = (
-  name: keyof typeof __testing.handlers,
+const call = <Name extends keyof ToolResults>(
+  name: Name,
   input: unknown,
-): Effect.Effect<ToolResult, ProjectToolError, ToolContext> =>
+): Effect.Effect<ToolResults[Name], ProjectToolError, ToolContext> =>
   (
-    __testing.handlers[name] as (
+    __testing.handlers[name] as unknown as (
       value: unknown,
-    ) => Effect.Effect<ToolResult, ProjectToolError, ToolContext>
+    ) => Effect.Effect<ToolResults[Name], ProjectToolError, ToolContext>
   )(input);
 
 /** Seeds the machine's catalog through the registry the handlers read. */
@@ -224,6 +259,99 @@ describe("project tools", () => {
         (yield* call("project_list", { includeArchived: true })).projects?.length,
         1,
       );
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("lets an ordinary agent create, bind, inspect, and remove logical projects", () =>
+    Effect.gen(function* () {
+      yield* seed("old-owner", [SCRATCH_PROJECT]);
+      const created = yield* call("project_upsert", {
+        slug: "research",
+        display: { title: "Research", summary: "Exploratory work" },
+      });
+      assert.strictEqual(created.created, true);
+      assert.strictEqual(created.category?.display.title, "Research");
+
+      const bound = yield* call("project_bind_location", {
+        slug: "research",
+        projectId: SCRATCH_PROJECT,
+        preferred: true,
+      });
+      assert.deepStrictEqual(bound.bindings, [SCRATCH_PROJECT]);
+      assert.strictEqual(bound.preferredProjectId, SCRATCH_PROJECT);
+      const registry = yield* ProjectCatalogRegistry;
+      const previous = yield* registry.find(ProjectCategorySlug.make("old-owner"));
+      assert.isTrue(previous._tag === "Some");
+      if (previous._tag === "Some") assert.deepStrictEqual(previous.value.local.bindings, []);
+
+      const locations = yield* call("project_locations", {});
+      assert.strictEqual(
+        locations.locations?.find((location) => location.projectId === SCRATCH_PROJECT)?.boundSlug,
+        "research",
+      );
+
+      const removed = yield* call("project_remove", { slug: "research" });
+      assert.strictEqual(removed.removed, true);
+      assert.deepStrictEqual(
+        (yield* call("project_list", {})).projects.map((project) => project.slug),
+        ["old-owner"],
+      );
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("creates a physical project record and binds it without touching the workspace", () =>
+    Effect.gen(function* () {
+      dispatchedCommands.length = 0;
+      yield* seed("research", []);
+      const created = yield* call("project_location_create", {
+        title: "Research checkout",
+        workspaceRoot: "/work/research",
+        bindSlug: "research",
+        preferred: true,
+      });
+
+      assert.strictEqual(created.workspaceRoot, "/work/research");
+      assert.strictEqual(created.boundSlug, "research");
+      assert.strictEqual(dispatchedCommands[0]?.type, "project.create");
+      if (dispatchedCommands[0]?.type === "project.create") {
+        assert.strictEqual(dispatchedCommands[0].createWorkspaceRootIfMissing, undefined);
+      }
+      const registry = yield* ProjectCatalogRegistry;
+      const category = yield* registry.find(ProjectCategorySlug.make("research"));
+      assert.isTrue(category._tag === "Some");
+      if (category._tag === "Some") {
+        assert.strictEqual(category.value.local.bindings[0]?.projectId, created.projectId);
+        assert.strictEqual(category.value.local.defaults.preferredProjectId, created.projectId);
+      }
+    }).pipe(Effect.provide(makeLayer(WORKER))),
+  );
+
+  it.effect("updates and removes physical records while preserving workspace files", () =>
+    Effect.gen(function* () {
+      dispatchedCommands.length = 0;
+      yield* seed("scratch", [SCRATCH_PROJECT]);
+
+      const updated = yield* call("project_location_update", {
+        projectId: SCRATCH_PROJECT,
+        title: "Renamed scratch",
+      });
+      assert.strictEqual(updated.updated, true);
+
+      const removed = yield* call("project_location_remove", {
+        projectId: SCRATCH_PROJECT,
+        force: true,
+      });
+      assert.strictEqual(removed.removed, true);
+      assert.strictEqual(removed.workspaceDeleted, false);
+      assert.deepStrictEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["project.meta.update", "project.delete"],
+      );
+
+      const registry = yield* ProjectCatalogRegistry;
+      const category = yield* registry.find(ProjectCategorySlug.make("scratch"));
+      assert.isTrue(category._tag === "Some");
+      if (category._tag === "Some") assert.deepStrictEqual(category.value.local.bindings, []);
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 
@@ -279,14 +407,14 @@ describe("project tools", () => {
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 
-  it.effect("refuses a worker filing somebody else's thread", () =>
+  it.effect("lets any agent file somebody else's thread", () =>
     Effect.gen(function* () {
       yield* seed("hub", [HUB_PROJECT]);
-      const refused = yield* call("project_file_thread", {
+      const filed = yield* call("project_file_thread", {
         threadId: OTHER_THREAD,
         slug: "hub",
-      }).pipe(Effect.flip);
-      assert.strictEqual(refused.reason, "capability_unavailable");
+      });
+      assert.strictEqual(filed.slug, "hub");
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 
@@ -457,23 +585,15 @@ describe("project tools", () => {
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );
 
-  it.effect("refuses a worker setting another project's icon, and says which one is its own", () =>
+  it.effect("lets any agent set another project's icon", () =>
     Effect.gen(function* () {
       yield* seed("hub", [HUB_PROJECT]);
       yield* seed("research", []);
 
-      const refused = yield* call("project_set_icon", {
+      const research = yield* call("project_set_icon", {
         slug: "research",
         icon: PNG_ICON,
-      }).pipe(Effect.flip);
-      assert.strictEqual(refused.reason, "capability_unavailable");
-      assert.include(refused.detail ?? "", "hub");
-
-      // The same call from the orchestrator lands, which is the other half of
-      // the split: filing and restyling somebody else's work is a master's act.
-      const research = yield* call("project_set_icon", { slug: "research", icon: PNG_ICON }).pipe(
-        Effect.provide(makeLayer(MASTER)),
-      );
+      });
       assert.strictEqual(research.hasIcon, true);
     }).pipe(Effect.provide(makeLayer(WORKER))),
   );

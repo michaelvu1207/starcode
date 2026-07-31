@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - real filesystem integration boundary
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -15,10 +19,20 @@ describeRealFleet("real three-node fleet gates", () => {
     const driver = await RealFleetGateDriver.start();
     try {
       const tools = await driver.mcpTools();
-      expect(tools).toHaveLength(33);
-      expect(new Set(tools.map((tool) => tool.name)).size).toBe(33);
+      expect(tools).toHaveLength(40);
+      expect(new Set(tools.map((tool) => tool.name)).size).toBe(40);
       expect(tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["threads_list", "thread_read", "thread_send", "thread_create"]),
+        expect.arrayContaining([
+          "threads_list",
+          "thread_read",
+          "thread_send",
+          "thread_create",
+          "project_upsert",
+          "project_bind_location",
+          "project_location_create",
+          "project_location_update",
+          "project_location_remove",
+        ]),
       );
       expect(
         tools.every(
@@ -35,6 +49,7 @@ describeRealFleet("real three-node fleet gates", () => {
       expect(bootstrap).toContain("Current node:");
       expect(bootstrap).toContain("threads_list");
       expect(bootstrap).toContain("thread_send");
+      expect(bootstrap).toContain("full project-management access");
       expect(bootstrap).not.toMatch(/Bearer\s+\S+/u);
 
       expect(
@@ -43,6 +58,78 @@ describeRealFleet("real three-node fleet gates", () => {
           pollIntervalMilliseconds: 100,
         }),
       ).toEqual({ gate: "G1", assertions: 11 });
+    } finally {
+      await driver.dispose();
+    }
+  }, 600_000);
+
+  it("manages a project and physical folder on another connection through MCP", async () => {
+    const driver = await RealFleetGateDriver.start();
+    try {
+      await driver.pair("alpha", "beta");
+      const slug = "remote-project-management-gate";
+      const workspaceRoot = NodePath.join(
+        driver.harness.nodes.beta.homeDir,
+        "remote-project-management-workspace",
+      );
+
+      const logical = await driver.callMcpTool<{
+        readonly node: string;
+        readonly created: boolean;
+      }>("project_upsert", {
+        node: "beta",
+        slug,
+        display: { title: "Remote project management gate" },
+      });
+      expect(logical.node).toBe("beta");
+      expect(logical.created).toBe(true);
+
+      const physical = await driver.callMcpTool<{
+        readonly projectId: string;
+        readonly boundSlug: string | null;
+      }>("project_location_create", {
+        node: "beta",
+        title: "Remote managed folder",
+        workspaceRoot,
+        createWorkspaceRootIfMissing: true,
+        bindSlug: slug,
+        preferred: true,
+      });
+      expect(physical.boundSlug).toBe(slug);
+
+      await driver.callMcpTool("project_location_update", {
+        node: "beta",
+        projectId: physical.projectId,
+        title: "Remote managed folder renamed",
+      });
+      const locations = await driver.callMcpTool<{
+        readonly locations: ReadonlyArray<{
+          readonly projectId: string;
+          readonly title: string;
+          readonly boundSlug: string | null;
+        }>;
+      }>("project_locations", { node: "beta" });
+      expect(locations.locations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            projectId: physical.projectId,
+            title: "Remote managed folder renamed",
+            boundSlug: slug,
+          }),
+        ]),
+      );
+
+      const removed = await driver.callMcpTool<{
+        readonly removed: boolean;
+        readonly workspaceDeleted: boolean;
+      }>("project_location_remove", {
+        node: "beta",
+        projectId: physical.projectId,
+        force: true,
+      });
+      expect(removed).toMatchObject({ removed: true, workspaceDeleted: false });
+      await expect(NodeFSP.access(workspaceRoot)).resolves.toBeUndefined();
+      await driver.callMcpTool("project_remove", { node: "beta", slug });
     } finally {
       await driver.dispose();
     }

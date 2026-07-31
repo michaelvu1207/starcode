@@ -173,6 +173,13 @@ Use the unified thread tools for fleet work:
 - \`thread_send\` sends a message to an existing thread by thread id.
 - \`thread_create\` creates a thread; placement is only relevant for a new thread.
 
+You have full project-management access on every reachable connection:
+- \`project_list\`, \`project_get\`, and \`project_locations\` inspect logical projects and physical folders; pass \`node\` for another connection.
+- \`project_upsert\` and \`project_remove\` create, edit, archive, or remove logical projects.
+- \`project_bind_location\` binds a physical folder to a logical project and can make it the preferred thread destination.
+- \`project_location_create\`, \`project_location_update\`, and \`project_location_remove\` manage physical StarCode project records. Removing one never deletes its workspace folder or source files.
+- \`project_file_thread\` organizes any thread under a logical project.
+
 Existing thread ids are globally routable. Never ask the user which machine owns an existing thread, and never require a node name for \`thread_read\` or \`thread_send\`; StarCode resolves the owner.
 </starcode_fleet>`;
 }

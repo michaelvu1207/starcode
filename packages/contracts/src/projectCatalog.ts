@@ -42,9 +42,11 @@ import { ExecutionEnvironmentPlatform } from "./environment.ts";
 import {
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
+  ProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
 } from "./orchestration.ts";
+import { FleetNodeName } from "./fleet.ts";
 import { ProjectCategorySlug } from "./projectCategorySlug.ts";
 import { PROJECT_CATEGORY_ICON_MAX_LENGTH, ProjectCategoryIconDataUri } from "./projectIcon.ts";
 import { WorkbenchMasterDefaults } from "./settings.ts";
@@ -425,15 +427,23 @@ const orderedBySlug = (
  * The project tools, as an agent sees them.
  *
  * This is the half of F16 that makes "organized through the tool calls" real.
- * Two reads open to every session, because an agent that knows which project it
- * is working in writes better commits and asks better questions; one write that
- * is open for the caller's *own* thread and gated for anyone else's.
- *
- * Everything here is scoped to the machine answering. A tool result never
- * claims to know what another machine holds — the cross-machine union is the
- * client's fold, and a server that guessed at it would be inventing.
+ * Every authenticated agent may inspect and manage projects. Operations are
+ * scoped to one explicitly named connection at a time; the server routes the
+ * call through its private fleet registry without exposing credentials.
  */
-export const ProjectToolOperation = Schema.Literals(["list", "get", "file_thread", "set_icon"]);
+export const ProjectToolOperation = Schema.Literals([
+  "list",
+  "get",
+  "file_thread",
+  "set_icon",
+  "locations",
+  "upsert",
+  "remove",
+  "bind_location",
+  "location_create",
+  "location_update",
+  "location_remove",
+]);
 export type ProjectToolOperation = typeof ProjectToolOperation.Type;
 
 export const ProjectToolErrorReason = Schema.Literals([
@@ -441,6 +451,8 @@ export const ProjectToolErrorReason = Schema.Literals([
   "not_found",
   "invalid",
   "storage_failed",
+  "node_unreachable",
+  "dispatch_failed",
 ]);
 export type ProjectToolErrorReason = typeof ProjectToolErrorReason.Type;
 
@@ -483,6 +495,12 @@ export const ProjectToolSummary = Schema.Struct({
 export type ProjectToolSummary = typeof ProjectToolSummary.Type;
 
 export const ProjectListInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description:
+        "Fleet connection to inspect. Omit for the current connection. Use the canonical node name from the StarCode fleet bootstrap.",
+    }),
+  ),
   includeArchived: Schema.optional(
     Schema.Boolean.annotate({
       description: "Include archived projects. Defaults to excluding them.",
@@ -495,6 +513,11 @@ export const ProjectListResult = Schema.Struct({ projects: Schema.Array(ProjectT
 export type ProjectListResult = typeof ProjectListResult.Type;
 
 export const ProjectGetInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection to inspect. Omit for the current connection.",
+    }),
+  ),
   slug: ProjectCategorySlug.annotate({
     description: "Project slug, as returned by project_list.",
   }),
@@ -528,11 +551,9 @@ export type ProjectToolLocation = typeof ProjectToolLocation.Type;
  * and the honest way to close that gap is to say which host, not to move files
  * (invariant 8) or to have starcode run commands on the operator's behalf.
  *
- * **What this is not.** It carries no credential, no port, no user, and no
- * connection string, and nothing in starcode uses it to reach anywhere. It is a
- * name the operator's own SSH config may or may not already know. Observation
- * is the operator's tooling doing what it always could; work is still
- * dispatched as threads, through `peer_thread_create`.
+ * **What this is not.** It carries no credential, port, user, or connection
+ * string. Fleet-aware project handlers may have reached the node through the
+ * server's private registry, but this result exposes only its public identity.
  *
  * `hostname` is null on a machine that could not report one, which is a fact
  * worth stating rather than a value worth inventing.
@@ -571,11 +592,193 @@ export const ProjectGetResult = Schema.Struct({
 });
 export type ProjectGetResult = typeof ProjectGetResult.Type;
 
+/** List every physical project folder known by one connection, including unbound folders. */
+export const ProjectLocationsToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection to inspect. Omit for the current connection.",
+    }),
+  ),
+});
+export type ProjectLocationsToolInput = typeof ProjectLocationsToolInput.Type;
+
+export const ProjectLocationsToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  locations: Schema.Array(ProjectCatalogLocation),
+});
+export type ProjectLocationsToolResult = typeof ProjectLocationsToolResult.Type;
+
+/** Create or patch a logical project category on one connection. */
+export const ProjectUpsertToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection to change. Omit for the current connection.",
+    }),
+  ),
+  ...ProjectCatalogUpsertRequest.fields,
+});
+export type ProjectUpsertToolInput = typeof ProjectUpsertToolInput.Type;
+
+export const ProjectUpsertToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  created: Schema.Boolean,
+  category: ProjectCategoryRecord,
+});
+export type ProjectUpsertToolResult = typeof ProjectUpsertToolResult.Type;
+
+/** Remove a logical project category from one connection. Physical folders are untouched. */
+export const ProjectRemoveToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection to change. Omit for the current connection.",
+    }),
+  ),
+  slug: ProjectCategorySlug,
+});
+export type ProjectRemoveToolInput = typeof ProjectRemoveToolInput.Type;
+
+export const ProjectRemoveToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  slug: ProjectCategorySlug,
+  removed: Schema.Boolean,
+});
+export type ProjectRemoveToolResult = typeof ProjectRemoveToolResult.Type;
+
+export const ProjectLocationBindingMode = Schema.Literals(["bind", "unbind"]);
+export type ProjectLocationBindingMode = typeof ProjectLocationBindingMode.Type;
+
+/** Add or remove one physical folder binding without replacing the rest of the project. */
+export const ProjectBindLocationToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection whose binding changes. Omit for the current connection.",
+    }),
+  ),
+  slug: ProjectCategorySlug,
+  projectId: ProjectId,
+  mode: Schema.optional(ProjectLocationBindingMode.annotate({ description: "Defaults to bind." })),
+  preferred: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "When binding, also make this the preferred folder for new threads in the logical project.",
+    }),
+  ),
+});
+export type ProjectBindLocationToolInput = typeof ProjectBindLocationToolInput.Type;
+
+export const ProjectBindLocationToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  slug: ProjectCategorySlug,
+  projectId: ProjectId,
+  mode: ProjectLocationBindingMode,
+  preferredProjectId: Schema.NullOr(ProjectId),
+  bindings: Schema.Array(ProjectId),
+});
+export type ProjectBindLocationToolResult = typeof ProjectBindLocationToolResult.Type;
+
+/** Create a physical StarCode project record on a chosen connection. */
+export const ProjectLocationCreateToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection on which to create the project. Omit for this connection.",
+    }),
+  ),
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString.annotate({
+    description: "Absolute workspace folder path on the target connection.",
+  }),
+  createWorkspaceRootIfMissing: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Create the folder when it does not exist. Defaults to false.",
+    }),
+  ),
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  bindSlug: Schema.optional(
+    ProjectCategorySlug.annotate({
+      description: "Logical project to bind the new folder to after creation.",
+    }),
+  ),
+  preferred: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "When bindSlug is supplied, make this its preferred folder.",
+    }),
+  ),
+});
+export type ProjectLocationCreateToolInput = typeof ProjectLocationCreateToolInput.Type;
+
+export const ProjectLocationCreateToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  boundSlug: Schema.NullOr(ProjectCategorySlug),
+});
+export type ProjectLocationCreateToolResult = typeof ProjectLocationCreateToolResult.Type;
+
+/** Rename, move, reconfigure, or replace scripts for a physical project record. */
+export const ProjectLocationUpdateToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection whose physical project changes. Omit for this connection.",
+    }),
+  ),
+  projectId: ProjectId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  scripts: Schema.optional(Schema.Array(ProjectScript)),
+});
+export type ProjectLocationUpdateToolInput = typeof ProjectLocationUpdateToolInput.Type;
+
+export const ProjectLocationUpdateToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  projectId: ProjectId,
+  updated: Schema.Boolean,
+});
+export type ProjectLocationUpdateToolResult = typeof ProjectLocationUpdateToolResult.Type;
+
+/** Remove a physical StarCode project record. The workspace folder itself is never deleted. */
+export const ProjectLocationRemoveToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection whose physical project is removed. Omit for this connection.",
+    }),
+  ),
+  projectId: ProjectId,
+  force: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Also delete the project's StarCode thread records. The workspace folder and source files remain untouched.",
+    }),
+  ),
+});
+export type ProjectLocationRemoveToolInput = typeof ProjectLocationRemoveToolInput.Type;
+
+export const ProjectLocationRemoveToolResult = Schema.Struct({
+  node: FleetNodeName,
+  local: Schema.Boolean,
+  projectId: ProjectId,
+  removed: Schema.Boolean,
+  workspaceDeleted: Schema.Literal(false),
+});
+export type ProjectLocationRemoveToolResult = typeof ProjectLocationRemoveToolResult.Type;
+
 export const ProjectFileThreadToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection that owns the thread. Omit for this connection.",
+    }),
+  ),
   threadId: Schema.optional(
     ThreadId.annotate({
       description:
-        "Thread to file. Defaults to the calling thread. Filing another thread requires the orchestrator capability.",
+        "Thread to file. Defaults to the calling thread only on the current connection; pass it explicitly for another connection.",
     }),
   ),
   slug: Schema.optional(
@@ -602,19 +805,20 @@ export const ProjectFileThreadToolResult = Schema.Struct({
 export type ProjectFileThreadToolResult = typeof ProjectFileThreadToolResult.Type;
 
 /**
- * Setting a project's icon from a thread.
- *
- * The gate mirrors `project_file_thread` exactly, and for the same reason: a
- * thread acting on *its own* project is that thread's business, and acting on
- * somebody else's is an orchestrator's. Doing this any other way would mean
- * either taking a small, obviously-useful write away from every worker or
- * letting any session restyle a project it has never touched, on four machines.
+ * Setting a project's icon from a thread. Every authenticated task can name a
+ * project; omitting the slug remains a convenience for the caller's own local
+ * project.
  */
 export const ProjectSetIconToolInput = Schema.Struct({
+  node: Schema.optional(
+    FleetNodeName.annotate({
+      description: "Fleet connection whose copy of the project changes. Omit for this connection.",
+    }),
+  ),
   slug: Schema.optional(
     ProjectCategorySlug.annotate({
       description:
-        "Project to set the icon on. Defaults to the project the calling thread is filed under. Setting any other project's icon requires the orchestrator capability.",
+        "Project to set the icon on. Defaults to the project the calling thread is filed under on the current connection; pass it explicitly for another connection.",
     }),
   ),
   icon: ProjectCategoryIconDataUri.annotate({

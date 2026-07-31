@@ -884,6 +884,9 @@ export class RealFleetGateDriver implements FleetGateDriver, AsyncDisposable {
     ReadonlyArray<{ readonly name: string; readonly inputSchema: unknown }>
   > => this.#mcp.listTools();
 
+  readonly callMcpTool = <A>(name: string, args: unknown): Promise<A> =>
+    this.#mcp.callTool<A>(name, args);
+
   readonly bootstrapInstructions = (node: FleetHarnessNodeName): Promise<string> =>
     NodeFSP.readFile(
       NodePath.join(this.harness.nodes[node].homeDir, "fleet-bootstrap.txt"),

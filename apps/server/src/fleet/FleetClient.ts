@@ -12,6 +12,9 @@ import {
   type AuthEnvironmentScope,
   type ClientOrchestrationCommand,
   type FleetExchangeInput,
+  type ProjectCatalogFileThreadRequest,
+  type ProjectCatalogRemoveRequest,
+  type ProjectCatalogUpsertRequest,
   type ThreadId,
   type ThreadMailboxSendInput,
 } from "@starcode/contracts";
@@ -166,6 +169,67 @@ export const fetchFleetProjectCatalog = Effect.fn("FleetClient.fetchProjectCatal
       .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
   },
 );
+
+/** List physical project folders and their logical-project bindings on one node. */
+export const fetchFleetProjectCatalogLocations = Effect.fn(
+  "FleetClient.fetchProjectCatalogLocations",
+)(function* (input: { readonly baseUrl: string; readonly credential: string }) {
+  const client = yield* makeClient(input.baseUrl);
+  return yield* client.projectCatalog
+    .locations({ headers: bearer(input.credential) })
+    .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
+});
+
+/** Create or patch one logical project category on its owning node. */
+export const upsertFleetProjectCatalog = Effect.fn("FleetClient.upsertProjectCatalog")(
+  function* (input: {
+    readonly baseUrl: string;
+    readonly credential: string;
+    readonly payload: ProjectCatalogUpsertRequest;
+  }) {
+    const client = yield* makeClient(input.baseUrl);
+    return yield* client.projectCatalog
+      .upsert({ headers: bearer(input.credential), payload: input.payload })
+      .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
+  },
+);
+
+/** Remove one logical project category from its owning node. */
+export const removeFleetProjectCatalog = Effect.fn("FleetClient.removeProjectCatalog")(
+  function* (input: {
+    readonly baseUrl: string;
+    readonly credential: string;
+    readonly payload: ProjectCatalogRemoveRequest;
+  }) {
+    const client = yield* makeClient(input.baseUrl);
+    return yield* client.projectCatalog
+      .remove({ headers: bearer(input.credential), payload: input.payload })
+      .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
+  },
+);
+
+/** File, exclude, or unfile a thread on its owning node. */
+export const fileFleetProjectThread = Effect.fn("FleetClient.fileProjectThread")(function* (input: {
+  readonly baseUrl: string;
+  readonly credential: string;
+  readonly payload: ProjectCatalogFileThreadRequest;
+}) {
+  const client = yield* makeClient(input.baseUrl);
+  return yield* client.projectCatalog
+    .fileThread({ headers: bearer(input.credential), payload: input.payload })
+    .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
+});
+
+/** Read the orchestrator-authored feature overlay used by project_get. */
+export const fetchFleetFeatureMap = Effect.fn("FleetClient.fetchFeatureMap")(function* (input: {
+  readonly baseUrl: string;
+  readonly credential: string;
+}) {
+  const client = yield* makeClient(input.baseUrl);
+  return yield* client.featureFlow
+    .map({ headers: bearer(input.credential) })
+    .pipe(Effect.timeout(FLEET_REQUEST_TIMEOUT));
+});
 
 /** Read one transcript from its owning node. */
 export const fetchFleetThreadSnapshot = Effect.fn("FleetClient.fetchThreadSnapshot")(

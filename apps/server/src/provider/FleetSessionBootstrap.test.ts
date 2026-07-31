@@ -50,6 +50,9 @@ describe("FleetSessionBootstrap", () => {
     NodeAssert.match(prompt, /`thread_read` reads an existing thread by thread id/u);
     NodeAssert.match(prompt, /`thread_send` sends a message to an existing thread by thread id/u);
     NodeAssert.match(prompt, /`thread_create` creates a thread/u);
+    NodeAssert.match(prompt, /full project-management access/u);
+    NodeAssert.match(prompt, /`project_location_create`/u);
+    NodeAssert.match(prompt, /never deletes its workspace folder/u);
     NodeAssert.match(prompt, /Never ask the user which machine owns an existing thread/u);
   });
 

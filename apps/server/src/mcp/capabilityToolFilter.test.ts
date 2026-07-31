@@ -329,19 +329,26 @@ it.effect("an ordinary session is never shown the master-only tools", () =>
   }),
 );
 
-it.effect("shows every session the project tools, self-filing included", () =>
+it.effect("shows every session the full project-management toolkit", () =>
   Effect.gen(function* () {
-    // Over the real transport, so this is also the proof the toolkit is
-    // registered at all. `project_file_thread` is visible on purpose: its gate
-    // is a branch inside the handler (yours versus someone else's), not a
-    // capability that can be expressed by hiding the tool.
+    // Over the real transport, so this also proves the entire toolkit is
+    // registered and available to an ordinary provider session.
     const tools = yield* listToolsFor(workerThreadId);
-    expect(tools).toContain("project_list");
-    expect(tools).toContain("project_get");
-    expect(tools).toContain("project_file_thread");
-    // Same shape, same reason: setting your own project's icon is housekeeping,
-    // and the refusal for anybody else's lives in the handler.
-    expect(tools).toContain("project_set_icon");
+    for (const tool of [
+      "project_list",
+      "project_get",
+      "project_locations",
+      "project_upsert",
+      "project_remove",
+      "project_bind_location",
+      "project_location_create",
+      "project_location_update",
+      "project_location_remove",
+      "project_file_thread",
+      "project_set_icon",
+    ]) {
+      expect(tools).toContain(tool);
+    }
   }),
 );
 
