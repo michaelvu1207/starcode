@@ -1,15 +1,13 @@
-// Tiny event bus allowing components to programmatically open the command palette
+// Tiny event bus allowing components to programmatically open the command dialog
 // without owning its React state.
 const COMMAND_PALETTE_OPEN_EVENT = "starcode:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
-  readonly open?: "add-project" | "new-thread-in";
+  readonly open: "add-project" | "new-thread-in";
 }
 
-export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {
-  window.dispatchEvent(
-    new CustomEvent(COMMAND_PALETTE_OPEN_EVENT, detail ? { detail } : undefined),
-  );
+export function openCommandPalette(detail: CommandPaletteOpenDetail): void {
+  window.dispatchEvent(new CustomEvent(COMMAND_PALETTE_OPEN_EVENT, { detail }));
 }
 
 export function onOpenCommandPalette(

@@ -114,11 +114,6 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
-    shortcut: modShortcut("k"),
-    command: "commandPalette.toggle",
-    whenAst: whenNot(whenIdentifier("terminalFocus")),
-  },
-  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -324,10 +319,6 @@ describe("shortcutLabelForCommand", () => {
       "⌥⌘B",
     );
     assert.strictEqual(
-      shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
-      "⌘K",
-    );
-    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "modelPicker.toggle", "Linux"),
       "Ctrl+Shift+M",
     );
@@ -494,23 +485,6 @@ describe("chat/editor shortcuts", () => {
       isOpenFavoriteEditorShortcut(event({ key: "o", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
-    );
-  });
-
-  it("matches commandPalette.toggle shortcut outside terminal focus", () => {
-    assert.strictEqual(
-      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: false },
-      }),
-      "commandPalette.toggle",
-    );
-    assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-      "commandPalette.toggle",
     );
   });
 

@@ -20,7 +20,6 @@ interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
-  isActionsOnly: boolean;
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }
@@ -29,10 +28,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
-        {props.emptyStateMessage ??
-          (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
+        {props.emptyStateMessage ?? "No matching options."}
       </div>
     );
   }

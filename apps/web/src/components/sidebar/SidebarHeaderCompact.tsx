@@ -2,15 +2,14 @@
  * Fork-owned compact sidebar header.
  *
  * Upstream stacks three rows above the thread list: the brand row, a
- * full-width "Search ⌘K" bar with the compose button beside it, and the
+ * full-width command bar with the compose button beside it, and the
  * "All projects" picker with the view menu and new-project button. Two of the
  * three rows spend a full row of sidebar height on controls that are one click
  * each, and the project picker is dead weight at our project count.
  *
  * This collapses all three into two: the wordmark on its own row, and one
- * compact icon strip beneath it. The actions are the same actions — the search
- * overlay is still the command dialog ⌘K opens, new project is still the
- * add-project command palette — so nothing here owns behaviour, only
+ * compact icon strip beneath it. The actions are the same actions — new project
+ * is still the add-project command dialog — so nothing here owns behaviour, only
  * placement. Fork-owned so the diff inside `SidebarV2.tsx` stays a call site.
  *
  * Two icons that were here are not any more. **New thread** left because the
@@ -38,13 +37,12 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import { SearchIcon, SettingsIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 
 import { isElectron } from "../../env";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { CommandDialogTrigger } from "../ui/command";
 import { SidebarMenuButton, SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarChromeHeader } from "./SidebarChrome";
@@ -86,7 +84,6 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
   showProjectActions: boolean;
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const searchShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same binding the fixed workspace control advertises, so both entry points
   // teach the same shortcut.
   const sidebarShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
@@ -107,20 +104,20 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
       isElectron={isElectron}
       actions={
         // Centred, with symmetric padding, so the strip stays balanced at any
-        // icon count — it has been as high as seven and is now six.
+        // icon count — it has been as high as seven and is now five.
         //
         // It used to be left-aligned to the wordmark's edge, which meant
         // carrying the workspace titlebar-control inset (~46px). That inset
         // exists to clear the macOS traffic lights, and the traffic lights only
         // occupy the *first* row — this row sits below the titlebar region and
-        // never needed it. At four icons the dead space read as margin; at six
-        // it pushed the strip into the right edge, which is the imbalance
-        // Michael saw.
+        // never needed it. At three icons the dead space reads as margin; at
+        // five it still stays balanced within the sidebar, which is the
+        // geometry Michael wanted.
         //
         // `flex-wrap` is the overflow behaviour rather than a scroller or a
-        // squeeze. Six 28px buttons plus their gaps come to ~188px, which still
-        // fits the 192px of usable width at the sidebar's 208px minimum — so
-        // nothing wraps today, and a seventh icon would drop to a second
+        // squeeze. Five 28px buttons plus their gaps come to ~156px, which
+        // still fits the 192px of usable width at the sidebar's 208px minimum —
+        // so nothing wraps today, and a sixth icon would drop to a second
         // centred line rather than overflowing the panel.
         <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1 px-2 pb-1">
           <Tooltip>
@@ -131,29 +128,6 @@ export const SidebarHeaderCompact = memo(function SidebarHeaderCompact({
             />
             <TooltipPopup side="bottom">
               {sidebarShortcutLabel ? `Hide sidebar (${sidebarShortcutLabel})` : "Hide sidebar"}
-            </TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <CommandDialogTrigger
-                  render={
-                    <SidebarMenuButton
-                      size="sm"
-                      type="button"
-                      aria-label="Search threads and commands"
-                      className={HEADER_ACTION_BUTTON_CLASS}
-                      data-testid="command-palette-trigger"
-                    />
-                  }
-                />
-              }
-            >
-              <SearchIcon className={HEADER_ACTION_ICON_CLASS} />
-              <TouchTarget />
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              {searchShortcutLabel ? `Search (${searchShortcutLabel})` : "Search"}
             </TooltipPopup>
           </Tooltip>
           {/* Outside the `showProjectActions` gate: when a machine drops out,
