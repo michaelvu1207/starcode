@@ -21,12 +21,6 @@ const CommandDialog = CommandDialogPrimitive.Root;
 
 const CommandDialogPortal = CommandDialogPrimitive.Portal;
 
-const CommandCreateHandle = CommandDialogPrimitive.createHandle;
-
-function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
-  return <CommandDialogPrimitive.Trigger data-slot="command-dialog-trigger" {...props} />;
-}
-
 function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.Backdrop.Props) {
   return (
     <CommandDialogPrimitive.Backdrop
@@ -221,12 +215,10 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 export {
-  CommandCreateHandle,
   Command,
   CommandCollection,
   CommandDialog,
   CommandDialogPopup,
-  CommandDialogTrigger,
   CommandEmpty,
   CommandFooter,
   CommandGroup,
