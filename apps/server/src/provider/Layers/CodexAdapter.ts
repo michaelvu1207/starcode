@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -23,9 +24,12 @@ import {
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
+  type ProviderSetGoalInput,
+  type ThreadGoal,
 } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -187,6 +191,35 @@ function normalizeCodexTokenUsage(
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
+  };
+}
+
+type CodexGoalLike = {
+  readonly objective: string;
+  readonly status: ThreadGoal["status"];
+  readonly tokenBudget?: number | null;
+  readonly tokensUsed: number;
+  readonly timeUsedSeconds: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+};
+
+function codexTimestampToIso(value: number): string {
+  return DateTime.formatIso(DateTime.makeUnsafe(value * 1_000));
+}
+
+export function normalizeCodexGoal(goal: CodexGoalLike): ThreadGoal {
+  return {
+    objective: goal.objective.trim(),
+    status: goal.status,
+    tokenBudget:
+      goal.tokenBudget !== undefined && goal.tokenBudget !== null && goal.tokenBudget > 0
+        ? goal.tokenBudget
+        : null,
+    tokensUsed: Math.max(0, goal.tokensUsed),
+    timeUsedSeconds: Math.max(0, goal.timeUsedSeconds),
+    createdAt: codexTimestampToIso(goal.createdAt),
+    updatedAt: codexTimestampToIso(goal.updatedAt),
   };
 }
 
@@ -830,6 +863,34 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           usage: normalizedUsage,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/updated") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalUpdatedNotification, event.payload);
+    if (!payload) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          goal: normalizeCodexGoal(payload.goal),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/cleared") {
+    return [
+      {
+        type: "thread.goal.cleared",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          observedAt: event.createdAt,
         },
       },
     ];
@@ -1578,6 +1639,37 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         });
         sessionScopeTransferred = true;
 
+        yield* runtime.getGoal.pipe(
+          Effect.flatMap((goal) =>
+            crypto.randomUUIDv4.pipe(
+              Effect.flatMap((eventId) =>
+                Queue.offer(runtimeEventQueue, {
+                  eventId: EventId.make(eventId),
+                  provider: PROVIDER,
+                  providerInstanceId: boundInstanceId,
+                  threadId: input.threadId,
+                  createdAt: started.updatedAt,
+                  ...(goal
+                    ? {
+                        type: "thread.goal.updated" as const,
+                        payload: { goal: normalizeCodexGoal(goal) },
+                      }
+                    : {
+                        type: "thread.goal.cleared" as const,
+                        payload: { observedAt: started.updatedAt },
+                      }),
+                }),
+              ),
+            ),
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Codex goal reconciliation failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+        );
+
         return started;
       }),
     );
@@ -1708,6 +1800,45 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   };
 
+  const getGoal: NonNullable<CodexAdapterShape["getGoal"]> = (threadId) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.getGoal),
+      Effect.map((goal) => (goal ? normalizeCodexGoal(goal) : null)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/goal/get", cause),
+      ),
+    );
+
+  const setGoal: NonNullable<CodexAdapterShape["setGoal"]> = (input: ProviderSetGoalInput) =>
+    requireSession(input.threadId).pipe(
+      Effect.flatMap((session) =>
+        session.runtime.setGoal({
+          ...(input.objective !== undefined ? { objective: input.objective } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+        }),
+      ),
+      Effect.map(normalizeCodexGoal),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(input.threadId, "thread/goal/set", cause),
+      ),
+    );
+
+  const clearGoal: NonNullable<CodexAdapterShape["clearGoal"]> = (threadId) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.clearGoal),
+      Effect.asVoid,
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/goal/clear", cause),
+      ),
+    );
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -1789,12 +1920,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      goalControl: "native",
     },
     startSession,
     sendTurn,
     interruptTurn,
     readThread,
     rollbackThread,
+    getGoal,
+    setGoal,
+    clearGoal,
     respondToRequest,
     respondToUserInput,
     stopSession,

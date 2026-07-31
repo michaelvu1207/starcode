@@ -45,8 +45,31 @@ import {
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
-import { makeCodexAdapter } from "./CodexAdapter.ts";
+import { makeCodexAdapter, normalizeCodexGoal } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+
+it("normalizes Codex native goals into provider-neutral goal state", () => {
+  NodeAssert.deepEqual(
+    normalizeCodexGoal({
+      objective: "  Ship the release  ",
+      status: "active",
+      tokenBudget: 20_000,
+      tokensUsed: -1,
+      timeUsedSeconds: 42,
+      createdAt: 1_767_225_600,
+      updatedAt: 1_767_225_660,
+    }),
+    {
+      objective: "Ship the release",
+      status: "active",
+      tokenBudget: 20_000,
+      tokensUsed: 0,
+      timeUsedSeconds: 42,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+    },
+  );
+});
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
@@ -140,6 +163,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
   }
+
+  getGoal = Effect.succeed(null);
+
+  setGoal() {
+    return Effect.die(new Error("Goal updates are not configured for this fake runtime")) as never;
+  }
+
+  clearGoal = Effect.succeed(false);
 
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
     return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
@@ -507,11 +538,65 @@ function startLifecycleRuntime() {
     });
     const runtime = lifecycleRuntimeFactory.lastRuntime;
     NodeAssert.ok(runtime);
+    const reconciliation = yield* Stream.runHead(adapter.streamEvents);
+    NodeAssert.equal(reconciliation._tag, "Some");
+    if (reconciliation._tag === "Some") {
+      NodeAssert.equal(reconciliation.value.type, "thread.goal.cleared");
+    }
     return { adapter, runtime };
   });
 }
 
+const nextLifecycleEvent = (adapter: CodexAdapterShape) =>
+  Stream.runHead(
+    adapter.streamEvents.pipe(Stream.filter((event) => event.type !== "thread.goal.cleared")),
+  );
+
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("maps native goal notifications to canonical goal events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* nextLifecycleEvent(adapter).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-goal-updated"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:02:00.000Z",
+        method: "thread/goal/updated",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          threadId: "thread-1",
+          goal: {
+            threadId: "thread-1",
+            objective: "Ship goal support",
+            status: "active",
+            tokenBudget: 12_000,
+            tokensUsed: 250,
+            timeUsedSeconds: 15,
+            createdAt: 1_767_225_600,
+            updatedAt: 1_767_225_720,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") return;
+      NodeAssert.equal(firstEvent.value.type, "thread.goal.updated");
+      if (firstEvent.value.type !== "thread.goal.updated") return;
+      NodeAssert.deepEqual(firstEvent.value.payload.goal, {
+        objective: "Ship goal support",
+        status: "active",
+        tokenBudget: 12_000,
+        tokensUsed: 250,
+        timeUsedSeconds: 15,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      });
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

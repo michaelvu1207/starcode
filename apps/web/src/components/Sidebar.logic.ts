@@ -125,6 +125,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "session"
+  | "goalSummary"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -222,6 +223,7 @@ export function useThreadJumpHintVisibility(): {
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+  if (thread.goalSummary?.status === "active") return false;
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
@@ -406,7 +408,7 @@ export type SidebarV2Status = "approval" | "input" | "working" | "agents" | "fai
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "subagents"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "subagents" | "goalSummary"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -421,6 +423,12 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  if (
+    thread.goalSummary?.status === "active" &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
+    return "working";
   }
   // The main agent has stopped but work is still happening: a backgrounded
   // subagent outlives the turn that spawned it, so the session goes ready
@@ -541,6 +549,18 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "starting") {
     return {
       label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (
+    thread.goalSummary?.status === "active" &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
+    return {
+      label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,

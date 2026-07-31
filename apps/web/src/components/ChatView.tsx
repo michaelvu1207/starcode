@@ -217,6 +217,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { ThreadGoalBar } from "./chat/ThreadGoalBar";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -1149,6 +1150,11 @@ function ChatViewContent(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const setThreadGoal = useAtomCommand(threadEnvironment.setGoal, { reportFailure: false });
+  const setThreadGoalStatus = useAtomCommand(threadEnvironment.setGoalStatus, {
+    reportFailure: false,
+  });
+  const clearThreadGoal = useAtomCommand(threadEnvironment.clearGoal, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -1402,6 +1408,60 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const handleGoalResult = useCallback(
+    (result: AtomCommandResult<unknown, unknown>, failureTitle: string): boolean => {
+      if (result._tag === "Success") return true;
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: failureTitle,
+            description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+      return false;
+    },
+    [],
+  );
+  const handleSetGoal = useCallback(
+    async (objective: string): Promise<boolean> => {
+      if (!activeThread || !isServerThread) return false;
+      const result = await setThreadGoal({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          objective,
+        },
+      });
+      return handleGoalResult(result, "Goal could not be updated");
+    },
+    [activeThread, handleGoalResult, isServerThread, setThreadGoal],
+  );
+  const handleSetGoalStatus = useCallback(
+    async (status: "active" | "paused"): Promise<boolean> => {
+      if (!activeThread || !isServerThread) return false;
+      const result = await setThreadGoalStatus({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          status,
+        },
+      });
+      return handleGoalResult(result, "Goal status could not be updated");
+    },
+    [activeThread, handleGoalResult, isServerThread, setThreadGoalStatus],
+  );
+  const handleClearGoal = useCallback(async (): Promise<boolean> => {
+    if (!activeThread || !isServerThread) return false;
+    const result = await clearThreadGoal({
+      environmentId: activeThread.environmentId,
+      input: {
+        threadId: activeThread.id,
+      },
+    });
+    return handleGoalResult(result, "Goal could not be cleared");
+  }, [activeThread, clearThreadGoal, handleGoalResult, isServerThread]);
   const threadError = isServerThread
     ? (localServerError ?? serverThread?.session?.lastError ?? null)
     : localDraftError;
@@ -5645,6 +5705,18 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {isServerThread ? (
+                      <div className="mx-auto w-full max-w-3xl">
+                        <ThreadGoalBar
+                          goal={activeThread.goal}
+                          supported={activeThread.session?.providerName === "codex"}
+                          disabled={activeEnvironmentUnavailableState !== null}
+                          onSet={handleSetGoal}
+                          onStatusChange={handleSetGoalStatus}
+                          onClear={handleClearGoal}
+                        />
+                      </div>
+                    ) : null}
                     <div className="chat-composer-glass-shell relative mx-auto w-full max-w-3xl">
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">

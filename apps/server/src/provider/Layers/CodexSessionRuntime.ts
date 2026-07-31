@@ -144,6 +144,12 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly interactionMode?: ProviderInteractionMode;
 }
 
+export interface CodexSessionRuntimeSetGoalInput {
+  readonly objective?: string;
+  readonly status?: EffectCodexSchema.V2ThreadGoalSetParams__ThreadGoalStatus;
+  readonly tokenBudget?: number | null;
+}
+
 export interface CodexThreadTurnSnapshot {
   readonly id: TurnId;
   readonly items: ReadonlyArray<CodexThreadItem>;
@@ -165,6 +171,17 @@ export interface CodexSessionRuntimeShape {
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly getGoal: Effect.Effect<
+    EffectCodexSchema.V2ThreadGoalGetResponse__ThreadGoal | null,
+    CodexSessionRuntimeError
+  >;
+  readonly setGoal: (
+    input: CodexSessionRuntimeSetGoalInput,
+  ) => Effect.Effect<
+    EffectCodexSchema.V2ThreadGoalSetResponse__ThreadGoal,
+    CodexSessionRuntimeError
+  >;
+  readonly clearGoal: Effect.Effect<boolean, CodexSessionRuntimeError>;
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -578,6 +595,8 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/closed":
     case "thread/name/updated":
     case "thread/tokenUsage/updated":
+    case "thread/goal/updated":
+    case "thread/goal/cleared":
     case "turn/started":
     case "hook/started":
     case "turn/completed":
@@ -623,6 +642,11 @@ function readRouteFields(notification: CodexServerNotification): {
     case "thread/started":
       return {
         turnId: undefined,
+        itemId: undefined,
+      };
+    case "thread/goal/updated":
+      return {
+        turnId: notification.params.turnId ? TurnId.make(notification.params.turnId) : undefined,
         itemId: undefined,
       };
     case "turn/started":
@@ -708,6 +732,8 @@ function shouldSuppressChildConversationNotification(
     method === "thread/compacted" ||
     method === "thread/name/updated" ||
     method === "thread/tokenUsage/updated" ||
+    method === "thread/goal/updated" ||
+    method === "thread/goal/cleared" ||
     method === "turn/started" ||
     method === "turn/completed" ||
     method === "turn/plan/updated" ||
@@ -1437,6 +1463,31 @@ export const makeCodexSessionRuntime = (
           });
           return parseThreadSnapshot(response);
         }),
+      getGoal: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        const response = yield* client.request("thread/goal/get", {
+          threadId: providerThreadId,
+        });
+        return response.goal ?? null;
+      }),
+      setGoal: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          const response = yield* client.request("thread/goal/set", {
+            threadId: providerThreadId,
+            ...(input.objective !== undefined ? { objective: input.objective } : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+          });
+          return response.goal;
+        }),
+      clearGoal: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        const response = yield* client.request("thread/goal/clear", {
+          threadId: providerThreadId,
+        });
+        return response.cleared;
+      }),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

@@ -41,6 +41,7 @@ const baseThread: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+  goal: null,
 };
 
 describe("applyThreadDetailEvent", () => {
@@ -101,6 +102,50 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.messages).toEqual([]);
         expect(result.thread.session).toBeNull();
       }
+    });
+  });
+
+  describe("thread goal events", () => {
+    it("projects updates and ignores a stale clear", () => {
+      const updatedAt = "2026-04-01T02:00:00.000Z";
+      const update = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 2,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          goal: {
+            objective: "Ship goal support",
+            status: "active",
+            tokenBudget: null,
+            tokensUsed: 500,
+            timeUsedSeconds: 20,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt,
+          },
+        },
+      });
+
+      expect(update.kind).toBe("updated");
+      if (update.kind !== "updated") return;
+      expect(update.thread.goal?.objective).toBe("Ship goal support");
+
+      const staleClear = applyThreadDetailEvent(update.thread, {
+        ...baseEventFields,
+        sequence: 3,
+        occurredAt: "2026-04-01T01:30:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          observedAt: "2026-04-01T01:30:00.000Z",
+        },
+      });
+      expect(staleClear.kind).toBe("unchanged");
     });
   });
 

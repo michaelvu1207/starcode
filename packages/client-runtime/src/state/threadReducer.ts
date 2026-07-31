@@ -68,6 +68,7 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          sideOfThreadId: event.payload.sideOfThreadId,
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -78,6 +79,7 @@ export function applyThreadDetailEvent(
           activities: [],
           checkpoints: [],
           session: null,
+          goal: null,
         },
       };
 
@@ -470,10 +472,39 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.goal-updated":
+      if (thread.goal && thread.goal.updatedAt > event.payload.goal.updatedAt) {
+        return { kind: "unchanged" };
+      }
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: event.payload.goal,
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    case "thread.goal-cleared":
+      if (thread.goal && thread.goal.updatedAt > event.payload.observedAt) {
+        return { kind: "unchanged" };
+      }
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: null,
+          updatedAt: event.occurredAt,
+        },
+      };
+
     // ── Events that don't mutate thread state directly ──────────────
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":
     case "thread.checkpoint-revert-requested":
+    case "thread.goal-set-requested":
+    case "thread.goal-status-set-requested":
+    case "thread.goal-clear-requested":
       return { kind: "unchanged" };
   }
 

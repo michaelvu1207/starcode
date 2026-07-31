@@ -25,6 +25,7 @@ import {
   ModelSelection,
   ProjectId,
   ThreadId,
+  ThreadGoal,
 } from "@starcode/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -81,6 +82,7 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -363,7 +365,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
       `,
@@ -392,7 +395,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
@@ -453,7 +457,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
@@ -816,7 +821,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE thread_id = ${threadId}
           AND deleted_at IS NULL
@@ -1414,6 +1420,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
+                goal: row.goal,
               }));
 
               const snapshot = {
@@ -1613,6 +1620,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   activities: [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
+                  goal: row.goal,
                 });
               }
 
@@ -1803,6 +1811,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       ...(subagentsByThread.has(row.threadId)
                         ? { subagents: subagentsByThread.get(row.threadId) }
                         : {}),
+                      ...(row.goal
+                        ? {
+                            goalSummary: {
+                              status: row.goal.status,
+                              updatedAt: row.goal.updatedAt,
+                            },
+                          }
+                        : {}),
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1938,6 +1954,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  ...(row.goal
+                    ? {
+                        goalSummary: {
+                          status: row.goal.status,
+                          updatedAt: row.goal.updatedAt,
+                        },
+                      }
+                    : {}),
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -2199,6 +2223,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
         ...(Option.isSome(planRow) ? maybePlanSummary(planRow.value.payload) : {}),
         ...(liveSubagents.length > 0 ? { subagents: liveSubagents } : {}),
+        ...(threadRow.value.goal
+          ? {
+              goalSummary: {
+                status: threadRow.value.goal.status,
+                updatedAt: threadRow.value.goal.updatedAt,
+              },
+            }
+          : {}),
       } satisfies OrchestrationThreadShell);
     });
 
@@ -2331,6 +2363,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           completedAt: row.completedAt,
         })),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        goal: threadRow.value.goal,
       };
 
       return Option.some(
