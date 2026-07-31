@@ -1,17 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@starcode/contracts";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  deriveLatestTokensPerSecond,
+  formatContextWindowTokens,
+  formatTokensPerSecond,
+} from "./contextWindow";
 
-function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
+function makeActivity(
+  id: string,
+  kind: string,
+  payload: unknown,
+  options?: { createdAt?: string; turnId?: string | null },
+): OrchestrationThreadActivity {
   return {
     id: EventId.make(id),
     tone: "info",
     kind,
     summary: kind,
     payload,
-    turnId: TurnId.make("turn-1"),
-    createdAt: "2026-03-23T00:00:00.000Z",
+    turnId: options?.turnId === null ? null : TurnId.make(options?.turnId ?? "turn-1"),
+    createdAt: options?.createdAt ?? "2026-03-23T00:00:00.000Z",
   };
 }
 
@@ -80,5 +90,67 @@ describe("contextWindow", () => {
 
     expect(snapshot?.usedTokens).toBe(81_659);
     expect(snapshot?.totalProcessedTokens).toBe(748_126);
+  });
+
+  it("derives and formats the latest output rate from provider duration", () => {
+    const tokensPerSecond = deriveLatestTokensPerSecond([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 600,
+        lastOutputTokens: 450,
+        durationMs: 9_000,
+      }),
+    ]);
+
+    expect(tokensPerSecond).toBe(50);
+    expect(formatTokensPerSecond(tokensPerSecond)).toBe("50.0 tok/s");
+  });
+
+  it("falls back to the matching turn duration and output token field", () => {
+    const tokensPerSecond = deriveLatestTokensPerSecond([
+      makeActivity("turn-1", "turn.started", {}, { createdAt: "2026-03-23T00:00:00.000Z" }),
+      makeActivity(
+        "activity-1",
+        "context-window.updated",
+        { usedTokens: 600, outputTokens: 450 },
+        { createdAt: "2026-03-23T00:00:09.000Z" },
+      ),
+    ]);
+
+    expect(tokensPerSecond).toBe(50);
+  });
+
+  it("uses the latest turn timing when the provider omits the activity turn id", () => {
+    const tokensPerSecond = deriveLatestTokensPerSecond(
+      [
+        makeActivity(
+          "activity-1",
+          "context-window.updated",
+          { usedTokens: 600, lastOutputTokens: 450 },
+          { createdAt: "2026-03-23T00:00:09.000Z", turnId: null },
+        ),
+      ],
+      {
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          startedAt: "2026-03-23T00:00:00.000Z",
+          completedAt: "2026-03-23T00:00:09.000Z",
+        },
+      },
+    );
+
+    expect(tokensPerSecond).toBe(50);
+  });
+
+  it("hides the rate when usage is incomplete or cannot produce a positive rate", () => {
+    expect(
+      deriveLatestTokensPerSecond([
+        makeActivity("activity-1", "context-window.updated", {
+          usedTokens: 600,
+          lastOutputTokens: 450,
+          durationMs: 0,
+        }),
+      ]),
+    ).toBeNull();
+    expect(formatTokensPerSecond(null)).toBeNull();
   });
 });

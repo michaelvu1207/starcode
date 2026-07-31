@@ -18,7 +18,12 @@
  *
  * @module ComposerPaneMenu
  */
-import type { EnvironmentId, ThreadId } from "@starcode/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationLatestTurn,
+  OrchestrationThreadActivity,
+  ThreadId,
+} from "@starcode/contracts";
 import { EllipsisIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -32,9 +37,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerOptionRow } from "./ComposerOptionsPopover";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./PanelLayoutControls";
 import { SplitPaneMenuControls } from "../split/SplitPaneMenuControls";
+import { deriveLatestTokensPerSecond, formatTokensPerSecond } from "../../lib/contextWindow";
 
 export interface ComposerPaneMenuProps {
   readonly activeThreadEnvironmentId: EnvironmentId;
+  readonly activeThreadActivities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly activeLatestTurn: OrchestrationLatestTurn | null;
   readonly threadId: ThreadId;
   readonly draftId?: DraftId;
   readonly terminalAvailable: boolean;
@@ -63,6 +71,8 @@ export interface ComposerPaneMenuProps {
 
 export const ComposerPaneMenu = memo(function ComposerPaneMenu({
   activeThreadEnvironmentId,
+  activeThreadActivities,
+  activeLatestTurn,
   threadId,
   draftId,
   terminalAvailable,
@@ -87,6 +97,10 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: ComposerPaneMenuProps) {
+  const tokensPerSecond = formatTokensPerSecond(
+    deriveLatestTokensPerSecond(activeThreadActivities, { latestTurn: activeLatestTurn }),
+  );
+
   return (
     <Popover>
       <Tooltip>
@@ -170,6 +184,20 @@ export const ComposerPaneMenu = memo(function ComposerPaneMenu({
               />
             </div>
           </ComposerOptionRow>
+
+          {tokensPerSecond ? (
+            <>
+              <div className="border-border/60 border-t" />
+              <ComposerOptionRow label="Tokens per second">
+                <span
+                  data-chat-composer-tokens-per-second="true"
+                  className="font-medium text-muted-foreground text-xs tabular-nums"
+                >
+                  {tokensPerSecond}
+                </span>
+              </ComposerOptionRow>
+            </>
+          ) : null}
         </div>
       </PopoverPopup>
     </Popover>
