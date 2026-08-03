@@ -2,7 +2,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import { ProjectCategoryRecord } from "@starcode/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import {
   ensurePersonalProfile,
@@ -12,6 +14,8 @@ import {
   seedFixtureProfile,
   snapshotDatabase,
 } from "./dev-profiles.ts";
+
+const decodeProjectCategoryRecord = Schema.decodeUnknownSync(ProjectCategoryRecord);
 
 async function makeTemporaryRoot(): Promise<string> {
   return NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "starcode-dev-profiles-"));
@@ -208,6 +212,20 @@ describe("dev profiles", () => {
     const directory = await makeTemporaryRoot();
     try {
       await seedFixtureProfile(process.cwd(), directory);
+      const catalog = JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(directory, "userdata", "project-catalog.json"),
+          "utf8",
+        ),
+      ) as { readonly categories: ReadonlyArray<unknown> };
+      const category = decodeProjectCategoryRecord(catalog.categories[0]);
+      assert.deepStrictEqual(
+        category.local.bindings.map(({ projectId, boundAt }) => ({
+          projectId: String(projectId),
+          boundAt,
+        })),
+        [{ projectId: "starcode", boundAt: "1970-01-01T00:00:00.000Z" }],
+      );
       const database = new NodeSqlite.DatabaseSync(
         NodePath.join(directory, "userdata", "state.sqlite"),
         {

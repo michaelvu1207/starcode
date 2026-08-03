@@ -229,6 +229,48 @@ export async function seedFixtureProfile(repoRoot: string, directory: string): P
   } finally {
     database.close();
   }
+  // The projects sidebar groups server projects through the machine-local
+  // project catalog. A projection-only fixture therefore looks empty after
+  // pairing even though its database rows exist. Bind the showcase project in
+  // the supported catalog file as part of the fixture profile.
+  const timestamp = "1970-01-01T00:00:00.000Z";
+  await NodeFSP.writeFile(
+    NodePath.join(directory, "userdata", "project-catalog.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        categories: [
+          {
+            slug: "starcode",
+            createdAt: timestamp,
+            display: {
+              title: "Starcode",
+              summary: "A deterministic local development fixture.",
+              accent: "",
+              glyph: "",
+              icon: "",
+              parentSlug: null,
+              links: [],
+              notes: "",
+              archivedAt: null,
+              updatedAt: timestamp,
+            },
+            local: {
+              bindings: [{ projectId: "starcode", boundAt: timestamp }],
+              threadIds: [],
+              excludedThreadIds: [],
+              masterThreadId: "",
+              masterDefaults: {},
+              defaults: {},
+              updatedAt: timestamp,
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 function repoRootFromCwd(cwd: string): string {
