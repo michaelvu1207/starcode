@@ -7,7 +7,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
   - push tag matching `v*.*.*` for stable releases
-  - scheduled nightly check every three hours
+- scheduled nightly check every three hours from the production `main` branch
   - manual `workflow_dispatch` for either channel
 - Runs quality gates first: lint, typecheck, test.
 - Reads the shared production starcode Connect relay URL and Clerk client configuration before packaging clients.

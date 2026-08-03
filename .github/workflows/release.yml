@@ -37,6 +37,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # GitHub schedules run from the default branch; nightlies must instead
+          # compare the production branch.
+          ref: main
           fetch-depth: 0
 
       - id: check
@@ -78,11 +81,14 @@ jobs:
       cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
-      ref: ${{ github.sha }}
+      ref: ${{ steps.source_ref.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # Scheduled and manually-dispatched releases must use production even
+          # though dev is the repository's default integration branch.
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
           fetch-depth: 0
 
       - name: Setup Vite+
@@ -95,6 +101,10 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @starcode/desktop ensure:electron
 
+      - id: source_ref
+        name: Record release source revision
+        run: echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - id: release_meta
         name: Resolve release version
         shell: bash
@@ -102,7 +112,7 @@ jobs:
           DISPATCH_CHANNEL: ${{ github.event.inputs.channel }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
-          NIGHTLY_SHA: ${{ github.sha }}
+          NIGHTLY_SHA: ${{ steps.source_ref.outputs.ref }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then

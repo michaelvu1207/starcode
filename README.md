@@ -4,8 +4,8 @@
 > [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code).** It is not affiliated with or endorsed
 > by T3 Tools. Everything below this banner is upstream's README, kept as-is.
 >
-> - **Working branch is `hub`**, not `main` — `main` tracks upstream. `hub` is the GitHub default
->   branch so the repo lands on the fork's actual code.
+> - **Working branch is `dev`** — `dev` is the GitHub default integration branch. `main` is the
+>   production branch and is promoted from `dev` for releases and production deployments.
 > - **What the fork adds:** a multi-machine agent hub — pair several machines over a tailnet and
 >   drive agent work on all of them from one client. Fork-specific design notes, the architecture
 >   map, and the rollout runbook live in [`docs/fork/`](docs/fork/) (start with `PLAN.md`).
