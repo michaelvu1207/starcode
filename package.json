@@ -5,6 +5,8 @@
   "scripts": {
     "prepare": "effect-tsgo patch && vp config --no-agent",
     "dev": "node scripts/dev-runner.ts dev",
+    "dev:personal": "node scripts/dev-profiles.ts personal",
+    "dev:fixture": "node scripts/dev-profiles.ts fixture",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
     "dev:marketing": "vp run --filter @starcode/marketing dev",

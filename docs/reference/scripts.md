@@ -1,10 +1,12 @@
 # Scripts
 
 - `vp run dev` — Starts contracts, server, and web in watch mode.
+- `vp run dev:personal` — Starts web development with a persistent, worktree-local copy of the installed Starcode state. The first run safely snapshots `~/.starcode/userdata/state.sqlite`; later runs reuse that copy. Use `vp run dev:personal -- --refresh` to replace the copy explicitly. The shared installed database is never used as a dev database or modified. Attachments and user settings are copied; `userdata/secrets` is excluded unless `--include-secrets` is also passed during creation or refresh. Append `--no-browser` for controlled-browser automation, which leaves the one-time pairing URL available for the test browser.
+- `vp run dev:fixture` — Starts a fresh worktree-local profile pre-populated with a stable project, representative thread, and conversation. It is reset and reseeded on every run, so UI tests start from the same clean baseline without connection or project setup. Append `--no-browser` for controlled-browser automation.
 - `vp run dev:server` — Starts just the WebSocket server. The server process runs on Bun (`@effect/platform-bun` + `BunPtyAdapter`), but task running uses `vp run`.
 - `vp run dev:web` — Starts just the Vite dev server for the web app.
 - Dev commands implicitly use `~/.starcode/dev`, keeping development state separate from `~/.starcode/userdata`. An explicit `--home-dir <path>` stores state under `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared data.
-- Web dev commands do not auto-open a browser. Open the one-time pairing URL printed by the server so the first browser navigation is authenticated. Set `STARCODE_NO_BROWSER=0` only when interactive auto-open is intentional.
+- Web dev commands do not auto-open a browser. Open the one-time pairing URL printed by the server so the first browser navigation is authenticated. `dev:personal` and `dev:fixture` are interactive profiles and deliberately open that URL once for you. Set `STARCODE_NO_BROWSER=0` only when interactive auto-open is intentional.
 - Pass dev-runner flags directly after the root task name, for example:
   `vp run dev --home-dir /tmp/starcode-dev`
 - `vp run start` — Runs the production server (serves built web app as static files).
