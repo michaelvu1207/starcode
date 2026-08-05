@@ -35,8 +35,8 @@ describe("branding", () => {
     const branding = await import("./branding");
 
     expect(branding.APP_BASE_NAME).toBe("starcode");
-    expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("starcode (Nightly)");
+    expect(branding.APP_STAGE_LABEL).toBe("Latest");
+    expect(branding.APP_DISPLAY_NAME).toBe("starcode");
   });
 
   it("normalizes hosted app channel metadata", async () => {
@@ -46,8 +46,8 @@ describe("branding", () => {
 
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
-    expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("starcode (Nightly)");
+    expect(branding.APP_STAGE_LABEL).toBe("Latest");
+    expect(branding.APP_DISPLAY_NAME).toBe("starcode");
   });
 
   it("does not label the latest hosted app channel", async () => {
@@ -72,45 +72,45 @@ describe("branding", () => {
 });
 
 describe("branding logic", () => {
-  it("returns Nightly for nightly primary server versions", () => {
+  it("keeps the single product stage for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({
         primaryServerVersion: "0.0.28-nightly.20260616.12",
-        fallbackStageLabel: "Alpha",
+        fallbackStageLabel: "Latest",
       }),
-    ).toBe("Nightly");
+    ).toBe("Latest");
   });
 
-  it("updates the display name for nightly primary server versions", () => {
+  it("keeps the single product name for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "starcode",
-        fallbackDisplayName: "starcode (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "starcode",
+        fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.28-nightly.20260616.12",
       }),
-    ).toBe("starcode (Nightly)");
+    ).toBe("starcode");
   });
 
   it("keeps the fallback display name for stable primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "starcode",
-        fallbackDisplayName: "starcode (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "starcode",
+        fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.27",
       }),
-    ).toBe("starcode (Alpha)");
+    ).toBe("starcode");
   });
 
   it("keeps the fallback display name for malformed nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "starcode",
-        fallbackDisplayName: "starcode (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "starcode",
+        fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
-    ).toBe("starcode (Alpha)");
+    ).toBe("starcode");
   });
 });
