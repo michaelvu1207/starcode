@@ -12,7 +12,15 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { Fragment, type ReactNode, memo, useCallback, useMemo, useState } from "react";
+import {
+  Fragment,
+  type CSSProperties,
+  type ReactNode,
+  memo,
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -58,6 +66,8 @@ import {
   derivePiApiConnections,
   formatPiUsageFailure,
   isFleetManagedConnectionTarget,
+  isPiAccountActive,
+  type PiAccountConnection,
 } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
@@ -165,6 +175,7 @@ import { environmentUsage, useAccountsUsage } from "../../state/usage";
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+const EMPTY_ASSIGNMENT_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const USAGE_REFRESH_PLACEHOLDER_ENVIRONMENT_ID =
   "connections-usage-no-environment" as EnvironmentId;
 
@@ -1826,16 +1837,110 @@ function formatLastChecked(value: string | null | undefined): string {
   return `Checked ${hours}h ago`;
 }
 
+function ConnectionAccountAssignmentCell({
+  account,
+  environment,
+}: {
+  readonly account: PiAccountConnection;
+  readonly environment: EnvironmentPresentation;
+}) {
+  const settings = useEnvironmentSettings(environment.environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environment.environmentId);
+  const environmentConfig = useAtomValue(
+    serverEnvironment.configValueAtom(environment.environmentId),
+  );
+  const accounts = useMemo(
+    () => derivePiAccountConnections(environmentConfig?.providers ?? []),
+    [environmentConfig?.providers],
+  );
+  const matchingAccount = accounts.find(
+    (candidate) => candidate.provider.instanceId === account.provider.instanceId,
+  );
+  const familyAccounts = accounts.filter((candidate) => candidate.family === account.family);
+  const isActive = isPiAccountActive({
+    connections: accounts,
+    providerInstances: settings.providerInstances,
+    account,
+  });
+  const connected = environment.connection.phase === "connected";
+  const available = connected && matchingAccount !== undefined;
+
+  const selectAccount = useCallback(() => {
+    if (!matchingAccount) return;
+    const nextInstances = { ...settings.providerInstances };
+    for (const candidate of familyAccounts) {
+      const provider = candidate.provider;
+      const current = nextInstances[provider.instanceId];
+      const currentConfig =
+        current?.config && typeof current.config === "object" && !Array.isArray(current.config)
+          ? (current.config as Record<string, unknown>)
+          : {};
+      nextInstances[provider.instanceId] = {
+        ...(current ?? {
+          driver: ProviderDriverKind.make("pi"),
+          enabled: provider.enabled,
+        }),
+        config: {
+          ...currentConfig,
+          activeForConnection: provider.instanceId === matchingAccount.provider.instanceId,
+        },
+      };
+    }
+    updateSettings({ providerInstances: nextInstances });
+  }, [familyAccounts, matchingAccount, settings.providerInstances, updateSettings]);
+
+  const label = !connected
+    ? "Offline"
+    : !matchingAccount
+      ? "Syncing"
+      : isActive
+        ? "Assigned"
+        : "Use";
+
+  return (
+    <div className="flex min-w-0 items-center justify-center border-l border-border/35 px-1">
+      <Button
+        size="xs"
+        variant={isActive && available ? "secondary" : "ghost"}
+        className={cn(
+          "h-6 max-w-full gap-1 px-1.5 text-[10px]",
+          isActive && available && "text-primary",
+          !available && "text-muted-foreground/55",
+        )}
+        disabled={!available}
+        onClick={selectAccount}
+        aria-label={`${label} ${account.provider.auth.email ?? account.provider.displayName ?? account.familyLabel} on ${environment.label}`}
+        title={
+          !connected
+            ? `${environment.label} is ${environment.connection.phase}`
+            : !matchingAccount
+              ? "This synced account has not reached this connection yet"
+              : `${label} on ${environment.label}`
+        }
+      >
+        {isActive && available ? (
+          <CheckCircle2Icon className="size-3 shrink-0" />
+        ) : (
+          <CircleIcon className="size-3 shrink-0" />
+        )}
+        <span className="truncate">{label}</span>
+      </Button>
+    </div>
+  );
+}
+
 export function ConnectionsSettings({
   environmentId,
   accountsOnly = false,
   fleetCompact = false,
+  assignmentEnvironments = EMPTY_ASSIGNMENT_ENVIRONMENTS,
   selectedAccountId = null,
   onSelectAccount,
 }: {
   readonly environmentId: EnvironmentId;
   readonly accountsOnly?: boolean;
   readonly fleetCompact?: boolean;
+  readonly assignmentEnvironments?: ReadonlyArray<EnvironmentPresentation>;
   readonly selectedAccountId?: string | null;
   readonly onSelectAccount?: (instanceId: string) => void;
 }) {
@@ -1854,6 +1959,13 @@ export function ConnectionsSettings({
   const piApiConnections = useMemo(
     () => derivePiApiConnections(serverProviders),
     [serverProviders],
+  );
+  const accountMatrixEnabled = fleetCompact && assignmentEnvironments.length > 0;
+  const accountMatrixStyle = useMemo<CSSProperties>(
+    () => ({
+      gridTemplateColumns: `minmax(13rem,1.25fr) minmax(12rem,1fr) repeat(${assignmentEnvironments.length},minmax(5.5rem,.7fr))`,
+    }),
+    [assignmentEnvironments.length],
   );
   const [openPiAccountDetails, setOpenPiAccountDetails] = useState<Record<string, boolean>>({});
   const [isAddPiAccountOpen, setIsAddPiAccountOpen] = useState(false);
@@ -3379,6 +3491,39 @@ export function ConnectionsSettings({
           </div>
         }
       >
+        {accountMatrixEnabled ? (
+          <div
+            className="grid min-h-9 items-stretch overflow-hidden rounded-t-md border border-border/50 bg-muted/25 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            style={accountMatrixStyle}
+          >
+            <div className="flex items-center px-2">Synced accounts</div>
+            <div className="flex items-center border-l border-border/35 px-2">Usage</div>
+            {assignmentEnvironments.map((environment) => (
+              <div
+                key={environment.environmentId}
+                className="flex min-w-0 flex-col items-center justify-center border-l border-border/35 px-1 text-center normal-case tracking-normal"
+                title={environment.label}
+              >
+                <span className="flex max-w-full items-center gap-1">
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      environment.connection.phase === "connected" ? "bg-success" : "bg-warning",
+                    )}
+                  />
+                  <span className="truncate">{environment.label}</span>
+                </span>
+                <span className="truncate text-[9px] font-normal text-muted-foreground/60">
+                  {environment.environmentId === environmentId
+                    ? "This connection"
+                    : environment.connection.phase === "connected"
+                      ? "Connected"
+                      : environment.connection.phase}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {piAccountConnections.length === 0 ? (
           <SettingsRow
             title="No Claude or GPT accounts connected"
@@ -3419,28 +3564,11 @@ export function ConnectionsSettings({
             const supportsSubscriptionUsage = /(?:anthropic|openai)/u.test(
               String(provider.instanceId),
             );
-            const configuredConfig =
-              configured?.config &&
-              typeof configured.config === "object" &&
-              !Array.isArray(configured.config)
-                ? (configured.config as Record<string, unknown>)
-                : {};
-            const hasExplicitActiveAccount = piAccountConnections.some((candidate) => {
-              if (candidate.family !== connection.family) return false;
-              const candidateConfig =
-                settings.providerInstances[candidate.provider.instanceId]?.config;
-              return (
-                candidateConfig !== null &&
-                typeof candidateConfig === "object" &&
-                !Array.isArray(candidateConfig) &&
-                (candidateConfig as Record<string, unknown>).activeForConnection === true
-              );
+            const isActiveAccount = isPiAccountActive({
+              connections: piAccountConnections,
+              providerInstances: settings.providerInstances,
+              account: connection,
             });
-            const isActiveAccount =
-              configuredConfig.activeForConnection === true ||
-              (!hasExplicitActiveAccount &&
-                piAccountConnections.find((candidate) => candidate.family === connection.family)
-                  ?.provider.instanceId === provider.instanceId);
             const startsFamily =
               index === 0 || piAccountConnections[index - 1]?.family !== connection.family;
             return (
@@ -3448,12 +3576,12 @@ export function ConnectionsSettings({
                 {startsFamily ? (
                   <div className="flex items-center justify-between px-2 pb-0.5 pt-1">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/65">
-                      {connection.familyLabel} connection
+                      {connection.familyLabel} accounts
                     </span>
                     <span
                       className={cn(
                         "text-[10px] text-muted-foreground/50",
-                        fleetCompact && "sr-only",
+                        (fleetCompact || accountMatrixEnabled) && "sr-only",
                       )}
                     >
                       Choose one active account
@@ -3464,11 +3592,12 @@ export function ConnectionsSettings({
                   key={provider.instanceId}
                   className={cn(
                     fleetCompact
-                      ? "grid grid-cols-[minmax(0,1fr)_minmax(15rem,1.2fr)] items-center gap-x-1 border-b border-border/35 py-0.5 last:border-b-0 [&>div:first-child>div]:!p-0 [&>div:first-child>div>div]:!flex-row [&>div:first-child>div>div]:!items-center [&>div:first-child>div>div]:!gap-1"
+                      ? "grid items-center border-b border-border/35 py-0.5 last:border-b-0 [&>div:first-child>div]:!p-0 [&>div:first-child>div>div]:!flex-row [&>div:first-child>div>div]:!items-center [&>div:first-child>div>div]:!gap-1"
                       : "space-y-1.5 rounded-xl border border-transparent py-1 transition-colors",
                     selectedAccountId === String(provider.instanceId) &&
                       "border-primary/30 bg-primary/5",
                   )}
+                  style={fleetCompact ? accountMatrixStyle : undefined}
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("button, a, input, [role='switch']"))
                       return;
@@ -3487,28 +3616,30 @@ export function ConnectionsSettings({
                       <span className="min-w-0 flex-1 truncate text-xs font-medium">
                         {instance.displayName ?? connection.familyLabel}
                       </span>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              size="icon-xs"
-                              variant={isActiveAccount ? "secondary" : "ghost"}
-                              className={cn(isActiveAccount && "text-primary")}
-                              onClick={() => setActivePiAccount(connection)}
-                              aria-label={`${isActiveAccount ? "Active" : "Use"} ${instance.displayName ?? connection.familyLabel} for ${connection.familyLabel}`}
-                            >
-                              {isActiveAccount ? (
-                                <CheckCircle2Icon className="size-3.5" />
-                              ) : (
-                                <CircleIcon className="size-3.5" />
-                              )}
-                            </Button>
-                          }
-                        />
-                        <TooltipPopup side="top">
-                          {isActiveAccount ? "Active account" : "Use this account"}
-                        </TooltipPopup>
-                      </Tooltip>
+                      {accountMatrixEnabled ? null : (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                size="icon-xs"
+                                variant={isActiveAccount ? "secondary" : "ghost"}
+                                className={cn(isActiveAccount && "text-primary")}
+                                onClick={() => setActivePiAccount(connection)}
+                                aria-label={`${isActiveAccount ? "Active" : "Use"} ${instance.displayName ?? connection.familyLabel} for ${connection.familyLabel}`}
+                              >
+                                {isActiveAccount ? (
+                                  <CheckCircle2Icon className="size-3.5" />
+                                ) : (
+                                  <CircleIcon className="size-3.5" />
+                                )}
+                              </Button>
+                            }
+                          />
+                          <TooltipPopup side="top">
+                            {isActiveAccount ? "Active account" : "Use this account"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      )}
                       <Button
                         size="icon-xs"
                         variant="ghost"
@@ -3656,7 +3787,7 @@ export function ConnectionsSettings({
                   )}
                   <div
                     className={cn(
-                      "mx-2 space-y-1.5 bg-muted/25 px-2",
+                      "mx-1 space-y-1.5 bg-muted/25 px-2",
                       fleetCompact ? "my-0 rounded-md py-0.5 !space-y-0.5" : "rounded-lg py-1.5",
                     )}
                     aria-label="Account usage remaining"
@@ -3669,12 +3800,21 @@ export function ConnectionsSettings({
                       <AllowanceMeter label="Weekly" window={weekly} />
                     ) : null}
                   </div>
+                  {accountMatrixEnabled
+                    ? assignmentEnvironments.map((environment) => (
+                        <ConnectionAccountAssignmentCell
+                          key={environment.environmentId}
+                          account={connection}
+                          environment={environment}
+                        />
+                      ))
+                    : null}
                   <div
                     className={cn(
                       "flex items-center justify-between gap-3 px-2 text-[10px] text-muted-foreground/60",
-                      fleetCompact && "col-span-2",
                       fleetCompact && !presentedUsageFailure?.needsSignIn && "hidden",
                     )}
+                    style={fleetCompact ? { gridColumn: "1 / -1" } : undefined}
                   >
                     <span className={cn(fleetCompact && "sr-only")}>
                       {formatLastChecked(accountUsage?.rateLimits?.observedAt)}
@@ -3698,11 +3838,11 @@ export function ConnectionsSettings({
                     <div
                       className={cn(
                         "px-3 text-xs",
-                        fleetCompact && "col-span-2",
                         presentedUsageFailure.needsSignIn
                           ? "font-medium text-destructive"
                           : "text-muted-foreground",
                       )}
+                      style={fleetCompact ? { gridColumn: "1 / -1" } : undefined}
                       role="status"
                     >
                       {presentedUsageFailure.message}

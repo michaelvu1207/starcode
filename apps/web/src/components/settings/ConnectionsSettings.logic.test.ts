@@ -12,6 +12,7 @@ import {
   derivePiApiConnections,
   formatPiUsageFailure,
   formatUsageRemaining,
+  isPiAccountActive,
   isFleetManagedConnectionTarget,
 } from "./ConnectionsSettings.logic";
 
@@ -75,6 +76,36 @@ describe("Pi account connections", () => {
     expect(derivePiApiConnections([openRouter]).map((provider) => provider.displayName)).toEqual([
       "OpenRouter",
     ]);
+  });
+
+  it("defaults each connection to the first synced account in each model family", () => {
+    const rows = derivePiAccountConnections([
+      piAccount("ccc_anthropic_a", "Claude A"),
+      piAccount("ccc_anthropic_b", "Claude B"),
+      piAccount("ccc_openai_a", "GPT A"),
+    ]);
+
+    expect(
+      rows.map((account) =>
+        isPiAccountActive({ connections: rows, providerInstances: {}, account }),
+      ),
+    ).toEqual([true, false, true]);
+  });
+
+  it("projects an explicit account assignment independently for a connection", () => {
+    const rows = derivePiAccountConnections([
+      piAccount("ccc_anthropic_a", "Claude A"),
+      piAccount("ccc_anthropic_b", "Claude B"),
+      piAccount("ccc_openai_a", "GPT A"),
+    ]);
+    const providerInstances = {
+      ccc_anthropic_a: { config: { activeForConnection: false } },
+      ccc_anthropic_b: { config: { activeForConnection: true } },
+    };
+
+    expect(
+      rows.map((account) => isPiAccountActive({ connections: rows, providerInstances, account })),
+    ).toEqual([false, true, true]);
   });
 });
 

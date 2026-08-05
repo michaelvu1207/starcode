@@ -13,6 +13,44 @@ export type PiAccountConnection = {
   readonly presentationDriver: "claudeAgent" | "codex";
 };
 
+type PiAccountActivityConfig = {
+  readonly config?: unknown;
+};
+
+/**
+ * Resolve a connection's selected account without inventing a second account
+ * catalog. Before a user makes an explicit choice, the first synced account in
+ * that model family is the stable default.
+ */
+export function isPiAccountActive(input: {
+  readonly connections: ReadonlyArray<PiAccountConnection>;
+  readonly providerInstances: Readonly<Record<string, PiAccountActivityConfig | undefined>>;
+  readonly account: PiAccountConnection;
+}): boolean {
+  const { connections, providerInstances, account } = input;
+  const familyAccounts = connections.filter((candidate) => candidate.family === account.family);
+  const hasExplicitSelection = familyAccounts.some((candidate) => {
+    const config = providerInstances[candidate.provider.instanceId]?.config;
+    return (
+      config !== null &&
+      typeof config === "object" &&
+      !Array.isArray(config) &&
+      (config as Record<string, unknown>).activeForConnection === true
+    );
+  });
+  const config = providerInstances[account.provider.instanceId]?.config;
+  const explicitlyActive =
+    config !== null &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    (config as Record<string, unknown>).activeForConnection === true;
+  return (
+    explicitlyActive ||
+    (!hasExplicitSelection &&
+      familyAccounts[0]?.provider.instanceId === account.provider.instanceId)
+  );
+}
+
 /** Account identity belongs exclusively to Connections, never the model picker. */
 export function derivePiAccountConnections(
   providers: ReadonlyArray<ServerProvider>,
