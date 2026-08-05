@@ -2,17 +2,27 @@ import {
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
-import { resolveSelectableModel } from "@t3tools/shared/model";
+} from "@starcode/contracts";
+import { resolveSelectableModel } from "@starcode/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import {
+  ModelFamilySidebar,
+  type ModelFamilyKey,
+  type ModelFamilySelection,
+} from "./ModelFamilySidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxListVirtualized } from "../ui/combobox";
-import { ModelEsque } from "./providerIconUtils";
+import {
+  dedupeAccountBlindModels,
+  getModelFamilyPresentation,
+  isCurrentAccountBlindModel,
+  ModelEsque,
+} from "./providerIconUtils";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -28,6 +38,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 
 type ModelPickerItem = {
   slug: string;
@@ -96,6 +107,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     getModelDisabledReason,
     onInstanceModelChange,
   } = props;
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
@@ -113,6 +125,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const [selectedModelFamily, setSelectedModelFamily] = useState<ModelFamilySelection>("gpt");
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
     () => providedKeybindings ?? [],
     [providedKeybindings],
@@ -185,13 +198,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return ready;
   }, [instanceEntries]);
 
+  const accountBlindPiPicker = useMemo(
+    () =>
+      instanceEntries.some(
+        (entry) => readyInstanceSet.has(entry.instanceId) && entry.driverKind === "pi",
+      ),
+    [instanceEntries, readyInstanceSet],
+  );
+
   // Flatten models into a searchable array. One pass over the
   // instance-keyed map; each model carries its instance id + driver kind
   // so the list row can render the right icon and display name without
   // another lookup.
   const flatModels = useMemo(() => {
     const out: ModelPickerItem[] = [];
-    for (const [instanceId, models] of modelOptionsByInstance) {
+    const orderedModelOptions = [...modelOptionsByInstance].toSorted(([left], [right]) => {
+      if (left === props.activeInstanceId) return -1;
+      if (right === props.activeInstanceId) return 1;
+      return 0;
+    });
+    for (const [instanceId, models] of orderedModelOptions) {
       const entry = entryByInstanceId.get(instanceId);
       if (!entry) {
         // Instance disappeared between renders (configuration change). Skip
@@ -201,7 +227,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!readyInstanceSet.has(instanceId)) {
         continue;
       }
+      if (accountBlindPiPicker && entry.driverKind !== "pi") {
+        continue;
+      }
       for (const model of models) {
+        const presentation = getModelFamilyPresentation(model, entry.driverKind);
         out.push({
           slug: model.slug,
           name: model.name,
@@ -209,7 +239,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           instanceId,
           driverKind: entry.driverKind,
-          instanceDisplayName: entry.displayName,
+          instanceDisplayName: accountBlindPiPicker ? presentation.label : entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
@@ -217,11 +247,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         });
       }
     }
-    return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+    return accountBlindPiPicker
+      ? dedupeAccountBlindModels(out.filter(isCurrentAccountBlindModel))
+      : out;
+  }, [
+    accountBlindPiPicker,
+    entryByInstanceId,
+    modelOptionsByInstance,
+    props.activeInstanceId,
+    readyInstanceSet,
+  ]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
+  const availableModelFamilies = useMemo(
+    () =>
+      new Set<ModelFamilyKey>(
+        flatModels.map((model) => getModelFamilyPresentation(model, model.driverKind).key),
+      ),
+    [flatModels],
+  );
+  useEffect(() => {
+    if (!accountBlindPiPicker) return;
+    const activeModel = flatModels.find(
+      (model) => model.instanceId === props.activeInstanceId && model.slug === props.model,
+    );
+    if (!activeModel) return;
+    setSelectedModelFamily(getModelFamilyPresentation(activeModel, activeModel.driverKind).key);
+  }, [accountBlindPiPicker, flatModels, props.activeInstanceId, props.model]);
   const lockedDisabledInstanceIds = useMemo(() => {
     if (!isLocked) {
       return undefined;
@@ -250,7 +303,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar =
+    !isSearching &&
+    (accountBlindPiPicker ? availableModelFamilies.size > 0 : sidebarInstanceEntries.length > 0);
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -334,7 +389,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .map((rankedModel) => rankedModel.model);
     }
 
-    if (props.lockedProvider !== null) {
+    if (accountBlindPiPicker) {
+      result =
+        props.lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
+      if (selectedModelFamily === "favorites") {
+        result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
+      } else {
+        result = result.filter(
+          (m) => getModelFamilyPresentation(m, m.driverKind).key === selectedModelFamily,
+        );
+      }
+    } else if (props.lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
       if (selectedInstanceId === "favorites") {
         result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
@@ -354,11 +419,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   }, [
     favoritesSet,
+    accountBlindPiPicker,
     flatModels,
     instanceOrder,
     matchesLockedProvider,
     props.lockedProvider,
     searchQuery,
+    selectedModelFamily,
     selectedInstanceId,
   ]);
 
@@ -474,7 +541,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) {
+      if (event.defaultPrevented || event.repeat || !paneOwnsKeyboard()) {
         return;
       }
 
@@ -502,7 +569,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
-  }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
+  }, [
+    handleModelSelect,
+    keybindings,
+    modelJumpModelKeys,
+    modelJumpShortcutContext,
+    paneOwnsKeyboard,
+  ]);
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);
@@ -525,7 +598,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         data-model-picker-content="true"
       >
         {/* Sidebar */}
-        {showSidebar && (
+        {showSidebar && accountBlindPiPicker ? (
+          <ModelFamilySidebar
+            selected={selectedModelFamily}
+            availableFamilies={availableModelFamilies}
+            showFavorites={favorites.length > 0}
+            onSelect={setSelectedModelFamily}
+          />
+        ) : showSidebar ? (
           <ModelPickerSidebar
             selectedInstanceId={selectedInstanceId}
             onSelectInstance={handleSelectInstance}
@@ -535,11 +615,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
-                    `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
+                    `${entry.displayName} is unavailable in this task. Start a new Pi task to continue.`,
                 }
               : {})}
           />
-        )}
+        ) : null}
 
         {/* Main content area */}
         <Combobox

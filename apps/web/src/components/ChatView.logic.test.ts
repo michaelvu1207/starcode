@@ -5,17 +5,19 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  agentRunModelSelection,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
+  deriveLockedProvider,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
@@ -26,8 +28,89 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   shouldShowBranchMismatchBanner,
+  supportsManagedGoalUi,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("agentRunModelSelection", () => {
+  for (const effort of ["off", "minimal", "high"] as const) {
+    it(`preserves Pi ${effort} effort exactly`, () => {
+      expect(
+        agentRunModelSelection({
+          providerInstanceId: ProviderInstanceId.make("pi_personal"),
+          model: "openai-codex/gpt-5.6-sol",
+          options: [{ id: "effort", value: effort }],
+        }),
+      ).toEqual({
+        instanceId: "pi_personal",
+        model: "openai-codex/gpt-5.6-sol",
+        options: [{ id: "effort", value: effort }],
+      });
+    });
+  }
+});
+
+describe("supportsManagedGoalUi", () => {
+  it("shows managed goals for Pi as well as the established native providers", () => {
+    expect(supportsManagedGoalUi("pi")).toBe(true);
+    expect(supportsManagedGoalUi("codex")).toBe(true);
+    expect(supportsManagedGoalUi("claudeAgent")).toBe(true);
+    expect(supportsManagedGoalUi("opencode")).toBe(false);
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  it("keeps a started legacy OpenCode thread locked instead of remapping it", () => {
+    const startedThread = {
+      latestTurn: null,
+      messages: [{ id: MessageId.make("legacy-message") }],
+      session: null,
+    } as unknown as Thread;
+
+    expect(
+      deriveLockedProvider({
+        thread: startedThread,
+        selectedProvider: "codex",
+        threadProvider: "opencode",
+      }),
+    ).toBe("opencode");
+  });
+
+  it.each(["codex_personal", "deleted-provider", "future-unknown-driver"])(
+    "keeps a started sessionless thread with unresolved provider %s read-only",
+    (threadProvider) => {
+      const startedThread = {
+        latestTurn: null,
+        messages: [{ id: MessageId.make(`message-${threadProvider}`) }],
+        session: null,
+      } as unknown as Thread;
+
+      expect(
+        deriveLockedProvider({
+          thread: startedThread,
+          selectedProvider: "pi",
+          threadProvider,
+        }),
+      ).toBe(threadProvider);
+    },
+  );
+
+  it("uses the resolved driver for a live custom Pi instance", () => {
+    const startedThread = {
+      latestTurn: null,
+      messages: [{ id: MessageId.make("custom-pi-message") }],
+      session: null,
+    } as unknown as Thread;
+
+    expect(
+      deriveLockedProvider({
+        thread: startedThread,
+        selectedProvider: null,
+        threadProvider: "pi",
+      }),
+    ).toBe("pi");
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
@@ -50,12 +133,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     proposedPlans: [],
     activities: [],
+    agentRuns: [],
     checkpoints: [],
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
     deletedAt: null,
     latestTurn: null,
     branch: null,

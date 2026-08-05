@@ -1,11 +1,15 @@
 {
-  "name": "@t3tools/tailscale",
+  "name": "@starcode/tailscale",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./peers": {
+      "types": "./src/peers.ts",
+      "import": "./src/peers.ts"
     }
   },
   "scripts": {
@@ -14,7 +18,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "@t3tools/shared": "workspace:*",
+    "@starcode/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

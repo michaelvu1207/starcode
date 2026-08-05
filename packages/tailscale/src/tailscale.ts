@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@starcode/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -180,7 +180,7 @@ export const parseTailscaleStatus = (
     }),
   );
 
-export const readTailscaleStatus = Effect.gen(function* () {
+export const readRawTailscaleStatus = Effect.gen(function* () {
   const args = ["status", "--json"];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcessPlatform;
@@ -214,7 +214,7 @@ export const readTailscaleStatus = Effect.gen(function* () {
         stderrLength: stderr.length,
       });
     }
-    return yield* parseTailscaleStatus(stdout);
+    return stdout;
   }).pipe(
     Effect.scoped,
     Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
@@ -230,6 +230,10 @@ export const readTailscaleStatus = Effect.gen(function* () {
     }),
   );
 });
+
+export const readTailscaleStatus = readRawTailscaleStatus.pipe(
+  Effect.flatMap(parseTailscaleStatus),
+);
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;

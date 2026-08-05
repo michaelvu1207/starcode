@@ -2,7 +2,7 @@ import {
   CommandId,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -35,19 +35,20 @@ export type CreateThreadInput = CommandInput<"thread.create">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
 export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
-export type SettleThreadInput = CommandInput<"thread.settle">;
-export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
-export type SnoozeThreadInput = CommandInput<"thread.snooze">;
-export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
+export type StartThreadAgentTurnInput = CommandInput<"thread.agent.turn.start">;
+export type InterruptThreadAgentTurnInput = CommandInput<"thread.agent.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type SetThreadGoalInput = CommandInput<"thread.goal.set">;
+export type SetThreadGoalStatusInput = CommandInput<"thread.goal-status.set">;
+export type ClearThreadGoalInput = CommandInput<"thread.goal.clear">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -157,46 +158,6 @@ export const unarchiveThread: (input: UnarchiveThreadInput) => CommandEffect = E
   });
 });
 
-export const settleThread: (input: SettleThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.settleThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.settle",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const unsettleThread: (input: UnsettleThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unsettleThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.unsettle",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const snoozeThread: (input: SnoozeThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.snoozeThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.snooze",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unsnoozeThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.unsnooze",
-    commandId: yield* commandId(input),
-  });
-});
-
 export const updateThreadMetadata: (input: UpdateThreadMetadataInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.updateThreadMetadata",
 )(function* (input) {
@@ -254,6 +215,29 @@ export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEf
   });
 });
 
+export const startThreadAgentTurn: (input: StartThreadAgentTurnInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.startThreadAgentTurn",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.agent.turn.start",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const interruptThreadAgentTurn: (input: InterruptThreadAgentTurnInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.interruptThreadAgentTurn")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.agent.turn.interrupt",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
 export const respondToThreadApproval: (input: RespondToThreadApprovalInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.respondToThreadApproval")(function* (input) {
     const metadata = yield* timestampedCommandMetadata(input);
@@ -294,6 +278,42 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "thread.session.stop",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const setThreadGoal: (input: SetThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadGoal",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.set",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const setThreadGoalStatus: (input: SetThreadGoalStatusInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadGoalStatus",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal-status.set",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const clearThreadGoal: (input: ClearThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.clearThreadGoal",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.clear",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

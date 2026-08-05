@@ -5,13 +5,21 @@ import { passkeys } from "@clerk/electron/passkeys";
 import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "@fontsource-variable/baloo-2/index.css";
 import "@fontsource-variable/dm-sans/index.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
+// Must stay last: the starcode token layer overrides `index.css` by cascade
+// order, using the same selectors upstream declares. See the file header.
+import "./starcode-theme.css";
+import { startStarcodeSky } from "./starcodeSky";
 
 import { isElectron } from "./env";
+
+// Time-of-day backdrop phase. Plain module, ticks outside React.
+startStarcodeSky();
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";

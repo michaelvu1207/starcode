@@ -1,4 +1,4 @@
-import { type ProviderInstanceId } from "@t3tools/contracts";
+import { type ProviderInstanceId } from "@starcode/contracts";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -11,13 +11,16 @@ import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../..
  * kind-based copy but uses the entry's configured `displayName` so custom
  * instances get their user-authored name (e.g. "Codex Personal — Unavailable.").
  */
-function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
+export function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
   const label = entry.displayName;
   if (!entry.enabled || entry.status === "disabled") {
     return `${label} — Disabled in settings.`;
   }
   if (entry.status === "ready" && entry.isAvailable) {
     return label;
+  }
+  if (entry.driverKind === "pi" && entry.status === "warning") {
+    return `${label} — Limited. Some Pi accounts or models are unavailable. Manage available accounts in Settings → Providers.`;
   }
   const kind =
     entry.status === "error" ? "Unavailable" : entry.status === "warning" ? "Limited" : "Not ready";

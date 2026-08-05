@@ -1,8 +1,12 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
+import LegacyBaselineUpgrade from "./003_LegacyBaselineUpgrade.ts";
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  yield* LegacyBaselineUpgrade;
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS checkpoint_diff_blobs (

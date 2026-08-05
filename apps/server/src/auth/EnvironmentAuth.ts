@@ -16,8 +16,8 @@ import {
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
-} from "@t3tools/contracts";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+} from "@starcode/contracts";
+import { encodeOAuthScope } from "@starcode/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -489,7 +489,7 @@ export class EnvironmentAuth extends Context.Service<
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
   }
->()("t3/auth/EnvironmentAuth") {}
+>()("starcode/auth/EnvironmentAuth") {}
 
 type BootstrapExchangeResult = {
   readonly response: AuthBrowserSessionResult;
@@ -702,12 +702,22 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                // A DPoP token is bound to a proof key and refreshable, so it
+                // stays short. A bearer minted here is a machine credential —
+                // the peer-registration path lands exactly here — and nothing
+                // refreshes it, so it gets the machine lifetime rather than the
+                // browser default.
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
                     }
-                  : {}),
+                  : {
+                      ttl:
+                        grant.subject === "fleet-client-bootstrap"
+                          ? Duration.minutes(10)
+                          : SessionStore.MACHINE_SESSION_TTL,
+                    }),
                 client: {
                   ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),
@@ -820,7 +830,11 @@ export const make = Effect.gen(function* () {
           ...(input?.label ? { label: input.label } : {}),
           deviceType: "bot",
         },
-        ...(input?.ttl ? { ttl: input.ttl } : {}),
+        // `deviceType: "bot"` is the whole argument: this is the token a
+        // machine holds, minted by `starcode auth session issue` and pasted into a
+        // peer registration. An explicit ttl still wins for a caller that wants
+        // a short-lived one.
+        ttl: input?.ttl ?? SessionStore.MACHINE_SESSION_TTL,
       })
       .pipe(
         Effect.map(
@@ -863,7 +877,7 @@ export const make = Effect.gen(function* () {
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
     issuePairingCredentialForSubject({
       scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: "one-time-token",
+      subject: input?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 

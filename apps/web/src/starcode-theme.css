@@ -1,0 +1,1283 @@
+/**
+ * starcode theme — fork-owned token override layer.
+ *
+ * WHAT THIS IS
+ * The app styles everything through the CSS custom properties declared in
+ * `index.css` (`--background`, `--foreground`, `--primary`, the `--sidebar-*`
+ * family, …) which `@theme inline` maps onto Tailwind's `--color-*` utilities.
+ * Because the mapping is `inline`, the utilities compile to `var(--background)`
+ * rather than to a baked value, so redefining the variables at runtime
+ * re-skins every component in the app — including components the fork has not
+ * touched, and components upstream has not written yet.
+ *
+ * So this file redefines variables. It does not restyle components.
+ * `index.css` is the repo's second-hottest file (26 touches / 500 upstream
+ * commits); the fork's diff there must stay at zero.
+ *
+ * WHY IT IS IMPORTED FROM `main.tsx` AND NOT FROM `index.css`
+ * CSS requires `@import` to precede all rules, so importing from `index.css`
+ * would place these declarations *above* the upstream `:root` block they need
+ * to override. Winning from that position would take specificity hacks
+ * (`:root:root`, doubled attribute selectors) that break silently whenever
+ * upstream restructures a selector. Importing from `main.tsx` after
+ * `./index.css` puts this file later in the cascade, so it can use the exact
+ * same selectors upstream uses and win on order alone. Each selector below is
+ * a character-for-character copy of the upstream rule it overrides — when a
+ * merge changes one upstream, the copy here is the thing to re-sync.
+ *
+ * This file is plain CSS. It is loaded through Vite's JS import graph rather
+ * than through the Tailwind entrypoint, so Tailwind-only syntax (`@theme`,
+ * `@variant`, `--alpha()`, `theme()`) is not available here and must not be
+ * used.
+ *
+ * PALETTE
+ * Deep ink-navy with a warm cast (never pure black), warm cream foreground,
+ * warm butter primary carrying dark text, starlight blue-grey secondary, and
+ * status hues softened to sit in the same room: sage, amber, dusty rose.
+ * Every fg/bg pair below is verified at WCAG AA (>= 4.5:1) in both themes.
+ *
+ * MOTIF RESTRAINT RULE
+ * Decoration appears on empty and idle surfaces only. Dense working UI —
+ * thread rows, transcripts, the composer — inherits the palette and nothing
+ * else. The one exception is the sidebar's night sky, which is the brand's
+ * signature and is held far below the contrast of any content drawn over it.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. Source palette
+ *
+ * Named scales, declared once on `:root` so both themes and the motif layer
+ * draw from the same values. Nothing outside this file should reference an
+ * `--sc-*` variable — the app reads the semantic tokens in section 2.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Ink — a single warm-navy hue family. Chroma is deliberate: a neutral gray
+     ramp under a cream foreground reads cold and clinical, which is the
+     opposite of the brief. */
+  --sc-ink-950: #090c11;
+  --sc-ink-900: #0e1117;
+  --sc-ink-850: #151a24;
+  --sc-ink-800: #1b2130;
+  --sc-ink-750: #232a3a;
+  --sc-ink-700: #2d3546;
+
+  /* Cream — the warm foreground family, and the tint every dark-theme alpha
+     is mixed from, so hovers and borders warm up instead of graying out. */
+  --sc-cream-50: #f6f7f9;
+  --sc-cream-100: #eadcc6;
+  --sc-cream-400: #c7b8a1;
+
+  /* Butter — the primary accent. Always carries ink-colored text. */
+  --sc-butter: #f0d9a0;
+  --sc-butter-deep: #a5822c;
+
+  /* Starlight — the secondary/informational blue-grey. */
+  --sc-starlight: #93b1de;
+  --sc-starlight-text: #a8c2e6;
+  --sc-starlight-deep: #3a5c8c;
+
+  /* Softened status hues. `*-dot` values paint fills and indicators; `*-text`
+     values paint text and are the ones held to AA. */
+  --sc-sage-dot: #8fb488;
+  --sc-sage-text: #a3c79a;
+  --sc-sage-deep: #41653c;
+  --sc-amber-dot: #dfae6b;
+  --sc-amber-text: #e5bb79;
+  --sc-amber-deep: #7d5a17;
+  --sc-rose-dot: #e08f88;
+  --sc-rose-text: #eda9a2;
+  --sc-rose-deep: #a13c36;
+
+  /* Linen — the light theme's paper. */
+  --sc-linen-50: #fffdf7;
+  --sc-linen-100: #faf6ec;
+  --sc-linen-200: #f5f0e2;
+  --sc-linen-300: #efe8d6;
+  --sc-linen-400: #e6dfcd;
+  --sc-linen-500: #cbc0a4;
+
+  /* Overwritten every minute by `starcodeSky.ts`. Declared here so the backdrop
+     is correct on first paint and degrades to plain night if that never runs.
+     `--sc-sky-top` is the average of the hour-0 field's top row; the two field
+     properties hold the PNGs of the keyframes either side of now, and the blend
+     is how far between them the clock has got. The values come from a
+     day-to-night time-lapse; see `starcodeSkyTimeline.ts`. */
+  --sc-sky-top: #090f18;
+  --sc-sky-wash: #d2e6ff;
+  --sc-sky-stars: 1;
+  --sc-sky-field-a: none;
+  --sc-sky-field-b: none;
+  --sc-sky-blend: 0;
+
+  /* How solid a structural panel is over the sky. The sidebar and the main pane
+     are no longer surfaces with their own backdrops — they are tinted glass, and
+     this is the tint. Solved rather than chosen: it is the transparency at which
+     the tightest text token still clears AA on every one of the 38 keyframes, in
+     both themes, with the user's glass slider dragged to its 40% minimum.
+     `scripts/check-starcode-contrast.mjs` bisects for the lowest value that
+     holds and fails if this one is under it.
+
+     It is a real gate again. While the sky was a dim gradient the answer came
+     back 0% — every panel base was darker than the sky, so the tint could only
+     raise contrast. The field is much lighter and much more colourful than that
+     gradient was, and its brightest cells now sit above the panel bases, so how
+     much of it shows through is once again a legibility question and not only a
+     taste one. Lower it, re-run the gate, and believe the gate. */
+  --sc-glass-panel: 38%;
+
+  /* The ceiling on how bright a star may get anywhere body text can land.
+     Solved, not guessed: at this layer opacity the brightest star in the tile
+     (baked at 0.86) composites to a colour that still clears AA against
+     `muted-foreground` — the tightest token — on every surface and in every
+     phase. `scripts/check-starcode-contrast.mjs` re-derives it and fails if a
+     palette change breaks the guarantee. Raising this is the one edit in the
+     file that can make text harder to read, which is why the number is here
+     with its reasoning rather than inline at the three places it is used.
+
+     Doubled from 0.13 when the palette moved onto the brand kit's blacks. A
+     darker ground and a lighter muted tan bought a lot of headroom, and stars
+     are where it belongs: on a true black sky they should read, and brightening
+     them costs nothing that a gradient wash would have cost. Solved, not
+     guessed — 0.29 is where the worst starlit phase drops under the floor. */
+  --sc-star-chrome-max: 0.26;
+
+  /* The speck tile dealt into three layers, so the field can drift at three
+     speeds instead of one. Generated — do not hand-edit:
+
+       node scripts/derive-starcode-star-layers.mjs
+
+     Every star appears in exactly one layer, so the three superimposed are the
+     original field; nothing was duplicated to fake depth. `--check` on that
+     script fails if these drift out of sync with `--sc-speck-tile`. */
+  --sc-star-layer-1: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23eadcc6'%3E%3Ccircle%20cx%3D'51.4'%20cy%3D'74.0'%20r%3D'1.27'%20opacity%3D'0.6'%2F%3E%3Ccircle%20cx%3D'80.4'%20cy%3D'415.5'%20r%3D'1.39'%20opacity%3D'0.43'%2F%3E%3Ccircle%20cx%3D'153.1'%20cy%3D'222.1'%20r%3D'1.12'%20opacity%3D'0.85'%2F%3E%3Ccircle%20cx%3D'174.3'%20cy%3D'518.8'%20r%3D'0.9'%20opacity%3D'0.45'%2F%3E%3Ccircle%20cx%3D'254.2'%20cy%3D'198.9'%20r%3D'1.1'%20opacity%3D'0.4'%2F%3E%3Ccircle%20cx%3D'363.7'%20cy%3D'155.8'%20r%3D'1.14'%20opacity%3D'0.79'%2F%3E%3Ccircle%20cx%3D'405.9'%20cy%3D'141.9'%20r%3D'1.2'%20opacity%3D'0.58'%2F%3E%3Ccircle%20cx%3D'402.5'%20cy%3D'525.8'%20r%3D'1.61'%20opacity%3D'0.65'%2F%3E%3Ccircle%20cx%3D'487.7'%20cy%3D'296.4'%20r%3D'1.35'%20opacity%3D'0.78'%2F%3E%3Ccircle%20cx%3D'586.5'%20cy%3D'35.6'%20r%3D'1.61'%20opacity%3D'0.84'%2F%3E%3Ccircle%20cx%3D'629.4'%20cy%3D'392.6'%20r%3D'1.7'%20opacity%3D'0.39'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M214%20118c4.2%205.25%205.46%206.04%205.25%204.2-5.25%204.2-5.46%206.04-4.2%205.25-4.2-5.25-5.46-6.04-5.25-4.25.25-4.2%205.46-6.04%204.2-5.25Z'%20opacity%3D'0.7'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  --sc-star-layer-2: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23eadcc6'%3E%3Ccircle%20cx%3D'24.5'%20cy%3D'135.8'%20r%3D'1.4'%20opacity%3D'0.75'%2F%3E%3Ccircle%20cx%3D'109.9'%20cy%3D'23.8'%20r%3D'1.09'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'165.8'%20cy%3D'329.2'%20r%3D'1.15'%20opacity%3D'0.46'%2F%3E%3Ccircle%20cx%3D'233.6'%20cy%3D'77.9'%20r%3D'1.22'%20opacity%3D'0.39'%2F%3E%3Ccircle%20cx%3D'212.6'%20cy%3D'409.1'%20r%3D'1.26'%20opacity%3D'0.45'%2F%3E%3Ccircle%20cx%3D'355.4'%20cy%3D'324.7'%20r%3D'0.98'%20opacity%3D'0.84'%2F%3E%3Ccircle%20cx%3D'423.1'%20cy%3D'230.1'%20r%3D'1.59'%20opacity%3D'0.44'%2F%3E%3Ccircle%20cx%3D'490.2'%20cy%3D'13.4'%20r%3D'1.67'%20opacity%3D'0.47'%2F%3E%3Ccircle%20cx%3D'502.8'%20cy%3D'433.5'%20r%3D'1.06'%20opacity%3D'0.36'%2F%3E%3Ccircle%20cx%3D'626.6'%20cy%3D'140.8'%20r%3D'1.01'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'629.8'%20cy%3D'522.4'%20r%3D'1.49'%20opacity%3D'0.7'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M508%20376c3.4%204.25%204.42%204.89%204.25%203.4-4.25%203.4-4.42%204.89-3.4%204.25-3.4-4.25-4.42-4.89-4.25-3.44.25-3.4%204.42-4.89%203.4-4.25Z'%20opacity%3D'0.5'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  --sc-star-layer-3: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'660'%20height%3D'540'%20viewBox%3D'0%200%20660%20540'%3E%3Cg%20fill%3D'%23eadcc6'%3E%3Ccircle%20cx%3D'17.8'%20cy%3D'336.2'%20r%3D'1.45'%20opacity%3D'0.37'%2F%3E%3Ccircle%20cx%3D'137.2'%20cy%3D'158.4'%20r%3D'1.32'%20opacity%3D'0.67'%2F%3E%3Ccircle%20cx%3D'110.6'%20cy%3D'423.2'%20r%3D'1.22'%20opacity%3D'0.77'%2F%3E%3Ccircle%20cx%3D'255.7'%20cy%3D'119.3'%20r%3D'0.97'%20opacity%3D'0.52'%2F%3E%3Ccircle%20cx%3D'209.3'%20cy%3D'504.8'%20r%3D'0.99'%20opacity%3D'0.56'%2F%3E%3Ccircle%20cx%3D'349.5'%20cy%3D'483.3'%20r%3D'1.14'%20opacity%3D'0.39'%2F%3E%3Ccircle%20cx%3D'447.1'%20cy%3D'387.9'%20r%3D'1.05'%20opacity%3D'0.72'%2F%3E%3Ccircle%20cx%3D'501.2'%20cy%3D'157.1'%20r%3D'1.38'%20opacity%3D'0.5'%2F%3E%3Ccircle%20cx%3D'514.7'%20cy%3D'464.9'%20r%3D'1.04'%20opacity%3D'0.53'%2F%3E%3Ccircle%20cx%3D'627.3'%20cy%3D'346.7'%20r%3D'0.92'%20opacity%3D'0.67'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23f0d9a0'%3E%3Cpath%20d%3D'M96%20452c3.0%203.75%203.9%204.31%203.75%203.0-3.75%203.0-3.9%204.31-3.0%203.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0%203.9-4.31%203.0-3.75Z'%20opacity%3D'0.44'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+
+  --sc-font-display: "Baloo 2 Variable", "Baloo 2", ui-rounded, system-ui, sans-serif;
+
+  /* One tile, for the whole sky. The 88px `--sc-sky-tile` crop that used to
+     bound the sidebar's band by geometry is gone with the band: the field is
+     bounded by opacity now (`--sc-star-chrome-max`), which is a guarantee about
+     legibility rather than about where a speck happens to land. */
+  --sc-speck-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='660' height='540' viewBox='0 0 660 540'%3E%3Cg fill='%23eadcc6'%3E%3Ccircle cx='51.4' cy='74.0' r='1.27' opacity='0.6'/%3E%3Ccircle cx='24.5' cy='135.8' r='1.4' opacity='0.75'/%3E%3Ccircle cx='17.8' cy='336.2' r='1.45' opacity='0.37'/%3E%3Ccircle cx='80.4' cy='415.5' r='1.39' opacity='0.43'/%3E%3Ccircle cx='109.9' cy='23.8' r='1.09' opacity='0.37'/%3E%3Ccircle cx='137.2' cy='158.4' r='1.32' opacity='0.67'/%3E%3Ccircle cx='153.1' cy='222.1' r='1.12' opacity='0.85'/%3E%3Ccircle cx='165.8' cy='329.2' r='1.15' opacity='0.46'/%3E%3Ccircle cx='110.6' cy='423.2' r='1.22' opacity='0.77'/%3E%3Ccircle cx='174.3' cy='518.8' r='0.9' opacity='0.45'/%3E%3Ccircle cx='233.6' cy='77.9' r='1.22' opacity='0.39'/%3E%3Ccircle cx='255.7' cy='119.3' r='0.97' opacity='0.52'/%3E%3Ccircle cx='254.2' cy='198.9' r='1.1' opacity='0.4'/%3E%3Ccircle cx='212.6' cy='409.1' r='1.26' opacity='0.45'/%3E%3Ccircle cx='209.3' cy='504.8' r='0.99' opacity='0.56'/%3E%3Ccircle cx='363.7' cy='155.8' r='1.14' opacity='0.79'/%3E%3Ccircle cx='355.4' cy='324.7' r='0.98' opacity='0.84'/%3E%3Ccircle cx='349.5' cy='483.3' r='1.14' opacity='0.39'/%3E%3Ccircle cx='405.9' cy='141.9' r='1.2' opacity='0.58'/%3E%3Ccircle cx='423.1' cy='230.1' r='1.59' opacity='0.44'/%3E%3Ccircle cx='447.1' cy='387.9' r='1.05' opacity='0.72'/%3E%3Ccircle cx='402.5' cy='525.8' r='1.61' opacity='0.65'/%3E%3Ccircle cx='490.2' cy='13.4' r='1.67' opacity='0.47'/%3E%3Ccircle cx='501.2' cy='157.1' r='1.38' opacity='0.5'/%3E%3Ccircle cx='487.7' cy='296.4' r='1.35' opacity='0.78'/%3E%3Ccircle cx='502.8' cy='433.5' r='1.06' opacity='0.36'/%3E%3Ccircle cx='514.7' cy='464.9' r='1.04' opacity='0.53'/%3E%3Ccircle cx='586.5' cy='35.6' r='1.61' opacity='0.84'/%3E%3Ccircle cx='626.6' cy='140.8' r='1.01' opacity='0.37'/%3E%3Ccircle cx='627.3' cy='346.7' r='0.92' opacity='0.67'/%3E%3Ccircle cx='629.4' cy='392.6' r='1.7' opacity='0.39'/%3E%3Ccircle cx='629.8' cy='522.4' r='1.49' opacity='0.7'/%3E%3C/g%3E%3Cg fill='%23f0d9a0'%3E%3Cpath d='M214 118c4.2 5.25 5.46 6.04 5.25 4.2-5.25 4.2-5.46 6.04-4.2 5.25-4.2-5.25-5.46-6.04-5.25-4.25.25-4.2 5.46-6.04 4.2-5.25Z' opacity='0.7'/%3E%3Cpath d='M508 376c3.4 4.25 4.42 4.89 4.25 3.4-4.25 3.4-4.42 4.89-3.4 4.25-3.4-4.25-4.42-4.89-4.25-3.44.25-3.4 4.42-4.89 3.4-4.25Z' opacity='0.5'/%3E%3Cpath d='M96 452c3.0 3.75 3.9 4.31 3.75 3.0-3.75 3.0-3.9 4.31-3.0 3.75-3.0-3.75-3.9-4.31-3.75-3.03.75-3.0 3.9-4.31 3.0-3.75Z' opacity='0.44'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Semantic tokens
+ *
+ * Mirrors `index.css`'s `:root` block. Light theme first, then dark under the
+ * compiled form of upstream's `@variant dark`.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Generous radii, one step up from upstream's 0.625rem. Every `rounded-*`
+     utility derives from this, so panels soften without any component edit. */
+  --radius: 0.8rem;
+
+  --background: var(--sc-linen-100);
+  --app-chrome-background: var(--background);
+  --foreground: #22252f;
+  --card: var(--sc-linen-50);
+  --card-foreground: #22252f;
+  --surface-raised: color-mix(in srgb, var(--sc-linen-50) 55%, transparent);
+  --popover: var(--sc-linen-50);
+  --popover-foreground: #22252f;
+
+  /* Inverted from dark: there the accent is the warm thing against the ink,
+     here it is the ink against the warm. Butter survives in light as the focus
+     ring, selected-row tint, and every star. Butter-on-linen buttons would
+     vanish. */
+  --primary: #282c3c;
+  --primary-foreground: #f8f4e9;
+
+  --secondary: var(--sc-linen-200);
+  --secondary-foreground: #22252f;
+  --muted: var(--sc-linen-200);
+  --muted-foreground: #6a675d;
+  --accent: var(--sc-linen-300);
+  --accent-foreground: #161821;
+
+  --destructive: #b8524b;
+  --destructive-foreground: var(--sc-rose-deep);
+  --border: var(--sc-linen-400);
+  --input: var(--sc-linen-500);
+  --ring: var(--sc-butter-deep);
+
+  --info: #4c72a8;
+  --info-foreground: var(--sc-starlight-deep);
+  --success: #5c8354;
+  --success-foreground: var(--sc-sage-deep);
+  --warning: #a97c22;
+  --warning-foreground: var(--sc-amber-deep);
+
+  --sidebar: var(--sc-linen-200);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-linen-300);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-linen-50) 60%, transparent);
+  --sidebar-row-active: var(--sc-linen-50);
+  --sidebar-row-selected: var(--sc-linen-50);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+
+  /* Usage chart series. One hue per CLI, held apart by hue rather than by
+     lightness so the stack reads at a two-pixel bar width and survives a
+     colour-blind reader. Deepened here because linen is a bright ground and
+     the dot values would wash out against it. */
+  --usage-series-claude: var(--sc-amber-deep);
+  --usage-series-codex: var(--sc-starlight-deep);
+}
+
+:root:is(.dark, .dark *) {
+  --background: var(--sc-ink-900);
+  --app-chrome-background: var(--background);
+  --foreground: var(--sc-cream-100);
+  --card: var(--sc-ink-850);
+  --card-foreground: var(--sc-cream-100);
+  --surface-raised: color-mix(in srgb, var(--sc-cream-100) 4%, transparent);
+  --popover: var(--sc-ink-800);
+  --popover-foreground: var(--sc-cream-100);
+
+  --primary: var(--sc-butter);
+  --primary-foreground: #181b26;
+
+  --secondary: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --secondary-foreground: var(--sc-cream-100);
+  --muted: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --muted-foreground: var(--sc-cream-400);
+  --accent: color-mix(in srgb, var(--sc-cream-100) 8%, transparent);
+  --accent-foreground: var(--sc-cream-50);
+
+  --destructive: var(--sc-rose-dot);
+  --destructive-foreground: var(--sc-rose-text);
+  --border: color-mix(in srgb, var(--sc-cream-100) 15%, transparent);
+  --input: color-mix(in srgb, var(--sc-cream-100) 30%, transparent);
+  --ring: var(--sc-butter);
+
+  --info: var(--sc-starlight);
+  --info-foreground: var(--sc-starlight-text);
+  --success: var(--sc-sage-dot);
+  --success-foreground: var(--sc-sage-text);
+  --warning: var(--sc-amber-dot);
+  --warning-foreground: var(--sc-amber-text);
+
+  --sidebar: var(--sc-ink-850);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-ink-750);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--sc-cream-100) 9%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--sc-cream-100) 7%, transparent);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+
+  /* The same two hues at their `*-dot` weight: on ink they carry themselves,
+     and the deep values used in light would sink into the background. */
+  --usage-series-claude: var(--sc-amber-dot);
+  --usage-series-codex: var(--sc-starlight);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Sidebar surface
+ *
+ * `index.css` re-declares the token set for the sidebar column, and its dark
+ * block uses literal `#000` / `#f1f3f7` rather than variables. Those literals
+ * would punch a pure-black hole in the middle of the ink palette, so both
+ * blocks are restated here. Selectors copied verbatim from `index.css`.
+ * ------------------------------------------------------------------------ */
+
+[data-app-sidebar] {
+  --background: var(--sc-linen-100);
+  --foreground: #22252f;
+  --card: var(--sc-linen-50);
+  --card-foreground: #22252f;
+  --accent: var(--sc-linen-300);
+  --accent-foreground: #161821;
+  --muted: var(--sc-linen-200);
+  --muted-foreground: #6a675d;
+  --border: var(--sc-linen-400);
+  --input: var(--sc-linen-500);
+  --sidebar: var(--sc-linen-200);
+  --sidebar-foreground: #22252f;
+  --sidebar-muted-foreground: #6a675d;
+  --sidebar-control-surface: var(--sc-linen-300);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-linen-50) 60%, transparent);
+  --sidebar-row-active: var(--sc-linen-50);
+  --sidebar-row-selected: var(--sc-linen-50);
+  --sidebar-border: var(--sc-linen-400);
+  --sidebar-stage-fade: var(--sidebar);
+  background-color: var(--sidebar);
+}
+
+.dark [data-app-sidebar] {
+  --background: var(--sc-ink-900);
+  --foreground: var(--sc-cream-100);
+  --card: var(--sc-ink-850);
+  --card-foreground: var(--foreground);
+  --accent: color-mix(in srgb, var(--sc-cream-100) 8%, transparent);
+  --accent-foreground: var(--sc-cream-50);
+  --muted: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --muted-foreground: var(--sc-cream-400);
+  --border: color-mix(in srgb, var(--sc-cream-100) 15%, transparent);
+  --input: color-mix(in srgb, var(--sc-cream-100) 30%, transparent);
+  --sidebar: var(--sc-ink-850);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--sc-ink-750);
+  --sidebar-row-hover: color-mix(in srgb, var(--sc-cream-100) 6%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--sc-cream-100) 9%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--sc-cream-100) 7%, transparent);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3b. Dev / nightly channel art
+ *
+ * Upstream's blueprint band is a saturated electric blue. It paints the sidebar
+ * header on every dev build and — less obviously — is also the composer's send
+ * button background, so on a dev instance it puts two hard blue shapes into an
+ * ink-navy app. Retuned to the ink family: a dev build should read as "night
+ * shift", not "alert".
+ *
+ * These have to be set on `.stage-blueprint` itself, not inherited from
+ * `:root`: `index.css` declares them on that element, and a custom property
+ * set directly on an element always beats an inherited one no matter how
+ * specific the inherited rule is.
+ * ------------------------------------------------------------------------ */
+
+.stage-blueprint {
+  /* The gradient runs bottom-to-top, so the `bottom` stop is most of what you
+     see. In light it has to stay light, or the band lands as a dark slab on a
+     pale sidebar. */
+  --stage-bp-top: #dfe6f3;
+  --stage-bp-mid: #b9c6e2;
+  --stage-bp-bottom: #93a6cd;
+}
+
+.dark .stage-blueprint {
+  --stage-bp-top: #4a5a8c;
+  --stage-bp-mid: #2b3560;
+  --stage-bp-bottom: #161c38;
+}
+
+/* The three variables only drive the paper gradient. Layered over it are
+   hardcoded cyan and violet glows and a bright grid, which no token reaches, so
+   the band still arrives brighter than the palette it sits in. One filter on
+   the art's own root element pulls the whole composite down at once — no
+   component diff, and it catches both places the art renders: the sidebar
+   header and the composer's send button.
+
+   Muted, not removed: telling a dev build apart at a glance is the point of
+   this art, and it should still be obvious. Dial or delete this rule to taste. */
+.dark .stage-blueprint {
+  filter: saturate(0.5) brightness(0.78);
+}
+
+:root:not(.dark) .stage-blueprint {
+  filter: saturate(0.45) brightness(1.06);
+}
+
+/* The header switches the brand to white when it sits on channel art, which
+   assumes the art is dark. After the light-theme retune above it is a pale
+   wash, so white-on-white would make the wordmark unreadable — the one piece
+   of text on that band that has to be legible. */
+:root:not(.dark) .sidebar-brand .starcode-wordmark-text {
+  color: var(--foreground);
+}
+
+:root:not(.dark) .sidebar-brand svg {
+  color: var(--primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. The sky — one layer, behind everything
+ *
+ * THE APP IS A WINDOW AT NIGHT. The whole window, not six of them.
+ *
+ * This used to be painted in six places: a band on the sidebar panel, a
+ * starfield on the sidebar panel, a gradient on the main pane, a starfield on
+ * the main pane, and a light-theme wash for each — plus a rule that punched a
+ * hole through every route's wrapper so the pane's gradient could be seen at
+ * all. Six surfaces meant six chances to disagree, and they did: the seam down
+ * the middle of the app was fought twice, once by stretching the sidebar's band
+ * from 88px to full height and once by tinting it from the pane's phase. Both
+ * treated the symptom. The cause was that the sky was a property of panels.
+ *
+ * It is now a property of the window. `components/brand/StarcodeSky.tsx`
+ * portals one fixed element to `document.body` at `z-index: -1`; the sidebar,
+ * the pane, the workbench and the settings shell are tinted glass over it
+ * (section 4c). There is no seam because there is nothing to align.
+ *
+ * WHERE THE COLOURS COME FROM. A real day-to-night time-lapse, sampled across
+ * its length and compressed into this palette — 38 keyframes, generated into
+ * `starcodeSkyTimeline.ts`, interpolated every minute by `starcodeSky.ts`. See
+ * `scripts/lib/starcode-sky-timeline.mjs` for the transform and every taste
+ * decision in it. Nothing about the sky's *colour* is tunable from this file.
+ *
+ * THE THREE-TIER DOCTRINE, which is the rule the rest of the theme now obeys:
+ *   L0  the sky           — this layer: the blurred field, with the starfield
+ *                           over it. Three composited layers for the whole app.
+ *   L1  structural panels — sidebar, main pane, shells. Tint only, no filter.
+ *                           The sky is already blurred; blurring it again is a
+ *                           second full-viewport GPU pass for a picture nobody
+ *                           can tell from the input, and it would smear the
+ *                           starfield on top of it into grey haze.
+ *   L2  floating surfaces — composer, dropdowns, dialogs, toasts. Unchanged;
+ *                           they already blur, and their backdrop is now the
+ *                           real sky rather than a flat plate.
+ *   L3  opaque islands    — terminal, diff panel, form controls, sticky heads.
+ *                           Opaque by rule. Content must never scroll under
+ *                           text. This is the restraint rule applied to
+ *                           translucency, not a concession to it.
+ *
+ * BUDGET. Three composited layers total: two field frames and the starfield.
+ * The blur is a filter on a static image, so it rasterises once and is cached —
+ * only `opacity` and one very slow `transform` ever change. No canvas, no
+ * WebGL, no rAF, no timer beyond the existing one-minute tick. Browsers suspend
+ * CSS animations on hidden documents, so a backgrounded window costs nothing.
+ * ------------------------------------------------------------------------ */
+
+/* THE TRAP THAT COSTS AN AFTERNOON IF YOU MISS IT. `body` does not establish a
+   stacking context here, so a `z-index: -1` child of it is painted in the ROOT
+   stacking context — after `html`'s background, but *before* body's own box.
+   Body's background therefore paints on top of the sky and hides it completely,
+   and because `syncBrowserChromeTheme` keeps body's colour synced to the sky's
+   top stop, the result does not look broken: it looks like a flat, correctly
+   tinted app with no field and no stars. It took a nine-hour
+   screenshot sweep that came back nine identical frames to find it.
+   So body stops painting. `html` keeps the colour (it is behind the sky, and it
+   is what shows on overscroll), and the grain moves onto the sky layer, which
+   now covers the whole viewport anyway — leaving it on body would double it.
+
+   THE SECOND HALF OF THE SAME TRAP. `index.html` ships its own anti-flash boot
+   styles — `body { background: #fff }` and `html.dark body { background:
+   #161616 }` — in a `<style>` in the head. The dark one is specificity (0,1,2),
+   which this rule has to MATCH rather than undercut; a bare `body` selector
+   loses to it silently, and the sky stays hidden in dark mode only, which is
+   the half of the app that has a sky. */
+body,
+html.dark body {
+  background-color: transparent;
+  background-image: none;
+}
+
+.starcode-sky {
+  position: fixed;
+  inset: 0;
+  /* Below every in-flow descendant of body, above body's own background. The
+     classic placement, and the reason this works with zero component edits. */
+  z-index: -1;
+  pointer-events: none;
+  /* The frames overscan the viewport; this clips them. */
+  overflow: hidden;
+  /* Opaque, and equal to the top of the field by construction. This is what
+     `syncBrowserChromeTheme` samples for the browser and native titlebar tint —
+     it used to sample the main pane, which is now translucent and would have
+     handed it a colour with an alpha channel. It is also what shows for the one
+     frame before an image decodes. */
+  background-color: color-mix(in srgb, var(--sc-sky-wash) 58%, var(--background));
+  background-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--sc-sky-wash) 58%, var(--background)) 0%,
+      color-mix(in srgb, var(--sc-sky-wash) 26%, var(--background)) 28%,
+      color-mix(in srgb, var(--sc-sky-wash) 9%, var(--background)) 56%,
+      var(--background) 84%
+    ),
+    var(--surface-grain);
+  background-repeat: no-repeat, repeat;
+  background-position:
+    top left,
+    top left;
+  background-size:
+    100% 100%,
+    256px 256px;
+  /* Keeps the sky out of the root snapshot when anything calls
+     `startViewTransition` — `draftHeroTransition.ts` already does. Crossfading
+     two identical skies is a double exposure that also freezes the drift for the
+     duration; naming the layer gives it its own group, and section 10 holds that
+     group still. */
+  view-transition-name: sc-sky;
+}
+
+.dark .starcode-sky {
+  background-color: var(--sc-sky-top);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4a. The field — the blurred-video layer
+ *
+ * WHAT THIS IS. Each keyframe of the timeline ships a 48x29 PNG of the sky at
+ * that hour, measured off the source footage: a 20x12 grid of solved colour,
+ * upscaled and blurred at build time. The browser stretches it the rest of the
+ * way. The result is the source, at the right time of day, in this palette,
+ * with nothing photographic left in it to read.
+ *
+ * WHY THE BLUR IS NOT HERE ANY MORE. It used to be — `filter: blur(3.6vw)` on
+ * this rule, over the raw 20x12. It moved into
+ * `scripts/lib/starcode-sky-timeline.mjs`, which applies it once per keyframe at
+ * build time; that file's header has the full argument, including why the image
+ * had to grow to 48x29 to hold a blur at all.
+ *
+ * The original reason was the push: a filtered layer with a live transform is
+ * redrawn, filter and all, on every composited frame. The push is now gone too,
+ * which retires that argument — so the bake was re-measured without it, and it
+ * still pays. Against this same rule carrying `filter: blur(3.6vw)` on a static
+ * frame, the baked image measured about two points of a core cheaper. A filter
+ * is not free just because nothing is animating: it forces a render surface,
+ * which has to be composited and re-rastered on every resize, DPI change and
+ * theme flip. Two points of a core, permanently, against seventeen kilobytes of
+ * gzipped bundle, is still the right side of the trade.
+ *
+ * WHY NOT A GRADIENT, which is what this replaced. A gradient is what you get
+ * when the measurement threw away the horizontal axis, and it looks like it: no
+ * cloud mass, no off-centre glow, no patch of colour that is not the average of
+ * its latitude. Twenty by twelve is the smallest grid that still has all three,
+ * and small enough that no upscale can put detail back.
+ *
+ * WHY TWO FRAMES. The keyframes are half an hour to an hour apart, so painting
+ * only the nearest one would step the whole sky every thirty minutes. Frame A
+ * holds the keyframe before now and frame B the one after, and B's opacity is
+ * how far between them the clock is. `starcodeSky.ts` rewrites all three values
+ * on its existing minute tick — a step of at most three percent opacity on a
+ * heavily blurred backdrop, which is why there is no transition here and does
+ * not need to be.
+ *
+ * THE SLOW PUSH, AND WHY IT IS GONE. This frame used to carry one transform —
+ * `scale(1)` to `scale(1.06)` and back over three and a half minutes, meant to
+ * read as a camera breathing on a very long lens. It was profiled out of the
+ * app, and the numbers are worth keeping because the mistake is easy to repeat:
+ *
+ *   - Ablated live over CDP, it was 17 of the GPU process's 25 percent of a
+ *     core. Removing it alone was worth as much as deleting the whole backdrop.
+ *   - Measured end to end — one extreme to the other, the entire journey — it
+ *     moved the sky by a mean of 2/255 and a maximum of 21/255.
+ *
+ * That is the whole trap. `ease-in-out` means the scale is a different number
+ * on every vsync, so a full-viewport layer was resampled some 25,000 times per
+ * cycle to deliver a change of under one percent. A slow animation is not a
+ * cheap one: duration sets how far it moves per frame, never how often. And the
+ * effect it bought was, correctly, invisible — a blurred gradient has no edge
+ * to track, so nothing about a six percent scale on it can be seen. The app's
+ * owner did not know the effect existed.
+ *
+ * If motion is ever wanted back here, it has to be stepped rather than eased
+ * (`steps(70)` measured at a third of the cost and looked identical), and it
+ * should be justified by something you can actually see.
+ *
+ * WHAT STILL MOVES. The sky itself, on the hour — `starcodeSky.ts` crossfades
+ * the two frames on a sixty-second tick, which is an opacity change on static
+ * layers and has never cost anything measurable. That is the backdrop's real
+ * animation and it is untouched.
+ *
+ * DARK ONLY. The light theme keeps its wash gradient. This is a photograph of a
+ * night sky; on linen it is a smudge, which is the same reason the starfield has
+ * never been allowed on paper.
+ * ------------------------------------------------------------------------ */
+
+.dark .starcode-sky-frame {
+  position: absolute;
+  /* Overscan. Nothing moves any more, so this is no longer covering a push and
+     no longer hiding a blur's dark rim — the bake clamps its own edges. What is
+     left is framing: the fields were derived, blurred and judged as this crop,
+     so opening it back out to the full image would recompose every keyframe. */
+  inset: -12%;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.dark .starcode-sky-frame-a {
+  background-image: var(--sc-sky-field-a);
+}
+
+/* The half of the crossfade that carries the blend. It used to hold an offset
+   animation-delay as well, so the two frames were never at the same scale; with
+   the push gone there is no scale for them to disagree about. */
+.dark .starcode-sky-frame-b {
+  background-image: var(--sc-sky-field-b);
+  opacity: var(--sc-sky-blend);
+}
+
+/* The chrome starfield, at the solved ceiling: `--sc-star-chrome-max` is the
+   layer opacity at which the brightest star in the tile still leaves
+   `muted-foreground` above AA, so a star may sit anywhere — including directly
+   behind a row of text — without being able to push it below the floor. That
+   guarantee is what lets the field cover the working UI instead of stopping at
+   the empty states.
+   It drifts now, where the sidebar's copy could not: one field for the whole
+   window means one wrap period, rather than a narrow panel wrapping four times
+   as often as the pane beside it. Scaled by the hour on top of the ceiling, so
+   it thins through dusk and is gone by midday. Dark only — specks on linen read
+   as dust. */
+.dark .starcode-sky-field {
+  position: absolute;
+  /* One tile of slack on the right, for the wrap. */
+  inset: 0 -660px 0 0;
+  pointer-events: none;
+  background-image: var(--sc-speck-tile);
+  background-repeat: repeat;
+  background-position: top center;
+  background-size: 660px 540px;
+  opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
+  animation: starcode-star-drift 900s linear infinite;
+  --sc-drift-cant: 0deg;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4b. Speck field
+ *
+ * The full-page counterpart to the sidebar sky, for the pairing screen and the
+ * empty heroes. A fixed-size repeating tile rather than a stretched SVG: an
+ * SVG scaled to fill a 1440px viewport blows a 1.4px speck up to a 4px blob,
+ * which stops reading as a star and starts reading as dust on the lens.
+ *
+ * `currentColor` cannot cross into a background image, so the tile carries the
+ * cream tint directly and opacity does the theme work.
+ * ------------------------------------------------------------------------ */
+
+.starcode-speck-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Clips the drift layers, which are deliberately larger than the field so a
+     rotated, translating tile never shows its edge. */
+  overflow: hidden;
+  /* In dark mode the three drift layers paint the stars — see section 9. The
+     tile stays here as the light-theme and no-motion fallback, and as the thing
+     those layers are derived from. */
+  background-image: var(--sc-speck-tile);
+  background-repeat: repeat;
+  /* A 660x540 tile repeats about twice across a laptop viewport. The earlier
+     360px tile repeated four times and the eye found the grid. */
+  background-size: 660px 540px;
+  /* Scaled by the phase so the specks thin out with the sky and disappear at
+     midday. The floor keeps a trace of them at noon: an empty hero with nothing
+     in it at all reads as a failed load rather than a quiet one. */
+  opacity: calc(0.1 + var(--sc-sky-stars) * 0.32);
+}
+
+:root:not(.dark) .starcode-speck-field {
+  /* Cream specks vanish on linen, so the light theme darkens them instead of
+     tinting a second tile. */
+  filter: invert(1) saturate(0.4);
+  opacity: 0.16;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4c. L1 — the structural panels, as glass over the sky
+ *
+ * The sidebar and the main pane used to paint their own backdrops. They now
+ * paint a tint, and the sky shows through both. That is the whole of the change
+ * that removes the seam: two panels sharing one backdrop cannot disagree about
+ * where it is.
+ *
+ * TINT, NOT BLUR. `backdrop-filter` is the obvious reading of "glassy" and it is
+ * the wrong primitive here, on two counts. A Gaussian blur of a smooth vertical
+ * gradient is, to a rounding error, the same gradient — a full-viewport GPU pass
+ * to produce a picture nobody can tell from the input. And the one thing behind
+ * these panels that *isn't* smooth is the starfield, where blurring is actively
+ * destructive: 1-2px specks smear into grey haze, which is the exact texture two
+ * previous rounds were spent earning. What reads as glass over a smooth backdrop
+ * is tint plus hairline, neither of which needs a filter. Every
+ * `backdrop-filter` in the app stays where it already is — on floating surfaces
+ * over content (L2), never on a structural panel.
+ *
+ * KNOBS, for tuning this without reading the rest of the file:
+ *   - how much sky comes through the panels: `--sc-glass-panel` in section 1.
+ *     It is solved by `scripts/check-starcode-contrast.mjs`, so lower it and
+ *     re-run the gate rather than lowering it and looking.
+ *   - how far down the sky reaches: the gradient stops in section 4.
+ *   - the colours themselves, and how many stars each hour carries: not here and
+ *     not tunable by hand. `scripts/lib/starcode-sky-timeline.mjs`, then
+ *     `node scripts/derive-starcode-sky-timeline.mjs`.
+ *   - how many specks survive into daylight: the `0.1 +` floor on
+ *     `.starcode-speck-field` in section 4b. Set it to 0 for a starless noon.
+ * ------------------------------------------------------------------------ */
+
+[data-app-sidebar] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--sidebar) var(--sc-glass-panel), transparent);
+  /* The panel already carried `surface-grain`; setting a background-image here
+     would clobber it, so it is restated. Same trap the old sidebar sky hit. */
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+[data-slot="sidebar-inset"] {
+  background-color: color-mix(in srgb, var(--background) var(--sc-glass-panel), transparent);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Some routes wrap their content in another full-size `bg-background` div — the
+   index route's empty states are the ones left. That div is opaque
+   `--background`, so without this the pane would be glass over an opaque plate
+   — the sky would be occluded one element below where it is let in.
+   This rule predates the sky layer as a workaround for the pane's own gradient;
+   it survives as part of the L1 doctrine, because a panel being translucent is
+   worth nothing if its immediate child is not.
+   Scoped to direct children so nothing deeper — cards, popovers, the composer,
+   any L3 surface that must occlude what scrolls under it — loses its fill.
+
+   `ChatView` no longer participates: it carries no fill at all, because `>` only
+   ever reached it on the draft route. The thread route wraps it in
+   `.sc-split-container`, which put its root one level too deep and turned the
+   pane black the moment a draft was sent. The lesson is in the selector — any
+   wrapper inserted between the inset and a route body silently reintroduces the
+   plate, so route bodies should not paint rather than rely on being reached
+   here. */
+[data-slot="sidebar-inset"] > .bg-background {
+  background-color: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. Display typography
+ *
+ * The rounded face is reserved for the wordmark and for the large titles that
+ * head an otherwise empty surface. Body, UI, and mono faces are untouched —
+ * they carry the app's density and its diff rendering, and swapping them would
+ * cost legibility for no brand gain.
+ *
+ * Targeted through the `data-slot` attributes the `ui/` primitives already
+ * emit, so no component file changes to pick the face up.
+ * ------------------------------------------------------------------------ */
+
+.starcode-wordmark-text,
+.draft-hero-headline,
+[data-slot="empty-title"],
+[data-slot="dialog-title"],
+[data-slot="alert-dialog-title"],
+[data-slot="sheet-title"] {
+  font-family: var(--sc-font-display);
+  letter-spacing: -0.005em;
+}
+
+/* Baloo 2 sets a tall line-height for its Devanagari companion; the app's
+   title slots position themselves against a normal Latin box. */
+.draft-hero-headline,
+[data-slot="empty-title"],
+[data-slot="dialog-title"],
+[data-slot="alert-dialog-title"],
+[data-slot="sheet-title"] {
+  line-height: 1.25;
+}
+
+/* The draft hero is the largest type in the app and the first thing on the
+   screen you open most often, so it earns the display face. It sets `font-normal`,
+   which is too light for Baloo 2's rounder shapes at this size. */
+.draft-hero-headline {
+  font-weight: 500;
+}
+
+.starcode-wordmark-text {
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.005em;
+}
+
+.starcode-wordmark-masthead {
+  /* Must follow `.starcode-wordmark-text`: same specificity, and that rule
+     sets font-weight too, so order is what decides. Baloo 2 is variable;
+     800 is its top weight and where the rounded terminals stop reading as
+     soft and start reading as deliberate. */
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. Scrollbars
+ *
+ * `index.css` paints these with neutral white/black alphas, which read as a
+ * gray streak against warm ink. Same alphas, cream tint.
+ * ------------------------------------------------------------------------ */
+
+.dark ::-webkit-scrollbar-thumb,
+.dark .model-picker-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--sc-cream-100) 12%, transparent);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover,
+.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--sc-cream-100) 22%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * 7. Astro-glyphic engravings
+ *
+ * Two shapes, used everywhere: a hairline and the brand's four-point star. They
+ * are arranged two ways, and there is no third arrangement.
+ *
+ * THE PLATE CORNER — a double hairline bracket, the outer line solid and the
+ * inner one finer and fainter, the way an engraved plate reads, with the star
+ * set in the elbow. Used at two opposite corners, top-left and bottom-right:
+ * a mark on all four corners is a picture frame, a mark on the diagonal is a
+ * registration mark, and the registration mark is what a star chart does.
+ *
+ * THE RAIL — the same hairline broken around the same star, laid along a line
+ * and centred.
+ *
+ * WHICH GOES WHERE IS DECIDED BY THE CORNERS. The plate corner needs corners
+ * that are empty, which in this app means the idle pane and nothing else. Every
+ * dialog here has a title in one corner, a close button in another and a
+ * full-width action across the bottom, and a bracket dropped into any of them
+ * reads as debris — this was built, rendered, and cut, and the render is in the
+ * round's evidence. Dialogs get the rail instead: centred, so there is nothing
+ * at either end for it to collide with, and it sits in the header's own top
+ * padding.
+ *
+ * NOT ON POPOVERS. The same primitive backs every tooltip and dropdown menu in
+ * the app; a flourish that fires on hover a hundred times an hour has stopped
+ * being a flourish. Never on rows, list items, or anything that repeats.
+ *
+ * HOW IT IS TINTED. Each glyph is a mask, not an image, so the colour comes from
+ * `background-color` and each theme sets its own. Baking the colour in would
+ * need one asset per theme, which is how a vocabulary stops being one.
+ *
+ * KNOBS. All three are one line each:
+ *   - how visible the marks are: `--sc-glyph-ink`, set once per theme below.
+ *     This is the dial to reach for first — it is the whole difference between
+ *     "found on second look" and "noticed immediately".
+ *   - how big the plate corners are and how far in they sit: `--sc-glyph-size`
+ *     and `--sc-glyph-inset` on `[data-slot="sidebar-inset"]`.
+ *   - the shapes: the two `--sc-glyph-*` data URIs. They are hand-written SVG,
+ *     readable as-is, and share a stroke weight of 1 for the outer line and
+ *     0.7-0.9 for everything secondary.
+ * Removing either mark entirely is a matter of deleting its one rule; neither is
+ * referenced from any component.
+ *
+ * COST AND SAFETY. Absolutely positioned, `pointer-events: none`, no box model
+ * of its own: neither mark can shift layout or intercept a click. Both are
+ * purely decorative and carry no information, so they have no contrast floor to
+ * meet — they are held *below* the border they sit beside rather than above any
+ * minimum.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --sc-glyph-corner-tl: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2736%27%20height%3D%2736%27%20viewBox%3D%270%200%2036%2036%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M1%2018%20L1%204%20A3%203%200%200%201%204%201%20L18%201%27%20stroke-width%3D%271%27%2F%3E%3Cpath%20d%3D%27M5%2015%20L5%206.5%20A1.5%201.5%200%200%201%206.5%205%20L15%205%27%20stroke-width%3D%27.7%27%20stroke-opacity%3D%27.55%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M11.5%208.3%20Q11.5%2011.5%2014.7%2011.5%20Q11.5%2011.5%2011.5%2014.7%20Q11.5%2011.5%208.3%2011.5%20Q11.5%2011.5%2011.5%208.3%20Z%27%2F%3E%3C%2Fsvg%3E");
+  --sc-glyph-rail: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2780%27%20height%3D%2712%27%20viewBox%3D%270%200%2080%2012%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-width%3D%27.9%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M2%206%20L26%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M54%206%20L78%206%27%20stroke-opacity%3D%27.75%27%2F%3E%3Cpath%20d%3D%27M31%206%20L34%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3Cpath%20d%3D%27M46%206%20L49%206%27%20stroke-opacity%3D%27.5%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M40%201.6%20Q40%206%2044.4%206%20Q40%206%2040%2010.4%20Q40%206%2035.6%206%20Q40%206%2040%201.6%20Z%27%2F%3E%3C%2Fsvg%3E");
+  --sc-glyph-corner-br: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2736%27%20height%3D%2736%27%20viewBox%3D%270%200%2036%2036%27%3E%3Cg%20transform%3D%27rotate%28180%2018%2018%29%27%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23000%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M1%2018%20L1%204%20A3%203%200%200%201%204%201%20L18%201%27%20stroke-width%3D%271%27%2F%3E%3Cpath%20d%3D%27M5%2015%20L5%206.5%20A1.5%201.5%200%200%201%206.5%205%20L15%205%27%20stroke-width%3D%27.7%27%20stroke-opacity%3D%27.55%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M11.5%208.3%20Q11.5%2011.5%2014.7%2011.5%20Q11.5%2011.5%2011.5%2014.7%20Q11.5%2011.5%208.3%2011.5%20Q11.5%2011.5%2011.5%208.3%20Z%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  /* Faint enough to be found rather than noticed. Butter on ink, ink on linen. */
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-ink-900) 46%, transparent);
+  --sc-glyph-constellation: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2796%27%20height%3D%2716%27%20viewBox%3D%270%200%2096%2016%27%3E%3Cg%20stroke%3D%27%23000%27%20stroke-width%3D%27.85%27%20stroke-linecap%3D%27round%27%20fill%3D%27none%27%20stroke-opacity%3D%27.62%27%3E%3Cpath%20d%3D%27M9%2011%20L36%205%27%2F%3E%3Cpath%20d%3D%27M36%205%20L64%2012%27%2F%3E%3Cpath%20d%3D%27M64%2012%20L88%206%27%2F%3E%3C%2Fg%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M9%208.0%20Q9%2011%2012.0%2011%20Q9%2011%209%2014.0%20Q9%2011%206.0%2011%20Q9%2011%209%208.0%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M36%201.1%20Q36%205%2039.9%205%20Q36%205%2036%208.9%20Q36%205%2032.1%205%20Q36%205%2036%201.1%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M64%209.4%20Q64%2012%2066.6%2012%20Q64%2012%2064%2014.6%20Q64%2012%2061.4%2012%20Q64%2012%2064%209.4%20Z%27%2F%3E%3Cpath%20fill%3D%27%23000%27%20d%3D%27M88%202.8%20Q88%206%2091.2%206%20Q88%206%2088%209.2%20Q88%206%2084.8%206%20Q88%206%2088%202.8%20Z%27%2F%3E%3C%2Fsvg%3E");
+}
+
+.dark {
+  --sc-glyph-ink: color-mix(in srgb, var(--sc-butter) 72%, transparent);
+}
+
+/* The plate corners, for idle surfaces whose corners are genuinely empty.
+   Hung off the pane rather than off the speck field itself: the light theme
+   inverts that field to darken its specks, and a filter applies to an element's
+   pseudo-elements too, so an engraving drawn there came out inverted and
+   vanished into the paper. `:has()` keeps the condition unchanged — the mark
+   appears exactly where the field is mounted, and nowhere else. */
+[data-slot="sidebar-inset"]:has(> * > .starcode-speck-field)::after {
+  content: "";
+  position: absolute;
+  inset: var(--sc-glyph-inset, 11px);
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-position:
+    top left,
+    bottom right;
+  mask-position:
+    top left,
+    bottom right;
+  -webkit-mask-size: var(--sc-glyph-size, 34px) var(--sc-glyph-size, 34px);
+  mask-size: var(--sc-glyph-size, 34px) var(--sc-glyph-size, 34px);
+}
+
+[data-slot="sidebar-inset"] {
+  --sc-glyph-inset: 22px;
+  --sc-glyph-size: 52px;
+}
+
+/* Dialogs get the rail rather than the corners. Their corners are taken — a
+   title at the top left, a close button at the top right, a full-width action at
+   the bottom — and a bracket dropped into any of them reads as debris rather
+   than as ornament; the version that tried it is in the round's evidence. The
+   rail is centred, so it sits in the header's own top padding and has nothing to
+   collide with. Same two shapes, laid out along a line instead of around a
+   corner. */
+.dialog-glass::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 80px;
+  height: 12px;
+  translate: -50% 0;
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-rail);
+  mask-image: var(--sc-glyph-rail);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 80px 12px;
+  mask-size: 80px 12px;
+}
+
+/* The composer is the one piece of dense, always-present chrome that earns a
+   mark: it is a discrete framed object, its corners are empty, and it is the
+   thing you look at most. Corners rather than the rail, because the rail's slot
+   at the top centre is where the composer's own controls sit. */
+.chat-composer-glass-shell::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  pointer-events: none;
+  z-index: 1;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-position:
+    top left,
+    bottom right;
+  mask-position:
+    top left,
+    bottom right;
+  -webkit-mask-size: 26px 26px;
+  mask-size: 26px 26px;
+}
+
+/* The asterism: three or four stars joined by a hairline, set beside a section
+   title. It is the third and last arrangement of the vocabulary — same star,
+   same hairline, now reading as a constellation rather than as a frame — and it
+   exists because a section header is a line, not a box, so neither the corner
+   nor the centred rail fits it. */
+.starcode-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.starcode-section-head::after {
+  content: "";
+  /* Fixed rather than flexible: the header is sized by its own content, so a
+     `flex: 1` ornament had no room to grow into and collapsed to a stub. */
+  flex: 0 0 auto;
+  width: 96px;
+  height: 16px;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-constellation);
+  mask-image: var(--sc-glyph-constellation);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+  -webkit-mask-size: 96px 16px;
+  mask-size: 96px 16px;
+}
+
+/* The same asterism, mirrored either side of a centred title.
+ *
+ * `.starcode-section-head` hangs one constellation off the end of a title that
+ * starts at the left margin. A centred title has two ends, so it takes two —
+ * the second mirrored, which is what makes the pair read as one engraved rule
+ * broken around a word rather than as two ornaments that happen to be nearby.
+ * No new shape and no new token: it is the third arrangement of the same
+ * hairline and the same star.
+ *
+ * Sized by `--sc-rule-width` because the two places this is used are 236px of
+ * usable sidebar apart from a settings pane, and the 96px the left-aligned
+ * variant fixes is wider than half a sidebar. Height is derived rather than set
+ * so the mask never distorts: the source is 96x16, and anything other than 6:1
+ * squashes the stars into narrow diamonds.
+ *
+ * The repeat rule from section 7 still holds. Two of these exist in the whole
+ * app — one over Projects, one over Chats — and neither is inside anything that
+ * repeats. A constellation on every project header would be wallpaper. */
+.starcode-section-rule {
+  --sc-rule-width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+}
+
+.starcode-section-rule::before,
+.starcode-section-rule::after {
+  content: "";
+  flex: 0 0 auto;
+  width: var(--sc-rule-width);
+  height: calc(var(--sc-rule-width) / 6);
+  pointer-events: none;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-constellation);
+  mask-image: var(--sc-glyph-constellation);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+.starcode-section-rule::before {
+  scale: -1 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * 8. The shooting star
+ *
+ * One streak, about once an hour. Rarity is the whole product: a shooting star
+ * every twenty minutes is a screensaver, and one you catch on your third
+ * session is something you tell someone about. The period is randomised per
+ * mount in the 22-55 minute band, so it averages roughly hourly without ever
+ * being predictable.
+ *
+ * WHY THE PERIOD IS SET FROM MARKUP. CSS cannot randomise, and a fixed long
+ * cycle is worse than it sounds: the visible window sits at the start of the
+ * cycle, so every page load would fire a streak within a second of paint. That
+ * is a page-load animation, not a rare event, and it is precisely the failure
+ * this effect exists to avoid. `SkySpecks` therefore picks a period and a
+ * first-flight offset once per mount and hands them over as two custom
+ * properties. No timer, no scheduler, no module — the animation still runs
+ * entirely on the compositor.
+ *
+ * The offset also guarantees the first streak is at least several minutes out,
+ * so opening the app is never the thing that triggers one.
+ *
+ * FLIGHT DURATION RIDES THE PERIOD. The visible window is a fixed fraction of
+ * the cycle, so a session that drew a 22-minute period gets a slightly quicker
+ * streak than one that drew 55 minutes — roughly 0.7s to 1.7s. That variation is
+ * wanted rather than tolerated; a streak that is identical every time reads as a
+ * cutscene.
+ *
+ * It never fires at midday: the keyframes scale their opacity by
+ * `--sc-sky-stars`, so a phase with no stars has no streak either, with no
+ * threshold to keep in sync.
+ *
+ * It is a gradient on a rotated element moving by `translate` and fading by
+ * `opacity` — both compositor properties, so the cost is a layer and no layout.
+ * It rides the speck field, which only idle surfaces mount, and it is dark-theme
+ * only: a bright streak across linen reads as a rendering fault.
+ *
+ * Removed entirely under reduced motion rather than slowed. A single fast object
+ * crossing the screen is exactly what that preference is asking not to see, and
+ * there is no static version of a shooting star worth keeping.
+ * ------------------------------------------------------------------------ */
+
+.dark .starcode-speck-field .starcode-shooting-star {
+  position: absolute;
+  top: 14%;
+  left: 6%;
+  width: 128px;
+  height: 1.5px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  /* Bright at the head, gone at the tail — a streak, not a moving dash. */
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    color-mix(in srgb, var(--sc-cream-50) 12%, transparent) 35%,
+    color-mix(in srgb, var(--sc-cream-50) 78%, transparent) 92%,
+    var(--sc-cream-50) 100%
+  );
+  rotate: 14deg;
+  /* Both set per mount by `SkySpecks`; the fallbacks keep the effect sane if it
+     is ever rendered without them. */
+  animation: starcode-shooting-star var(--sc-shoot-period, 2310s) linear infinite;
+  animation-delay: var(--sc-shoot-delay, 900s);
+}
+
+@keyframes starcode-shooting-star {
+  /* The whole flight is the first ~0.05% of the cycle; the rest is empty sky.
+     The star level gates the streak entirely: nothing at or below 0.25, full
+     strength by 0.375, so night and dusk get a normal streak and a sky with no
+     stars in it gets none. Ramped rather than switched — a hard cutoff would pop
+     mid-flight as the phase crosses the line. */
+  0% {
+    opacity: 0;
+    translate: 0 0;
+  }
+  0.008% {
+    opacity: calc(0.85 * clamp(0, (var(--sc-sky-stars) - 0.25) * 8, 1));
+  }
+  0.031% {
+    opacity: calc(0.7 * clamp(0, (var(--sc-sky-stars) - 0.25) * 8, 1));
+  }
+  0.052% {
+    opacity: 0;
+    translate: 62vw 15vh;
+  }
+  100% {
+    opacity: 0;
+    translate: 62vw 15vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dark .starcode-speck-field .starcode-shooting-star {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 9. Motion — the sky drifts
+ *
+ * THE DOCTRINE. Five rules; an effect that breaks one is cut rather than tuned.
+ *   1. Slow. Nothing here cycles under 11 seconds, and the drift is in minutes.
+ *   2. Sparse. Three layers and two properties. That is the whole system.
+ *   3. Physically plausible. The celestial sphere rotates east to west, so the
+ *      field drifts near-horizontally. Stars sliding straight down read as snow.
+ *   4. Low contrast. Motion should be perceptible in peripheral vision and
+ *      invisible to direct attention. The test: stare at the field for five
+ *      seconds — if you can track one star, it is too fast.
+ *   5. Never under body text in a dense surface at full strength. The sidebar,
+ *      which is narrow and full of rows you scan all day, stays completely
+ *      static; see the note on the pane below.
+ *
+ * HOW THE DRIFT WRAPS. Each layer is one tile wider than its host, painted with
+ * a repeating tile, and translated by exactly one tile width per cycle. Because
+ * the tile is periodic, the end of the cycle is pixel-identical to its start and
+ * the reset is invisible. The layer is painted once and the compositor moves it;
+ * `background-position` would do the same thing visually and repaint the layer
+ * every single frame, which is the trap this technique exists to avoid.
+ *
+ * WHY THE CANT IS A ROTATION. A seamless wrap needs the translation to be a
+ * whole number of tiles on both axes, so a diagonal drift is stuck at the tile's
+ * own aspect ratio — 39 degrees, far too steep. Rotating the layer and then
+ * translating along its own x keeps the wrap exact at any angle.
+ *
+ * BUDGET. Four composited layers, `transform` and `opacity` only, zero
+ * JavaScript, zero timers, zero new dependencies. Browsers suspend CSS
+ * animations on hidden documents, so a backgrounded window costs nothing.
+ * ------------------------------------------------------------------------ */
+
+.dark .starcode-speck-field {
+  /* The layers paint the stars now, so the field's own copy would double them. */
+  background-image: none;
+  /* Each layer sits at `--sc-twinkle-mid` on average rather than at full
+     strength, so the field is scaled up to compensate and the composite
+     brightness is unchanged from before the motion existed. */
+  opacity: calc((0.1 + var(--sc-sky-stars) * 0.32) / var(--sc-twinkle-mid));
+}
+
+:root {
+  /* The opacity each layer averages, and how far it swings either side —
+     roughly a fifth, which reads as depth rather than as a pulse. The retired
+     unison twinkle swung 0.16 to 0.5, and catching it mid-cycle read as the
+     whole field blinking. */
+  --sc-twinkle-mid: 0.83;
+  --sc-twinkle-swing: 0.17;
+}
+
+.dark .starcode-star-layer {
+  position: absolute;
+  /* One tile of slack on the right for the wrap, and vertical slack so the
+     rotation cannot lift a corner into view. */
+  inset: -18% -660px -18% 0;
+  pointer-events: none;
+  background-repeat: repeat;
+  background-size: 660px 540px;
+  opacity: var(--sc-twinkle-mid);
+  animation:
+    starcode-star-drift var(--sc-drift-period) linear infinite,
+    starcode-star-twinkle var(--sc-twinkle-period) ease-in-out infinite;
+  /* Negative delays start each layer mid-cycle, so the three are already out of
+     phase on the first frame instead of blinking together once at load. */
+  animation-delay: 0s, var(--sc-twinkle-offset);
+}
+
+/* Slowest and faintest reads as furthest away; the periods share no small
+   common multiple, so the three never visibly resynchronise. */
+.dark .starcode-star-layer-1 {
+  background-image: var(--sc-star-layer-1);
+  --sc-drift-cant: -5deg;
+  --sc-drift-period: 540s;
+  --sc-twinkle-period: 23s;
+  --sc-twinkle-offset: -3s;
+}
+
+.dark .starcode-star-layer-2 {
+  background-image: var(--sc-star-layer-2);
+  --sc-drift-cant: -3deg;
+  --sc-drift-period: 400s;
+  --sc-twinkle-period: 17s;
+  --sc-twinkle-offset: -11s;
+}
+
+.dark .starcode-star-layer-3 {
+  background-image: var(--sc-star-layer-3);
+  --sc-drift-cant: 0deg;
+  --sc-drift-period: 280s;
+  --sc-twinkle-period: 11s;
+  --sc-twinkle-offset: -7s;
+}
+
+@keyframes starcode-star-drift {
+  from {
+    transform: rotate(var(--sc-drift-cant)) translate3d(0, 0, 0);
+  }
+  to {
+    transform: rotate(var(--sc-drift-cant)) translate3d(-660px, 0, 0);
+  }
+}
+
+@keyframes starcode-star-twinkle {
+  0%,
+  100% {
+    opacity: calc(var(--sc-twinkle-mid) - var(--sc-twinkle-swing));
+  }
+  50% {
+    opacity: calc(var(--sc-twinkle-mid) + var(--sc-twinkle-swing));
+  }
+}
+
+/* The chrome starfield's own drift is declared with the layer in section 4,
+   since it is now one element rather than a pseudo on each panel. Half the speed
+   of the slowest idle layer and no twinkle: this is the only motion in
+   permanently-visible UI, and it is bounded by the same `--sc-star-chrome-max`
+   ceiling, so the moving stars are the faint ones that provably cannot push text
+   below AA. */
+
+/* Reduced motion holds every layer still at its average, so the field is
+   identical to the static one it replaced — nothing is lost but the movement.
+
+   The frames used to be parked here too, at `scale(1.03)`, halfway along a push
+   that no longer exists. Left in place it would have inverted itself: with the
+   animation deleted the frames sit at `scale(1)` for everyone, so the rule
+   would have handed reduced-motion users the only zoomed sky in the app. */
+@media (prefers-reduced-motion: reduce) {
+  .dark .starcode-star-layer,
+  .dark .starcode-sky-field {
+    animation: none;
+    opacity: var(--sc-twinkle-mid);
+  }
+
+  .dark .starcode-sky-field {
+    opacity: calc(var(--sc-sky-stars) * var(--sc-star-chrome-max));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 10. View transitions
+ *
+ * Nothing here starts one — `chat/draftHeroTransition.ts` does, for the mobile
+ * composer-to-hero move. What this holds is the sky's exemption from it.
+ *
+ * `::view-transition-old(root)` snapshots the entire viewport, sky included, so
+ * without a name of its own the sky is captured into the root group and
+ * crossfaded against an identical copy of itself: a visible double exposure, and
+ * the drift freezes for the transition's duration. Section 4 gives the layer
+ * `view-transition-name: sc-sky`, which puts it in its own group; this holds
+ * that group still. Verify with the Animations panel, not by eye.
+ * ------------------------------------------------------------------------ */
+
+::view-transition-group(sc-sky) {
+  animation: none;
+}

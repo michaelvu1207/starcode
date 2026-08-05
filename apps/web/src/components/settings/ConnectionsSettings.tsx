@@ -4,10 +4,15 @@ import {
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
+  LogInIcon,
+  Trash2Icon,
+  FlaskConicalIcon,
+  CheckCircle2Icon,
+  CircleIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { type ReactNode, memo, useCallback, useMemo, useState } from "react";
+import { Fragment, type ReactNode, memo, useCallback, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -28,20 +33,32 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
-} from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+  ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
+  type UsageRateLimitWindow,
+} from "@starcode/contracts";
+import { connectionStatusText } from "@starcode/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  compareSavedConnectionRows,
+  derivePiAccountConnections,
+  derivePiApiConnections,
+  formatPiUsageFailure,
+  isFleetManagedConnectionTarget,
+} from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -117,6 +134,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  removeFleetEnvironment as removeFleetEnvironmentAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -132,13 +150,23 @@ import {
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { ConnectionNameInput, ConnectionRenameTrigger } from "../ConnectionNameEditor";
 import { ServerUpdateAction } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { FleetOnboardingCard } from "./FleetOnboardingCard";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { serverEnvironment } from "../../state/server";
+import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { getDriverOption } from "./providerDriverMeta";
+import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { environmentUsage, useAccountsUsage } from "../../state/usage";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+const USAGE_REFRESH_PLACEHOLDER_ENVIRONMENT_ID =
+  "connections-usage-no-environment" as EnvironmentId;
 
 // Sentinels for the consolidated WSL backend picker. The colon is
 // rejected by DISTRO_NAME_PATTERN (validated on the desktop side) so
@@ -1350,6 +1378,7 @@ function SavedBackendListRow({
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
+  const [isRenaming, setIsRenaming] = useState(false);
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
@@ -1396,8 +1425,13 @@ function SavedBackendListRow({
       ? environment.entry.profile.value.target
       : null;
   const metadataBits = [
+    // A renamed connection still has to be identifiable as the machine it is,
+    // or two aliases could quietly point at the same host.
+    environment.label === environment.serverLabel
+      ? null
+      : `Named by server: ${environment.serverLabel}`,
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
-    environment.relayManaged ? "T3 Connect" : null,
+    environment.relayManaged ? "starcode Connect" : null,
   ].filter((value): value is string => value !== null);
 
   // The WSL backend is a desktop-managed local backend (it surfaces as a bearer
@@ -1405,6 +1439,10 @@ function SavedBackendListRow({
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
+  const isFleetEnvironment = isFleetManagedConnectionTarget(
+    environmentId,
+    environment.entry.target,
+  );
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -1420,7 +1458,22 @@ function SavedBackendListRow({
                   : null
               }
             />
-            <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+            {isRenaming ? (
+              <ConnectionNameInput
+                environmentId={environmentId}
+                serverLabel={environment.serverLabel}
+                className="max-w-64"
+                onDone={() => setIsRenaming(false)}
+              />
+            ) : (
+              <>
+                <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+                <ConnectionRenameTrigger
+                  displayName={environment.label}
+                  onStart={() => setIsRenaming(true)}
+                />
+              </>
+            )}
           </div>
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
@@ -1491,8 +1544,12 @@ function SavedBackendListRow({
               >
                 {isConnected
                   ? removingEnvironmentId === environmentId
-                    ? "Disconnecting…"
-                    : "Disconnect"
+                    ? isFleetEnvironment
+                      ? "Removing…"
+                      : "Disconnecting…"
+                    : isFleetEnvironment
+                      ? "Remove"
+                      : "Disconnect"
                   : isConnecting
                     ? "Connecting…"
                     : "Connect"}
@@ -1550,7 +1607,7 @@ function CloudLinkSwitch({
   disabled,
   disabledReason,
   onCheckedChange,
-  ariaLabel = "Enable T3 Connect",
+  ariaLabel = "Enable starcode Connect",
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
@@ -1589,9 +1646,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = !isSignedIn
-    ? "Sign in to T3 Connect to manage this environment."
+    ? "Sign in to starcode Connect to manage this environment."
     : !canManageRelay
-      ? "Your session does not have permission to manage T3 Connect access."
+      ? "Your session does not have permission to manage starcode Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
 
@@ -1604,15 +1661,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       toastManager.add({
         type: "success",
         title: enabled
-          ? "T3 Connect linked"
+          ? "starcode Connect linked"
           : publishAgentActivity
-            ? "T3 Connect tunnel disabled"
-            : "T3 Connect unlinked",
+            ? "starcode Connect tunnel disabled"
+            : "starcode Connect unlinked",
         description: enabled
-          ? "This environment is available through T3 Connect."
+          ? "This environment is available through starcode Connect."
           : publishAgentActivity
             ? "The managed tunnel was removed. Agent activity publishing stays on."
-            : "This environment is no longer available through T3 Connect.",
+            : "This environment is no longer available through starcode Connect.",
       });
     }
     setIsUpdating(false);
@@ -1636,11 +1693,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   return (
     <>
       <SettingsRow
-        title="T3 Connect"
+        title="starcode Connect"
         description={
           managedTunnelActive
-            ? "This environment is available to your other devices through T3 Connect."
-            : "Make this environment available to your other devices through T3 Connect."
+            ? "This environment is available to your other devices through starcode Connect."
+            : "Make this environment available to your other devices through starcode Connect."
         }
         status={operationError ?? primaryCloudLinkState.error}
         control={
@@ -1654,7 +1711,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       />
       <SettingsRow
         title="Publish agent activity"
-        description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a T3 Connect tunnel."
+        description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a starcode Connect tunnel."
         control={
           <CloudLinkSwitch
             ariaLabel="Publish agent activity to mobile clients"
@@ -1683,7 +1740,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
+            ? "Click “Add environment” to pair another environment, or connect one from starcode Connect."
             : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
@@ -1709,17 +1766,306 @@ function CloudRemoteEnvironmentRows({
   ) : null;
 }
 
-export function ConnectionsSettings() {
+function AllowanceMeter({
+  label,
+  window,
+}: {
+  readonly label: string;
+  readonly window: UsageRateLimitWindow | undefined;
+}) {
+  const remaining =
+    window?.usedPercent === null || window?.usedPercent === undefined
+      ? null
+      : Math.max(0, Math.min(100, 100 - window.usedPercent));
+  return (
+    <div className="grid h-3 min-w-0 grid-cols-[3.25rem_minmax(0,1fr)_2.5rem] items-center gap-1 leading-none">
+      <span className="text-[8px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        {label}
+      </span>
+      <div
+        className="h-1 overflow-hidden rounded-full bg-muted"
+        role="meter"
+        aria-label={`${label} allowance remaining`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={remaining ?? undefined}
+      >
+        {remaining === null ? null : (
+          <div
+            className={cn(
+              "h-full rounded-full transition-[width]",
+              remaining <= 10 ? "bg-destructive" : remaining <= 30 ? "bg-warning" : "bg-primary",
+            )}
+            style={{ width: `${Math.max(remaining, 1)}%` }}
+          />
+        )}
+      </div>
+      <span
+        className={cn(
+          "text-right text-[9px] font-semibold tabular-nums",
+          remaining === null
+            ? "text-muted-foreground/50"
+            : remaining <= 10
+              ? "text-destructive"
+              : "text-foreground",
+        )}
+      >
+        {remaining === null ? "—" : `${remaining.toFixed(0)}%`}
+      </span>
+    </div>
+  );
+}
+
+function formatLastChecked(value: string | null | undefined): string {
+  if (!value) return "Not checked yet";
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  if (elapsed < 60_000) return "Checked just now";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `Checked ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `Checked ${hours}h ago`;
+}
+
+export function ConnectionsSettings({
+  environmentId,
+  accountsOnly = false,
+  fleetCompact = false,
+  selectedAccountId = null,
+  onSelectAccount,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly accountsOnly?: boolean;
+  readonly fleetCompact?: boolean;
+  readonly selectedAccountId?: string | null;
+  readonly onSelectAccount?: (instanceId: string) => void;
+}) {
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const accountsUsage = useAccountsUsage();
+  const environmentConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const serverProviders = environmentConfig?.providers ?? [];
+  const piAccountConnections = useMemo(
+    () => derivePiAccountConnections(serverProviders),
+    [serverProviders],
+  );
+  const piApiConnections = useMemo(
+    () => derivePiApiConnections(serverProviders),
+    [serverProviders],
+  );
+  const [openPiAccountDetails, setOpenPiAccountDetails] = useState<Record<string, boolean>>({});
+  const [isAddPiAccountOpen, setIsAddPiAccountOpen] = useState(false);
+  const [reconnectProvider, setReconnectProvider] = useState<"anthropic" | "openai" | null>(null);
+  const [deletingPiAccount, setDeletingPiAccount] = useState<string | null>(null);
+  const [accountPendingDeletion, setAccountPendingDeletion] = useState<{
+    id: ProviderInstanceId;
+    label: string;
+  } | null>(null);
+  const [testingPiAccount, setTestingPiAccount] = useState<string | null>(null);
+  const [isRefreshingPiUsage, setIsRefreshingPiUsage] = useState(false);
+  const [isSyncingPiAccounts, setIsSyncingPiAccounts] = useState(false);
+  const [piUsageFailures, setPiUsageFailures] = useState<Record<string, string>>({});
+  const primaryEnvironmentId = environmentId;
+  const testPiAccount = useAtomCommand(serverEnvironment.testPiAccount, { reportFailure: false });
+  const refreshPiAccountUsage = useAtomCommand(serverEnvironment.refreshPiAccountUsage, {
+    reportFailure: false,
+  });
+  const syncPiAccounts = useAtomCommand(serverEnvironment.syncPiAccounts, {
+    reportFailure: false,
+  });
+  const deletePiAccount = useAtomCommand(serverEnvironment.deletePiAccount, {
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  // Refresh the source query, not the derived all-environments map. Refreshing
+  // the derived atom merely recomputes its existing cached child values and
+  // leaves a newly persisted quota snapshot invisible until another poll.
+  const refreshUsageSnapshots = useAtomRefresh(
+    environmentUsage.snapshotAtom(primaryEnvironmentId ?? USAGE_REFRESH_PLACEHOLDER_ENVIRONMENT_ID),
+  );
+  const setActivePiAccount = useCallback(
+    (activeConnection: (typeof piAccountConnections)[number]) => {
+      const nextInstances = { ...settings.providerInstances };
+      for (const connection of piAccountConnections) {
+        if (connection.family !== activeConnection.family) continue;
+        const provider = connection.provider;
+        const current = nextInstances[provider.instanceId];
+        const currentConfig =
+          current?.config && typeof current.config === "object" && !Array.isArray(current.config)
+            ? (current.config as Record<string, unknown>)
+            : {};
+        nextInstances[provider.instanceId] = {
+          ...(current ?? {
+            driver: ProviderDriverKind.make("pi"),
+            enabled: provider.enabled,
+          }),
+          config: {
+            ...currentConfig,
+            activeForConnection: provider.instanceId === activeConnection.provider.instanceId,
+          },
+        };
+      }
+      updateSettings({ providerInstances: nextInstances });
+    },
+    [piAccountConnections, settings.providerInstances, updateSettings],
+  );
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const removeFleetEnvironment = useAtomCommand(removeFleetEnvironmentAtom, {
+    reportFailure: false,
+  });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
-  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const runPiAccountTest = useCallback(
+    async (instanceId: ProviderInstanceId) => {
+      if (!primaryEnvironmentId) return;
+      setTestingPiAccount(String(instanceId));
+      try {
+        const result = await testPiAccount({
+          environmentId: primaryEnvironmentId,
+          input: { instanceId },
+        });
+        if (result._tag !== "Success") {
+          if (isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          throw error instanceof Error
+            ? error
+            : new Error("The provider rejected the sample request.");
+        }
+        toastManager.add({
+          type: "success",
+          title: "Connection works",
+          description: `${result.value.model} responded in ${result.value.latencyMs} ms.`,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Connection test failed",
+          description: error instanceof Error ? error.message : "The sample request failed.",
+        });
+      } finally {
+        setTestingPiAccount(null);
+      }
+    },
+    [primaryEnvironmentId, testPiAccount],
+  );
+  const refreshAllUsage = useCallback(async () => {
+    if (!primaryEnvironmentId) return;
+    setIsRefreshingPiUsage(true);
+    try {
+      const result = await refreshPiAccountUsage({
+        environmentId: primaryEnvironmentId,
+        input: {},
+      });
+      if (result._tag !== "Success") {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        throw error instanceof Error ? error : new Error("Usage refresh failed.");
+      }
+      refreshUsageSnapshots();
+      const { refreshed, unavailable, failed, failures } = result.value;
+      setPiUsageFailures(
+        Object.fromEntries(
+          failures.map((failure) => [String(failure.instanceId), failure.message]),
+        ),
+      );
+      toastManager.add({
+        type: failed > 0 ? "warning" : "success",
+        title: `Usage refreshed for ${refreshed} ${refreshed === 1 ? "connection" : "connections"}`,
+        description:
+          failed > 0
+            ? `${failed} failed${failures[0] ? `: ${failures[0].message}` : "."}`
+            : unavailable > 0
+              ? `${unavailable} ${unavailable === 1 ? "connection does" : "connections do"} not report subscription usage.`
+              : "All subscription usage is current.",
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Usage refresh failed",
+        description: error instanceof Error ? error.message : "Usage refresh failed.",
+      });
+    } finally {
+      setIsRefreshingPiUsage(false);
+    }
+  }, [primaryEnvironmentId, refreshPiAccountUsage, refreshUsageSnapshots]);
+  const syncAllAccounts = useCallback(async () => {
+    if (!primaryEnvironmentId) return;
+    setIsSyncingPiAccounts(true);
+    try {
+      const result = await syncPiAccounts({ environmentId: primaryEnvironmentId, input: {} });
+      if (result._tag !== "Success") {
+        if (isAtomCommandInterrupted(result)) return;
+        throw squashAtomCommandFailure(result);
+      }
+      const synced = result.value.targets.filter((target) => target.status === "synced").length;
+      const pending = result.value.targets.length - synced;
+      toastManager.add({
+        type: pending > 0 ? "warning" : "success",
+        title: `Accounts synced to ${synced} ${synced === 1 ? "connection" : "connections"}`,
+        description:
+          pending > 0
+            ? `${pending} offline or unavailable ${pending === 1 ? "connection is" : "connections are"} pending.`
+            : `${result.value.exported} subscription ${result.value.exported === 1 ? "account is" : "accounts are"} available across the fleet.`,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Account sync failed",
+        description: error instanceof Error ? error.message : "Accounts could not be synchronized.",
+      });
+    } finally {
+      setIsSyncingPiAccounts(false);
+    }
+  }, [primaryEnvironmentId, syncPiAccounts]);
+  const removePiAccount = useCallback(
+    async (instanceId: ProviderInstanceId) => {
+      if (!primaryEnvironmentId) return;
+      setDeletingPiAccount(String(instanceId));
+      try {
+        const result = await deletePiAccount({
+          environmentId: primaryEnvironmentId,
+          input: { instanceId },
+        });
+        if (result._tag !== "Success") {
+          if (isAtomCommandInterrupted(result)) return;
+          throw squashAtomCommandFailure(result);
+        }
+        await refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
+        toastManager.add({
+          type: "success",
+          title: "Account removed",
+          description:
+            "The account was removed from Starcode. Its Claude Code or Codex login was not changed.",
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not remove account",
+          description: error instanceof Error ? error.message : "Account removal failed.",
+        });
+      } finally {
+        setDeletingPiAccount(null);
+      }
+    },
+    [deletePiAccount, primaryEnvironmentId, refreshProviders],
+  );
+  const usageByProviderInstance = useMemo(
+    () =>
+      new Map(
+        (
+          accountsUsage.groups.find((group) => group.environmentId === primaryEnvironmentId)
+            ?.accounts ?? []
+        ).map((account) => [account.instanceId, account] as const),
+      ),
+    [accountsUsage.groups, primaryEnvironmentId],
+  );
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
     ? AuthAdministrativeScopes
@@ -1731,7 +2077,7 @@ export function ConnectionsSettings() {
     () =>
       environments
         .filter((environment) => environment.entry.target._tag !== "PrimaryConnectionTarget")
-        .toSorted((left, right) => left.label.localeCompare(right.label)),
+        .toSorted(compareSavedConnectionRows),
     [environments],
   );
   const savedDesktopSshEnvironmentsByAlias = useMemo(
@@ -2232,7 +2578,14 @@ export function ConnectionsSettings() {
     async (environmentId: EnvironmentId) => {
       setRemovingSavedEnvironmentId(environmentId);
       setSavedBackendError(null);
-      const result = await removeEnvironment(environmentId);
+      const environment = savedEnvironments.find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      const result =
+        environment !== undefined &&
+        isFleetManagedConnectionTarget(environmentId, environment.entry.target)
+          ? await removeFleetEnvironment(environmentId)
+          : await removeEnvironment(environmentId);
       setRemovingSavedEnvironmentId(null);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2247,7 +2600,7 @@ export function ConnectionsSettings() {
         );
       }
     },
-    [removeEnvironment],
+    [removeEnvironment, removeFleetEnvironment, savedEnvironments],
   );
 
   const handleConnectSshHost = useCallback(
@@ -2847,7 +3200,7 @@ export function ConnectionsSettings() {
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
-            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. T3 Code restarts when you change this."
+            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. starcode restarts when you change this."
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
@@ -2976,423 +3329,929 @@ export function ConnectionsSettings() {
   );
 
   return (
-    <SettingsPageContainer>
-      {canManageLocalBackend ? (
-        <>
-          <SettingsSection title="This environment">
-            {primaryVersionMismatch ? (
-              <SettingsRow
-                title="Version drift"
-                description={
-                  <span className="flex items-center gap-1 text-warning">
-                    <TriangleAlertIcon className="size-3.5 shrink-0" />
-                    Client {primaryVersionMismatch.clientVersion}, server{" "}
-                    {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
-                    fail.
-                  </span>
-                }
-                control={
-                  primaryEnvironmentId !== null ? (
-                    <ServerUpdateAction
-                      environmentId={primaryEnvironmentId}
-                      serverLabel={primaryEnvironment?.label ?? "this server"}
-                      selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
-                      targetVersion={primaryVersionMismatch.clientVersion}
-                    />
-                  ) : undefined
-                }
-              />
-            ) : null}
-            {desktopBridge ? (
-              <>
-                {renderNetworkAccessRow()}
-                {renderEndpointRows("endpoint-rail")}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-                <CloudLinkRow canManageRelay={canManageRelay} />
-              </>
-            ) : (
-              <>
-                {renderDisabledNetworkAccessRow()}
-                <CloudLinkRow canManageRelay={canManageRelay} />
-              </>
-            )}
-          </SettingsSection>
-
-          {isLocalBackendRemotelyReachable ? (
-            <SettingsSection
-              title="Authorized clients"
-              headerAction={
-                <AuthorizedClientsHeaderAction
-                  clientSessions={desktopClientSessions}
-                  isRevokingOtherClients={isRevokingOtherDesktopClients}
-                  onRevokeOtherClients={handleRevokeOtherDesktopClients}
-                />
-              }
-            >
-              <ScrollArea
-                scrollFade
-                className="max-h-[22.5rem]"
-                data-testid="authorized-clients-scroll-area"
+    <SettingsPageContainer embedded={accountsOnly}>
+      <SettingsSection
+        title={accountsOnly ? "" : "My accounts"}
+        className={
+          accountsOnly
+            ? cn(
+                "space-y-0.5 [&>div:first-child]:min-h-6",
+                fleetCompact &&
+                  "relative [&>div:first-child]:absolute [&>div:first-child]:right-1 [&>div:first-child]:top-0 [&>div:first-child]:z-10 [&>div:first-child>h2]:hidden [&>div:first-child]:min-h-5",
+              )
+            : undefined
+        }
+        headerAction={
+          <div className="flex items-center gap-1">
+            {primaryEnvironment?.environmentId === environmentId ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                disabled={isSyncingPiAccounts}
+                onClick={() => void syncAllAccounts()}
               >
-                {renderAuthorizedClients("current")}
-              </ScrollArea>
-            </SettingsSection>
-          ) : null}
-          <AlertDialog
-            open={isDesktopServerExposureDialogOpen}
-            onOpenChange={(open) => {
-              if (isUpdatingDesktopServerExposure) return;
-              setIsDesktopServerExposureDialogOpen(open);
-            }}
-            onOpenChangeComplete={(open) => {
-              if (!open) setPendingDesktopServerExposureMode(null);
-            }}
-          >
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Enable network access?"
-                    : "Disable network access?"}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "T3 Code will restart to expose this environment over the network."
-                    : "T3 Code will restart and limit this environment back to this machine."}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose
-                  disabled={isUpdatingDesktopServerExposure}
-                  render={<Button variant="outline" disabled={isUpdatingDesktopServerExposure} />}
-                >
-                  Cancel
-                </AlertDialogClose>
-                <Button
-                  variant={
-                    pendingDesktopServerExposureMode === "local-only" ? "destructive" : "default"
-                  }
-                  onClick={handleConfirmDesktopServerExposureChange}
-                  disabled={
-                    pendingDesktopServerExposureMode === null || isUpdatingDesktopServerExposure
-                  }
-                >
-                  {isUpdatingDesktopServerExposure ? (
-                    <>
-                      <Spinner className="size-3.5" />
-                      Restarting…
-                    </>
-                  ) : pendingDesktopServerExposureMode === "network-accessible" ? (
-                    "Restart and enable"
-                  ) : (
-                    "Restart and disable"
-                  )}
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-          <AlertDialog
-            open={isWslConfirmDialogOpen}
-            onOpenChange={(open) => {
-              if (isUpdatingWslBackend) return;
-              if (!open) setPendingWslChange(null);
-            }}
-          >
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {pendingWslChange?.kind === "disable"
-                    ? pendingWslChange.wasWslOnly
-                      ? "Turn off WSL and switch back to Windows?"
-                      : "Disable WSL backend?"
-                    : pendingWslChange?.kind === "distro"
-                      ? "Switch WSL distro?"
-                      : pendingWslChange?.kind === "enable"
-                        ? "Start the WSL backend"
-                        : pendingWslChange?.nextValue
-                          ? "Run only the WSL backend?"
-                          : "Re-enable the Windows backend?"}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {pendingWslChange?.kind === "disable"
-                    ? pendingWslChange.wasWslOnly
-                      ? "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
-                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
-                    : pendingWslChange?.kind === "distro"
-                      ? "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
-                      : pendingWslChange?.kind === "enable"
-                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
-                        : pendingWslChange?.nextValue
-                          ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                          : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose
-                  disabled={isUpdatingWslBackend}
-                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
-                >
-                  Cancel
-                </AlertDialogClose>
-                {pendingWslChange?.kind === "enable" ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleConfirmEnableWsl("wsl-only")}
-                      disabled={isUpdatingWslBackend}
-                    >
-                      {isUpdatingWslBackend ? (
-                        <>
-                          <Spinner className="size-3.5" />
-                          Applying…
-                        </>
-                      ) : (
-                        "Use only WSL"
-                      )}
-                    </Button>
-                    <Button
-                      variant="default"
-                      onClick={() => handleConfirmEnableWsl("both")}
-                      disabled={isUpdatingWslBackend}
-                    >
-                      {isUpdatingWslBackend ? (
-                        <>
-                          <Spinner className="size-3.5" />
-                          Applying…
-                        </>
-                      ) : (
-                        "Run both backends"
-                      )}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant={
-                      pendingWslChange?.kind === "disable" ||
-                      (pendingWslChange?.kind === "wsl-only" && pendingWslChange.nextValue)
-                        ? "destructive"
-                        : "default"
-                    }
-                    onClick={handleConfirmWslChange}
-                    disabled={isUpdatingWslBackend}
-                  >
-                    {isUpdatingWslBackend ? (
-                      <>
-                        <Spinner className="size-3.5" />
-                        Applying…
-                      </>
-                    ) : pendingWslChange?.kind === "disable" ? (
-                      pendingWslChange.wasWslOnly ? (
-                        "Switch to Windows"
-                      ) : (
-                        "Disable WSL"
-                      )
-                    ) : pendingWslChange?.kind === "distro" ? (
-                      "Switch distro"
-                    ) : pendingWslChange?.nextValue ? (
-                      "Restart and enable"
-                    ) : (
-                      "Restart and disable"
-                    )}
-                  </Button>
-                )}
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-          <AlertDialog
-            open={disableTailscaleServeDialogOpen}
-            onOpenChange={(open) => {
-              if (isUpdatingTailscaleServe) return;
-              setDisableTailscaleServeDialogOpen(open);
-            }}
-          >
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  T3 Code will restart the local backend without Tailscale Serve.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose
-                  disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
-                >
-                  Cancel
-                </AlertDialogClose>
-                <Button
-                  variant="destructive"
-                  onClick={() => void handleConfirmTailscaleServeDisable()}
-                  disabled={isUpdatingTailscaleServe}
-                >
-                  {isUpdatingTailscaleServe ? (
-                    <>
-                      <Spinner className="size-3.5" />
-                      Restarting…
-                    </>
-                  ) : (
-                    "Restart and disable"
-                  )}
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-          <Dialog
-            open={pendingTailscaleServeEndpoint !== null}
-            onOpenChange={(open) => {
-              if (isUpdatingTailscaleServe) return;
-              if (!open) setPendingTailscaleServeEndpoint(null);
-            }}
-          >
-            <DialogPopup className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
-                <DialogDescription>
-                  T3 Code will restart the local backend with Tailscale Serve enabled and ask
-                  Tailscale to proxy HTTPS traffic to this backend.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogPanel className="space-y-4">
-                <label className="block">
-                  <span className="text-sm font-medium text-foreground">HTTPS port</span>
-                  <Input
-                    className="mt-2"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={65_535}
-                    step={1}
-                    value={tailscaleServePortInput}
-                    onChange={(event) => setTailscaleServePortInput(event.target.value)}
-                    disabled={isUpdatingTailscaleServe}
-                  />
-                </label>
-                {!isTailscaleServePortValid ? (
-                  <p className="mt-2 text-xs text-destructive">Enter a port from 1 to 65535.</p>
-                ) : null}
-                <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                  <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <p
-                    className="mt-1 truncate text-sm text-foreground"
-                    title={pendingTailscaleServeBaseUrl ?? undefined}
-                  >
-                    {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                  </p>
-                </div>
-              </DialogPanel>
-              <DialogFooter>
-                <DialogClose
-                  disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
-                >
-                  Cancel
-                </DialogClose>
-                <Button
-                  onClick={() => void handleConfirmTailscaleServeSetup()}
-                  disabled={isUpdatingTailscaleServe || !isTailscaleServePortValid}
-                >
-                  {isUpdatingTailscaleServe ? (
-                    <>
-                      <Spinner className="size-3.5" />
-                      Restarting…
-                    </>
-                  ) : (
-                    "Enable"
-                  )}
-                </Button>
-              </DialogFooter>
-            </DialogPopup>
-          </Dialog>
-        </>
-      ) : (
-        <SettingsSection title="This environment">
+                <ChevronsLeftRightEllipsisIcon
+                  className={cn("size-3", isSyncingPiAccounts && "animate-pulse")}
+                />
+                <span className={cn(fleetCompact && "sr-only")}>Sync accounts</span>
+              </Button>
+            ) : null}
+            <Button
+              size="xs"
+              variant="ghost"
+              className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+              disabled={isRefreshingPiUsage}
+              onClick={() => void refreshAllUsage()}
+            >
+              <RefreshCwIcon className={cn("size-3", isRefreshingPiUsage && "animate-spin")} />
+              <span className={cn(fleetCompact && "sr-only")}>Refresh usage</span>
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+              onClick={() => setIsAddPiAccountOpen(true)}
+            >
+              <PlusIcon className="size-3" />
+              <span className={cn(fleetCompact && "sr-only")}>Add account</span>
+            </Button>
+          </div>
+        }
+      >
+        {piAccountConnections.length === 0 ? (
           <SettingsRow
-            title="Administrative access"
-            description="Pairing links and client-session management require the access:write scope for this backend."
+            title="No Claude or GPT accounts connected"
+            description="Add a Pi account here. Once connected, its models appear once in the account-blind model picker."
+            control={
+              <Button size="xs" variant="outline" onClick={() => setIsAddPiAccountOpen(true)}>
+                Add account
+              </Button>
+            }
           />
-          <CloudLinkRow canManageRelay={canManageRelay} />
+        ) : (
+          piAccountConnections.map((connection, index) => {
+            const provider = connection.provider;
+            const configured = settings.providerInstances[provider.instanceId];
+            const usageFailure = piUsageFailures[String(provider.instanceId)];
+            const presentedUsageFailure = usageFailure ? formatPiUsageFailure(usageFailure) : null;
+            const instance: ProviderInstanceConfig = {
+              ...(configured ?? {
+                driver: ProviderDriverKind.make("pi"),
+                enabled: provider.enabled,
+                config: {},
+              }),
+              displayName:
+                provider.auth.email ??
+                configured?.displayName ??
+                provider.displayName?.split(" · ")[0] ??
+                connection.familyLabel,
+              ...(presentedUsageFailure?.needsSignIn ? { enabled: false } : {}),
+            };
+            const accountUsage = usageByProviderInstance.get(String(provider.instanceId));
+            const windows = accountUsage?.rateLimits?.windows ?? [];
+            const fiveHour = windows.find(
+              (window) => window.key === "five_hour" || window.key === "primary",
+            );
+            const weekly = windows.find(
+              (window) => window.key === "seven_day" || window.key === "secondary",
+            );
+            const supportsSubscriptionUsage = /(?:anthropic|openai)/u.test(
+              String(provider.instanceId),
+            );
+            const configuredConfig =
+              configured?.config &&
+              typeof configured.config === "object" &&
+              !Array.isArray(configured.config)
+                ? (configured.config as Record<string, unknown>)
+                : {};
+            const hasExplicitActiveAccount = piAccountConnections.some((candidate) => {
+              if (candidate.family !== connection.family) return false;
+              const candidateConfig =
+                settings.providerInstances[candidate.provider.instanceId]?.config;
+              return (
+                candidateConfig !== null &&
+                typeof candidateConfig === "object" &&
+                !Array.isArray(candidateConfig) &&
+                (candidateConfig as Record<string, unknown>).activeForConnection === true
+              );
+            });
+            const isActiveAccount =
+              configuredConfig.activeForConnection === true ||
+              (!hasExplicitActiveAccount &&
+                piAccountConnections.find((candidate) => candidate.family === connection.family)
+                  ?.provider.instanceId === provider.instanceId);
+            const startsFamily =
+              index === 0 || piAccountConnections[index - 1]?.family !== connection.family;
+            return (
+              <Fragment key={provider.instanceId}>
+                {startsFamily ? (
+                  <div className="flex items-center justify-between px-2 pb-0.5 pt-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/65">
+                      {connection.familyLabel} connection
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] text-muted-foreground/50",
+                        fleetCompact && "sr-only",
+                      )}
+                    >
+                      Choose one active account
+                    </span>
+                  </div>
+                ) : null}
+                <div
+                  key={provider.instanceId}
+                  className={cn(
+                    fleetCompact
+                      ? "grid grid-cols-[minmax(0,1fr)_minmax(15rem,1.2fr)] items-center gap-x-1 border-b border-border/35 py-0.5 last:border-b-0 [&>div:first-child>div]:!p-0 [&>div:first-child>div>div]:!flex-row [&>div:first-child>div>div]:!items-center [&>div:first-child>div>div]:!gap-1"
+                      : "space-y-1.5 rounded-xl border border-transparent py-1 transition-colors",
+                    selectedAccountId === String(provider.instanceId) &&
+                      "border-primary/30 bg-primary/5",
+                  )}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button, a, input, [role='switch']"))
+                      return;
+                    onSelectAccount?.(String(provider.instanceId));
+                  }}
+                >
+                  {fleetCompact ? (
+                    <div className="flex min-w-0 items-center gap-1 px-1">
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          provider.status === "ready" ? "bg-success" : "bg-warning",
+                        )}
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        {instance.displayName ?? connection.familyLabel}
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant={isActiveAccount ? "secondary" : "ghost"}
+                              className={cn(isActiveAccount && "text-primary")}
+                              onClick={() => setActivePiAccount(connection)}
+                              aria-label={`${isActiveAccount ? "Active" : "Use"} ${instance.displayName ?? connection.familyLabel} for ${connection.familyLabel}`}
+                            >
+                              {isActiveAccount ? (
+                                <CheckCircle2Icon className="size-3.5" />
+                              ) : (
+                                <CircleIcon className="size-3.5" />
+                              )}
+                            </Button>
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          {isActiveAccount ? "Active account" : "Use this account"}
+                        </TooltipPopup>
+                      </Tooltip>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={testingPiAccount === String(provider.instanceId)}
+                        onClick={() => void runPiAccountTest(provider.instanceId)}
+                        aria-label={`Test ${instance.displayName ?? connection.familyLabel}`}
+                      >
+                        {testingPiAccount === String(provider.instanceId) ? (
+                          <Spinner />
+                        ) : (
+                          <FlaskConicalIcon className="size-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-destructive"
+                        disabled={deletingPiAccount === String(provider.instanceId)}
+                        onClick={() =>
+                          setAccountPendingDeletion({
+                            id: provider.instanceId,
+                            label: instance.displayName ?? connection.familyLabel,
+                          })
+                        }
+                        aria-label={`Delete ${instance.displayName ?? connection.familyLabel}`}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                      <Switch
+                        checked={instance.enabled ?? true}
+                        onCheckedChange={(checked) =>
+                          updateSettings({
+                            providerInstances: {
+                              ...settings.providerInstances,
+                              [provider.instanceId]: { ...instance, enabled: Boolean(checked) },
+                            },
+                          })
+                        }
+                        aria-label={`Enable ${instance.displayName ?? connection.familyLabel}`}
+                      />
+                    </div>
+                  ) : (
+                    <ProviderInstanceCard
+                      instanceId={provider.instanceId}
+                      instance={instance}
+                      driverOption={getDriverOption(ProviderDriverKind.make("pi"))}
+                      liveProvider={provider}
+                      isExpanded={openPiAccountDetails[provider.instanceId] ?? false}
+                      onExpandedChange={(open) =>
+                        setOpenPiAccountDetails((current) => ({
+                          ...current,
+                          [provider.instanceId]: open,
+                        }))
+                      }
+                      onUpdate={(next) =>
+                        updateSettings({
+                          providerInstances: {
+                            ...settings.providerInstances,
+                            [provider.instanceId]: next,
+                          },
+                        })
+                      }
+                      hiddenModels={[]}
+                      favoriteModels={[]}
+                      modelOrder={[]}
+                      onHiddenModelsChange={() => {}}
+                      onFavoriteModelsChange={() => {}}
+                      onModelOrderChange={() => {}}
+                      showModels={false}
+                      showAccentColor={false}
+                      hideInstanceId
+                      compact={accountsOnly}
+                      compactActions={
+                        <>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  size="icon-xs"
+                                  variant={isActiveAccount ? "secondary" : "ghost"}
+                                  className={cn(isActiveAccount && "text-primary")}
+                                  onClick={() => setActivePiAccount(connection)}
+                                  aria-label={`${isActiveAccount ? "Active" : "Use"} ${instance.displayName ?? connection.familyLabel} for ${connection.familyLabel}`}
+                                >
+                                  {isActiveAccount ? (
+                                    <CheckCircle2Icon className="size-3.5" />
+                                  ) : (
+                                    <CircleIcon className="size-3.5" />
+                                  )}
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">
+                              {isActiveAccount ? "Active account" : "Use this account"}
+                            </TooltipPopup>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  disabled={testingPiAccount === String(provider.instanceId)}
+                                  onClick={() => void runPiAccountTest(provider.instanceId)}
+                                  aria-label={`Test ${instance.displayName ?? connection.familyLabel}`}
+                                >
+                                  {testingPiAccount === String(provider.instanceId) ? (
+                                    <Spinner />
+                                  ) : (
+                                    <FlaskConicalIcon className="size-3.5" />
+                                  )}
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">Test account</TooltipPopup>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="text-muted-foreground hover:text-destructive"
+                                  disabled={deletingPiAccount === String(provider.instanceId)}
+                                  onClick={() =>
+                                    setAccountPendingDeletion({
+                                      id: provider.instanceId,
+                                      label: instance.displayName ?? connection.familyLabel,
+                                    })
+                                  }
+                                  aria-label={`Delete ${instance.displayName ?? connection.familyLabel}`}
+                                >
+                                  <Trash2Icon className="size-3.5" />
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">Delete account</TooltipPopup>
+                          </Tooltip>
+                        </>
+                      }
+                      presentationDriverKind={ProviderDriverKind.make(
+                        connection.presentationDriver,
+                      )}
+                    />
+                  )}
+                  <div
+                    className={cn(
+                      "mx-2 space-y-1.5 bg-muted/25 px-2",
+                      fleetCompact ? "my-0 rounded-md py-0.5 !space-y-0.5" : "rounded-lg py-1.5",
+                    )}
+                    aria-label="Account usage remaining"
+                    title={formatLastChecked(accountUsage?.rateLimits?.observedAt)}
+                  >
+                    {supportsSubscriptionUsage ? (
+                      <AllowanceMeter label="5-hour" window={fiveHour} />
+                    ) : null}
+                    {supportsSubscriptionUsage ? (
+                      <AllowanceMeter label="Weekly" window={weekly} />
+                    ) : null}
+                  </div>
+                  <div
+                    className={cn(
+                      "flex items-center justify-between gap-3 px-2 text-[10px] text-muted-foreground/60",
+                      fleetCompact && "col-span-2",
+                      fleetCompact && !presentedUsageFailure?.needsSignIn && "hidden",
+                    )}
+                  >
+                    <span className={cn(fleetCompact && "sr-only")}>
+                      {formatLastChecked(accountUsage?.rateLimits?.observedAt)}
+                    </span>
+                    {presentedUsageFailure?.needsSignIn ? (
+                      <Button
+                        size="xs"
+                        variant="destructive-outline"
+                        onClick={() =>
+                          setReconnectProvider(
+                            connection.family === "claude" ? "anthropic" : "openai",
+                          )
+                        }
+                      >
+                        <LogInIcon className="size-3" />
+                        Sign in again
+                      </Button>
+                    ) : null}
+                  </div>
+                  {presentedUsageFailure ? (
+                    <div
+                      className={cn(
+                        "px-3 text-xs",
+                        fleetCompact && "col-span-2",
+                        presentedUsageFailure.needsSignIn
+                          ? "font-medium text-destructive"
+                          : "text-muted-foreground",
+                      )}
+                      role="status"
+                    >
+                      {presentedUsageFailure.message}
+                    </div>
+                  ) : null}
+                </div>
+              </Fragment>
+            );
+          })
+        )}
+      </SettingsSection>
+
+      {accountsOnly && piApiConnections.length === 0 ? null : (
+        <SettingsSection title="API connections" className={accountsOnly ? "space-y-1" : undefined}>
+          {piApiConnections.length === 0 ? (
+            <SettingsRow
+              title="No API connections configured"
+              description="API-key providers such as OpenRouter appear here and remain separate from subscriptions."
+            />
+          ) : (
+            piApiConnections.map((provider) => {
+              const configured = settings.providerInstances[provider.instanceId];
+              const instance: ProviderInstanceConfig = {
+                ...(configured ?? {
+                  driver: ProviderDriverKind.make("pi"),
+                  enabled: provider.enabled,
+                  config: {},
+                }),
+                displayName: configured?.displayName ?? provider.displayName,
+              };
+              return (
+                <div key={provider.instanceId} className="space-y-1.5">
+                  <ProviderInstanceCard
+                    instanceId={provider.instanceId}
+                    instance={instance}
+                    driverOption={getDriverOption(ProviderDriverKind.make("pi"))}
+                    liveProvider={provider}
+                    isExpanded={openPiAccountDetails[provider.instanceId] ?? false}
+                    onExpandedChange={(open) =>
+                      setOpenPiAccountDetails((current) => ({
+                        ...current,
+                        [provider.instanceId]: open,
+                      }))
+                    }
+                    onUpdate={(next) =>
+                      updateSettings({
+                        providerInstances: {
+                          ...settings.providerInstances,
+                          [provider.instanceId]: next,
+                        },
+                      })
+                    }
+                    hiddenModels={[]}
+                    favoriteModels={[]}
+                    modelOrder={[]}
+                    onHiddenModelsChange={() => {}}
+                    onFavoriteModelsChange={() => {}}
+                    onModelOrderChange={() => {}}
+                    showModels={false}
+                    showAccentColor={false}
+                    hideInstanceId
+                    compact={accountsOnly}
+                  />
+                  <div className="px-3 text-xs text-muted-foreground">
+                    API billing and limits are managed by OpenRouter. Subscription windows do not
+                    apply.
+                  </div>
+                </div>
+              );
+            })
+          )}
         </SettingsSection>
       )}
 
-      <SettingsSection
-        title="Remote environments"
-        headerAction={
-          <Dialog
-            open={addBackendDialogOpen}
-            onOpenChange={(open) => {
-              setAddBackendDialogOpen(open);
-              if (!open) {
-                setSavedBackendError(null);
-              }
-            }}
-          >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <DialogTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
-                        aria-label="Add environment"
-                      >
-                        <PlusIcon className="size-3" />
-                        <span>Add environment</span>
-                      </Button>
+      {isAddPiAccountOpen ? (
+        <AddProviderInstanceDialog
+          open
+          onOpenChange={setIsAddPiAccountOpen}
+          onAccountCaptured={refreshAllUsage}
+        />
+      ) : null}
+      {reconnectProvider ? (
+        <AddProviderInstanceDialog
+          open
+          initialProvider={reconnectProvider}
+          onOpenChange={(open) => {
+            if (!open) setReconnectProvider(null);
+          }}
+          onAccountCaptured={refreshAllUsage}
+        />
+      ) : null}
+      <AlertDialog
+        open={accountPendingDeletion !== null}
+        onOpenChange={(open) => {
+          if (!open) setAccountPendingDeletion(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {accountPendingDeletion?.label ?? "account"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the account and its saved credential from Starcode. It does not sign you
+              out of Claude Code or Codex.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const account = accountPendingDeletion;
+                setAccountPendingDeletion(null);
+                if (account) void removePiAccount(account.id);
+              }}
+            >
+              Delete account
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+
+      {accountsOnly ? null : (
+        <>
+          {canManageLocalBackend ? (
+            <>
+              <SettingsSection title="This environment">
+                {primaryVersionMismatch ? (
+                  <SettingsRow
+                    title="Version drift"
+                    description={
+                      <span className="flex items-center gap-1 text-warning">
+                        <TriangleAlertIcon className="size-3.5 shrink-0" />
+                        Client {primaryVersionMismatch.clientVersion}, server{" "}
+                        {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
+                        fail.
+                      </span>
+                    }
+                    control={
+                      primaryEnvironmentId !== null ? (
+                        <ServerUpdateAction
+                          environmentId={primaryEnvironmentId}
+                          serverLabel={primaryEnvironment?.label ?? "this server"}
+                          selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
+                          targetVersion={primaryVersionMismatch.clientVersion}
+                        />
+                      ) : undefined
                     }
                   />
-                }
+                ) : null}
+                {desktopBridge ? (
+                  <>
+                    {renderNetworkAccessRow()}
+                    {renderEndpointRows("endpoint-rail")}
+                    {renderTailscaleRow()}
+                    {renderWslRow()}
+                    <CloudLinkRow canManageRelay={canManageRelay} />
+                  </>
+                ) : (
+                  <>
+                    {renderDisabledNetworkAccessRow()}
+                    <CloudLinkRow canManageRelay={canManageRelay} />
+                  </>
+                )}
+              </SettingsSection>
+
+              {isLocalBackendRemotelyReachable ? (
+                <SettingsSection
+                  title="Authorized clients"
+                  headerAction={
+                    <AuthorizedClientsHeaderAction
+                      clientSessions={desktopClientSessions}
+                      isRevokingOtherClients={isRevokingOtherDesktopClients}
+                      onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                    />
+                  }
+                >
+                  <ScrollArea
+                    scrollFade
+                    className="max-h-[22.5rem]"
+                    data-testid="authorized-clients-scroll-area"
+                  >
+                    {renderAuthorizedClients("current")}
+                  </ScrollArea>
+                </SettingsSection>
+              ) : null}
+              <AlertDialog
+                open={isDesktopServerExposureDialogOpen}
+                onOpenChange={(open) => {
+                  if (isUpdatingDesktopServerExposure) return;
+                  setIsDesktopServerExposureDialogOpen(open);
+                }}
+                onOpenChangeComplete={(open) => {
+                  if (!open) setPendingDesktopServerExposureMode(null);
+                }}
+              >
+                <AlertDialogPopup>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {pendingDesktopServerExposureMode === "network-accessible"
+                        ? "Enable network access?"
+                        : "Disable network access?"}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {pendingDesktopServerExposureMode === "network-accessible"
+                        ? "starcode will restart to expose this environment over the network."
+                        : "starcode will restart and limit this environment back to this machine."}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogClose
+                      disabled={isUpdatingDesktopServerExposure}
+                      render={
+                        <Button variant="outline" disabled={isUpdatingDesktopServerExposure} />
+                      }
+                    >
+                      Cancel
+                    </AlertDialogClose>
+                    <Button
+                      variant={
+                        pendingDesktopServerExposureMode === "local-only"
+                          ? "destructive"
+                          : "default"
+                      }
+                      onClick={handleConfirmDesktopServerExposureChange}
+                      disabled={
+                        pendingDesktopServerExposureMode === null || isUpdatingDesktopServerExposure
+                      }
+                    >
+                      {isUpdatingDesktopServerExposure ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Restarting…
+                        </>
+                      ) : pendingDesktopServerExposureMode === "network-accessible" ? (
+                        "Restart and enable"
+                      ) : (
+                        "Restart and disable"
+                      )}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogPopup>
+              </AlertDialog>
+              <AlertDialog
+                open={isWslConfirmDialogOpen}
+                onOpenChange={(open) => {
+                  if (isUpdatingWslBackend) return;
+                  if (!open) setPendingWslChange(null);
+                }}
+              >
+                <AlertDialogPopup>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {pendingWslChange?.kind === "disable"
+                        ? pendingWslChange.wasWslOnly
+                          ? "Turn off WSL and switch back to Windows?"
+                          : "Disable WSL backend?"
+                        : pendingWslChange?.kind === "distro"
+                          ? "Switch WSL distro?"
+                          : pendingWslChange?.kind === "enable"
+                            ? "Start the WSL backend"
+                            : pendingWslChange?.nextValue
+                              ? "Run only the WSL backend?"
+                              : "Re-enable the Windows backend?"}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {pendingWslChange?.kind === "disable"
+                        ? pendingWslChange.wasWslOnly
+                          ? "starcode will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
+                          : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in starcode until you re-enable WSL."
+                        : pendingWslChange?.kind === "distro"
+                          ? "starcode will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                          : pendingWslChange?.kind === "enable"
+                            ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
+                            : pendingWslChange?.nextValue
+                              ? "starcode will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
+                              : "starcode will restart and bring the Windows backend back up alongside WSL."}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogClose
+                      disabled={isUpdatingWslBackend}
+                      render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
+                    >
+                      Cancel
+                    </AlertDialogClose>
+                    {pendingWslChange?.kind === "enable" ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          onClick={() => handleConfirmEnableWsl("wsl-only")}
+                          disabled={isUpdatingWslBackend}
+                        >
+                          {isUpdatingWslBackend ? (
+                            <>
+                              <Spinner className="size-3.5" />
+                              Applying…
+                            </>
+                          ) : (
+                            "Use only WSL"
+                          )}
+                        </Button>
+                        <Button
+                          variant="default"
+                          onClick={() => handleConfirmEnableWsl("both")}
+                          disabled={isUpdatingWslBackend}
+                        >
+                          {isUpdatingWslBackend ? (
+                            <>
+                              <Spinner className="size-3.5" />
+                              Applying…
+                            </>
+                          ) : (
+                            "Run both backends"
+                          )}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant={
+                          pendingWslChange?.kind === "disable" ||
+                          (pendingWslChange?.kind === "wsl-only" && pendingWslChange.nextValue)
+                            ? "destructive"
+                            : "default"
+                        }
+                        onClick={handleConfirmWslChange}
+                        disabled={isUpdatingWslBackend}
+                      >
+                        {isUpdatingWslBackend ? (
+                          <>
+                            <Spinner className="size-3.5" />
+                            Applying…
+                          </>
+                        ) : pendingWslChange?.kind === "disable" ? (
+                          pendingWslChange.wasWslOnly ? (
+                            "Switch to Windows"
+                          ) : (
+                            "Disable WSL"
+                          )
+                        ) : pendingWslChange?.kind === "distro" ? (
+                          "Switch distro"
+                        ) : pendingWslChange?.nextValue ? (
+                          "Restart and enable"
+                        ) : (
+                          "Restart and disable"
+                        )}
+                      </Button>
+                    )}
+                  </AlertDialogFooter>
+                </AlertDialogPopup>
+              </AlertDialog>
+              <AlertDialog
+                open={disableTailscaleServeDialogOpen}
+                onOpenChange={(open) => {
+                  if (isUpdatingTailscaleServe) return;
+                  setDisableTailscaleServeDialogOpen(open);
+                }}
+              >
+                <AlertDialogPopup>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      starcode will restart the local backend without Tailscale Serve.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogClose
+                      disabled={isUpdatingTailscaleServe}
+                      render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
+                    >
+                      Cancel
+                    </AlertDialogClose>
+                    <Button
+                      variant="destructive"
+                      onClick={() => void handleConfirmTailscaleServeDisable()}
+                      disabled={isUpdatingTailscaleServe}
+                    >
+                      {isUpdatingTailscaleServe ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Restarting…
+                        </>
+                      ) : (
+                        "Restart and disable"
+                      )}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogPopup>
+              </AlertDialog>
+              <Dialog
+                open={pendingTailscaleServeEndpoint !== null}
+                onOpenChange={(open) => {
+                  if (isUpdatingTailscaleServe) return;
+                  if (!open) setPendingTailscaleServeEndpoint(null);
+                }}
+              >
+                <DialogPopup className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
+                    <DialogDescription>
+                      starcode will restart the local backend with Tailscale Serve enabled and ask
+                      Tailscale to proxy HTTPS traffic to this backend.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogPanel className="space-y-4">
+                    <label className="block">
+                      <span className="text-sm font-medium text-foreground">HTTPS port</span>
+                      <Input
+                        className="mt-2"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={65_535}
+                        step={1}
+                        value={tailscaleServePortInput}
+                        onChange={(event) => setTailscaleServePortInput(event.target.value)}
+                        disabled={isUpdatingTailscaleServe}
+                      />
+                    </label>
+                    {!isTailscaleServePortValid ? (
+                      <p className="mt-2 text-xs text-destructive">Enter a port from 1 to 65535.</p>
+                    ) : null}
+                    <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                      <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
+                      <p
+                        className="mt-1 truncate text-sm text-foreground"
+                        title={pendingTailscaleServeBaseUrl ?? undefined}
+                      >
+                        {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                      </p>
+                    </div>
+                  </DialogPanel>
+                  <DialogFooter>
+                    <DialogClose
+                      disabled={isUpdatingTailscaleServe}
+                      render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
+                    >
+                      Cancel
+                    </DialogClose>
+                    <Button
+                      onClick={() => void handleConfirmTailscaleServeSetup()}
+                      disabled={isUpdatingTailscaleServe || !isTailscaleServePortValid}
+                    >
+                      {isUpdatingTailscaleServe ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Restarting…
+                        </>
+                      ) : (
+                        "Enable"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogPopup>
+              </Dialog>
+            </>
+          ) : (
+            <SettingsSection title="This environment">
+              <SettingsRow
+                title="Administrative access"
+                description="Pairing links and client-session management require the access:write scope for this backend."
               />
-              <TooltipPopup side="top">Add environment</TooltipPopup>
-            </Tooltip>
-            <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Add Environment</DialogTitle>
-                <DialogDescription>Pair another environment to this client.</DialogDescription>
-              </DialogHeader>
-              <DialogPanel>
-                <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {renderConnectionModeCard({
-                      mode: "remote",
-                      title: "Remote link",
-                      description: "Enter a backend host and pairing code.",
-                      icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-                    })}
-                    {desktopBridge
-                      ? renderConnectionModeCard({
-                          mode: "ssh",
-                          title: "SSH",
-                          description: "Use local SSH config, agent, and tunnels for the backend.",
-                          icon: <TerminalIcon aria-hidden className="size-4" />,
-                        })
-                      : null}
-                  </div>
-                  <AnimatedHeight>
-                    {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
-                  </AnimatedHeight>
-                </div>
-              </DialogPanel>
-            </DialogPopup>
-          </Dialog>
-        }
-      >
-        {savedEnvironments.map((environment) => (
-          <SavedBackendListRow
-            key={environment.environmentId}
-            environment={environment}
-            removingEnvironmentId={removingSavedEnvironmentId}
-            onConnect={handleConnectSavedBackend}
-            onRemove={handleRemoveSavedBackend}
-          />
-        ))}
-        <CloudRemoteEnvironmentRows
-          primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironments={savedEnvironments}
-        />
-      </SettingsSection>
+              <CloudLinkRow canManageRelay={canManageRelay} />
+            </SettingsSection>
+          )}
+
+          <SettingsSection
+            title="Remote environments"
+            headerAction={
+              <Dialog
+                open={addBackendDialogOpen}
+                onOpenChange={(open) => {
+                  setAddBackendDialogOpen(open);
+                  if (!open) {
+                    setSavedBackendError(null);
+                  }
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DialogTrigger
+                        render={
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                            aria-label="Add environment"
+                          >
+                            <PlusIcon className="size-3" />
+                            <span>Add environment</span>
+                          </Button>
+                        }
+                      />
+                    }
+                  />
+                  <TooltipPopup side="top">Add environment</TooltipPopup>
+                </Tooltip>
+                <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle>Add Environment</DialogTitle>
+                    <DialogDescription>Pair another environment to this client.</DialogDescription>
+                  </DialogHeader>
+                  <DialogPanel>
+                    <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {renderConnectionModeCard({
+                          mode: "remote",
+                          title: "Remote link",
+                          description: "Enter a backend host and pairing code.",
+                          icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
+                        })}
+                        {desktopBridge
+                          ? renderConnectionModeCard({
+                              mode: "ssh",
+                              title: "SSH",
+                              description:
+                                "Use local SSH config, agent, and tunnels for the backend.",
+                              icon: <TerminalIcon aria-hidden className="size-4" />,
+                            })
+                          : null}
+                      </div>
+                      <AnimatedHeight>
+                        {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                      </AnimatedHeight>
+                    </div>
+                  </DialogPanel>
+                </DialogPopup>
+              </Dialog>
+            }
+          >
+            {desktopBridge && canManageLocalBackend ? <FleetOnboardingCard /> : null}
+            {savedEnvironments.map((environment) => (
+              <SavedBackendListRow
+                key={environment.environmentId}
+                environment={environment}
+                removingEnvironmentId={removingSavedEnvironmentId}
+                onConnect={handleConnectSavedBackend}
+                onRemove={handleRemoveSavedBackend}
+              />
+            ))}
+            <CloudRemoteEnvironmentRows
+              primaryEnvironmentId={primaryEnvironmentId}
+              savedEnvironments={savedEnvironments}
+            />
+          </SettingsSection>
+        </>
+      )}
     </SettingsPageContainer>
   );
 }

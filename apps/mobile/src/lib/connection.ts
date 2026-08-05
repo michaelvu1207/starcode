@@ -1,6 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { stripPairingTokenFromUrl } from "@t3tools/shared/remote";
-import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { EnvironmentId } from "@starcode/contracts";
+import { stripPairingTokenFromUrl } from "@starcode/shared/remote";
+import { type EnvironmentConnectionPhase } from "@starcode/client-runtime/connection";
 
 export { authClientMetadata } from "./authClientMetadata";
 

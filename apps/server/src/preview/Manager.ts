@@ -10,6 +10,7 @@
  * fail an in-progress `navigate()`).
  */
 import {
+  type BrowserNavigationTarget,
   type PreviewCloseInput,
   type PreviewEvent,
   type PreviewError,
@@ -24,12 +25,12 @@ import {
   FILL_PREVIEW_VIEWPORT,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   isPreviewUrlNormalizationError,
   newPreviewTabId,
   normalizePreviewUrl,
-} from "@t3tools/shared/preview";
+} from "@starcode/shared/preview";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -56,7 +57,7 @@ export class PreviewManager extends Context.Service<
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
   }
->()("t3/preview/Manager/PreviewManager") {}
+>()("starcode/preview/Manager/PreviewManager") {}
 
 interface PreviewSessionState {
   readonly threadId: string;
@@ -105,6 +106,15 @@ const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlEr
     },
   });
 
+const targetUrl = (
+  target: BrowserNavigationTarget,
+): Effect.Effect<string, PreviewInvalidUrlError> => {
+  if (target.kind === "url") return normalizeUrl(target.url);
+  const protocol = target.protocol ?? "http";
+  const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
+  return normalizeUrl(`${protocol}://localhost:${target.port}${path}`);
+};
+
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 const buildLoadingSnapshot = (input: {
@@ -113,6 +123,7 @@ const buildLoadingSnapshot = (input: {
   readonly url: string;
   readonly title: string;
   readonly updatedAt: string;
+  readonly target?: BrowserNavigationTarget;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
   tabId: input.tabId,
@@ -120,6 +131,7 @@ const buildLoadingSnapshot = (input: {
   canGoBack: false,
   canGoForward: false,
   viewport: FILL_PREVIEW_VIEWPORT,
+  ...(input.target === undefined ? {} : { target: input.target }),
   updatedAt: input.updatedAt,
 });
 
@@ -198,13 +210,17 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     function* (input) {
       const tabId = newPreviewTabId();
       const updatedAt = yield* currentIsoTimestamp;
-      const snapshot = input.url
+      const navigationTarget =
+        input.target ??
+        (input.url === undefined ? undefined : ({ kind: "url", url: input.url } as const));
+      const snapshot = navigationTarget
         ? buildLoadingSnapshot({
             threadId: input.threadId,
             tabId,
-            url: yield* normalizeUrl(input.url),
+            url: yield* targetUrl(navigationTarget),
             title: "",
             updatedAt,
+            target: navigationTarget,
           })
         : buildIdleSnapshot({ threadId: input.threadId, tabId, updatedAt });
       yield* SynchronizedRef.update(stateRef, (state) => {
@@ -229,7 +245,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const navigate: PreviewManager["Service"]["navigate"] = Effect.fn("PreviewManager.navigate")(
     function* (input) {
-      const url = yield* normalizeUrl(input.url);
+      const navigationTarget = input.target ?? { kind: "url" as const, url: input.url! };
+      const url = yield* targetUrl(navigationTarget);
       return yield* mutateExistingSession(
         input.threadId,
         input.tabId,
@@ -245,6 +262,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             canGoBack: session.snapshot.canGoBack,
             canGoForward: session.snapshot.canGoForward,
             viewport: session.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
+            target: navigationTarget,
             updatedAt,
           };
           return {
@@ -278,6 +296,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           canGoBack: input.canGoBack,
           canGoForward: input.canGoForward,
           viewport: session.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
+          ...(session.snapshot.target === undefined ? {} : { target: session.snapshot.target }),
           updatedAt,
         };
         const emit: PreviewEvent =

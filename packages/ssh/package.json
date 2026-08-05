@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/ssh",
+  "name": "@starcode/ssh",
   "private": true,
   "type": "module",
   "exports": {
@@ -19,6 +19,10 @@
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     },
+    "./preflight": {
+      "types": "./src/preflight.ts",
+      "import": "./src/preflight.ts"
+    },
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"
@@ -29,8 +33,8 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@starcode/contracts": "workspace:*",
+    "@starcode/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

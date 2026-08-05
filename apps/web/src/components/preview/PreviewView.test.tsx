@@ -1,9 +1,32 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@starcode/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
-  navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  bridgeNavigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  navigateCommand: vi.fn(
+    async (request: {
+      input: { target?: { port: number; protocol?: string; path?: string }; url?: string };
+    }) => {
+      const target = request.input.target;
+      const path = target?.path?.startsWith("/") ? target.path : `/${target?.path ?? ""}`;
+      const url = target
+        ? `${target.protocol ?? "http"}://localhost:${target.port}${path}`
+        : request.input.url!;
+      return {
+        _tag: "Success" as const,
+        value: {
+          threadId: "thread-1",
+          tabId: "tab-1",
+          ...(target ? { target: { kind: "environment-port", ...target } } : {}),
+          navStatus: { _tag: "Loading" as const, url, title: url },
+          canGoBack: false,
+          canGoForward: false,
+          updatedAt: "2026-07-13T00:00:00.000Z",
+        },
+      };
+    },
+  ),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
@@ -70,11 +93,11 @@ vi.mock("~/state/environments", () => ({
 }));
 
 vi.mock("~/state/preview", () => ({
-  previewEnvironment: { open: {}, resize: {} },
+  previewEnvironment: { open: "open", navigate: "navigate", resize: "resize" },
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => vi.fn(),
+  useAtomCommand: (command: string) => (command === "navigate" ? mocks.navigateCommand : vi.fn()),
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
@@ -95,7 +118,7 @@ vi.mock("~/components/ui/toast", () => ({
 }));
 
 vi.mock("./previewBridge", () => ({
-  previewBridge: { navigate: mocks.navigate },
+  previewBridge: { navigate: mocks.bridgeNavigate },
 }));
 
 vi.mock("./PreviewChromeRow", () => ({
@@ -123,7 +146,8 @@ import { PreviewView } from "./PreviewView";
 
 describe("PreviewView navigation", () => {
   beforeEach(() => {
-    mocks.navigate.mockClear();
+    mocks.bridgeNavigate.mockClear();
+    mocks.navigateCommand.mockClear();
     mocks.rememberPreviewUrl.mockClear();
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
@@ -152,7 +176,19 @@ describe("PreviewView navigation", () => {
     expect(mocks.submittedUrl).not.toBeNull();
     mocks.submittedUrl?.(submitted);
 
-    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("tab-1", expected));
+    await vi.waitFor(() =>
+      expect(mocks.navigateCommand).toHaveBeenCalledWith({
+        environmentId: "environment-1",
+        input: {
+          threadId: "thread-1",
+          tabId: "tab-1",
+          target: expect.objectContaining({
+            kind: "environment-port",
+            port: Number(new URL(expected).port),
+          }),
+        },
+      }),
+    );
     expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
       {
         environmentId: "environment-1",
@@ -162,7 +198,7 @@ describe("PreviewView navigation", () => {
     );
   });
 
-  it("maps an empty-state localhost server onto the WSL host", async () => {
+  it("keeps an empty-state server as an environment-local target", async () => {
     mocks.showEmptyState = true;
     renderToStaticMarkup(
       <PreviewView
@@ -179,17 +215,26 @@ describe("PreviewView navigation", () => {
     mocks.emptyStateUrl?.("http://localhost:5173/app?mode=test#top");
 
     await vi.waitFor(() =>
-      expect(mocks.navigate).toHaveBeenCalledWith(
-        "tab-1",
-        "http://172.25.85.75:5173/app?mode=test#top",
-      ),
+      expect(mocks.navigateCommand).toHaveBeenCalledWith({
+        environmentId: "environment-1",
+        input: {
+          threadId: "thread-1",
+          tabId: "tab-1",
+          target: {
+            kind: "environment-port",
+            port: 5173,
+            protocol: "http",
+            path: "/app?mode=test#top",
+          },
+        },
+      }),
     );
     expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
       {
         environmentId: "environment-1",
         threadId: "thread-1",
       },
-      "http://172.25.85.75:5173/app?mode=test#top",
+      "http://localhost:5173/app?mode=test#top",
     );
   });
 });

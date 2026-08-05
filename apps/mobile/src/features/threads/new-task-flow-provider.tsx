@@ -7,14 +7,14 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProviderSkill,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -22,7 +22,11 @@ import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  resolveActiveModelSelection,
+} from "../../lib/modelOptions";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -53,8 +57,8 @@ import {
   setPendingConnectionError,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { EnvironmentProject } from "@starcode/client-runtime/state/shell";
+import { type VcsRef } from "@starcode/client-runtime/state/vcs";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -279,11 +283,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? editingPendingProject
       : (projectsForEnvironment[0] ?? null));
 
-  // Only offer machines that actually host the currently selected repository, so
-  // switching computers moves the same repo across machines instead of jumping to
-  // whatever unrelated project happens to be first on the other machine. Repository
-  // identity is the primary signal; projects that haven't reported one yet (still
-  // indexing) fall back to workspace basename / title so a valid host isn't hidden.
+  // This is a placement picker, never a visibility filter: the project catalog
+  // above remains fleet-wide. Only offer machines that host the selected
+  // repository so switching placement follows the same repo instead of
+  // jumping to an unrelated project. Repository identity is the primary
+  // signal; projects still indexing fall back to workspace basename / title.
   const selectedRepositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
   // `|| null` (not `??`): a pending-task placeholder project can have an empty
   // workspaceRoot, and an "" basename would reject every real host below.
@@ -374,12 +378,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     ],
   );
 
-  const selectedModel =
-    selectedProjectDraft.modelSelection ??
-    selectedProject?.defaultModelSelection ??
-    modelOptions.find((option) => option.isDefault)?.selection ??
-    modelOptions[0]?.selection ??
-    null;
+  const preferredModelSelection =
+    selectedProjectDraft.modelSelection ?? selectedProject?.defaultModelSelection ?? null;
+  const selectedModel = resolveActiveModelSelection(modelOptions, preferredModelSelection);
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

@@ -1,14 +1,15 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@starcode/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import { projectAgentRunActivity } from "./agentRunProjection.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -22,14 +23,12 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
-  ThreadSettledPayload,
-  ThreadSnoozedPayload,
   ThreadUnarchivedPayload,
-  ThreadUnsettledPayload,
-  ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadGoalUpdatedPayload,
+  ThreadGoalClearedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -286,19 +285,17 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            sideOfThreadId: payload.sideOfThreadId,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            snoozedUntil: null,
-            snoozedAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
             checkpoints: [],
             session: null,
+            goal: null,
           },
           event.type,
           "thread",
@@ -345,60 +342,13 @@ export function projectEvent(
         })),
       );
 
-    case "thread.settled":
-      return decodeForEvent(ThreadSettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: "settled",
-            settledAt: payload.settledAt,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
-    case "thread.unsettled":
-      return decodeForEvent(ThreadUnsettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: payload.reason === "user" ? "active" : null,
-            settledAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
-    case "thread.snoozed":
-      return decodeForEvent(ThreadSnoozedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            snoozedUntil: payload.snoozedUntil,
-            snoozedAt: payload.snoozedAt,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
-    case "thread.unsnoozed":
-      return decodeForEvent(ThreadUnsnoozedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            snoozedUntil: null,
-            snoozedAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
             ...(payload.modelSelection !== undefined
               ? { modelSelection: payload.modelSelection }
               : {}),
@@ -454,6 +404,7 @@ export function projectEvent(
           {
             id: payload.messageId,
             role: payload.role,
+            authoredBy: payload.authoredBy,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
@@ -737,11 +688,88 @@ export function projectEvent(
           ]
             .toSorted(compareThreadActivities)
             .slice(-500);
+          const activityPayload =
+            payload.activity.payload !== null &&
+            typeof payload.activity.payload === "object" &&
+            !Array.isArray(payload.activity.payload)
+              ? (payload.activity.payload as Record<string, unknown>)
+              : null;
+          const taskId =
+            typeof activityPayload?.taskId === "string" ? activityPayload.taskId.trim() : "";
+          const activityProvider =
+            typeof activityPayload?.providerDriver === "string"
+              ? activityPayload.providerDriver.trim()
+              : "";
+          const existingAgentRun =
+            thread.agentRuns.find(
+              (run) =>
+                run.agentRunId === taskId &&
+                (activityProvider.length === 0 || run.provider === activityProvider),
+            ) ?? null;
+          const projectedAgentRun = projectAgentRunActivity({
+            parentThreadId: payload.threadId,
+            kind: payload.activity.kind,
+            createdAt: payload.activity.createdAt,
+            payload: payload.activity.payload,
+            existing:
+              existingAgentRun === null
+                ? null
+                : { ...existingAgentRun, parentNativeSessionId: null },
+          });
+          const agentRuns = projectedAgentRun
+            ? [
+                ...thread.agentRuns.filter(
+                  (run) =>
+                    run.agentRunId !== projectedAgentRun.agentRunId ||
+                    run.provider !== projectedAgentRun.provider,
+                ),
+                (() => {
+                  const { parentNativeSessionId: _parentNativeSessionId, ...agentRun } =
+                    projectedAgentRun;
+                  return agentRun;
+                })(),
+              ]
+            : thread.agentRuns;
 
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              agentRuns,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.goal-updated":
+      return decodeForEvent(ThreadGoalUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || (thread.goal && thread.goal.updatedAt > payload.goal.updatedAt)) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              goal: payload.goal,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.goal-cleared":
+      return decodeForEvent(ThreadGoalClearedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || (thread.goal && thread.goal.updatedAt > payload.observedAt)) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              goal: null,
               updatedAt: event.occurredAt,
             }),
           };

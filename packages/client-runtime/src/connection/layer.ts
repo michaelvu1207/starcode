@@ -10,6 +10,8 @@ import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+import * as FleetConnectionCoordinator from "./fleetCoordinator.ts";
+import * as FleetHttpDiscovery from "./fleetHttpDiscovery.ts";
 
 const resolverLayer = ConnectionResolver.layer.pipe(
   Layer.provide(RemoteEnvironmentAuthorization.layer),
@@ -22,18 +24,25 @@ const driverLayer = ConnectionDriver.layer.pipe(
 const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
 
 const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
+const fleetDiscoveryLayer = FleetHttpDiscovery.layer.pipe(Layer.provide(registryLayer));
+const fleetCoordinatorLayer = FleetConnectionCoordinator.layer.pipe(
+  Layer.provide(Layer.merge(registryLayer, fleetDiscoveryLayer)),
+);
 
 const connectionServicesLayer = Layer.mergeAll(
   registryLayer,
   RelayEnvironmentDiscovery.layer,
   onboardingLayer,
+  fleetCoordinatorLayer,
 );
 
 const connectionStartupLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+    const fleetCoordinator = yield* FleetConnectionCoordinator.FleetConnectionCoordinator;
     const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
     yield* registry.start;
+    yield* fleetCoordinator.start;
     yield* platformSource.registrations.pipe(
       Stream.runForEach(registry.reconcilePlatform),
       Effect.forkScoped,

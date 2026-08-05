@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@starcode/contracts";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -10,7 +10,7 @@ export interface VersionMismatch {
   readonly hint: string;
 }
 
-export const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
+export const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "starcode:version-mismatch-dismissals:v1";
 
 const VersionMismatchDismissalsSchema = Schema.Struct({
   keys: Schema.Array(Schema.String),
@@ -39,7 +39,7 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
-    hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    hint: "Version mismatch. Try syncing the client and server to the same starcode version.",
   };
 }
 
@@ -57,9 +57,13 @@ export function resolveServerSelfUpdateCapability(
   return serverConfig?.environment.capabilities.serverSelfUpdate ?? null;
 }
 
-/** The command to hand users whose server cannot update itself. */
+/** The command to hand users whose server cannot update itself.
+    FORK: upstream hands out `npx t3@<version>`, which installs upstream's
+    public npm package over this fork's server. This fork is not published to
+    npm — see FORK_DISABLE_SELF_UPDATE in apps/server/src/cloud/selfUpdate.ts —
+    so the only manual update is pulling and rebuilding its checkout. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return `git pull && vp i && vp run start # in the starcode fork checkout (target ${targetVersion})`;
 }
 
 /** One sentence telling the user how to resolve version skew for a server,
@@ -73,7 +77,7 @@ export function serverUpdateGuidance(
     case "respawn":
       return `Update the ${serverLabel} so they stay in sync.`;
     case "desktop-managed":
-      return `The ${serverLabel} is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.`;
+      return `The ${serverLabel} is run by the starcode desktop app on its machine — update the desktop app there to sync them.`;
     default:
       return `Relaunch the ${serverLabel} with the copied command to sync them.`;
   }

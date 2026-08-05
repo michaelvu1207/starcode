@@ -1,6 +1,6 @@
-import { Connection } from "@t3tools/client-runtime/connection";
-import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
-import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
+import { Connection } from "@starcode/client-runtime/connection";
+import { shellSnapshotLoaderLayer } from "@starcode/client-runtime/state/shell";
+import { threadSnapshotLoaderLayer } from "@starcode/client-runtime/state/threads";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 

@@ -9,15 +9,16 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-import * as NetService from "@t3tools/shared/Net";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
+import * as NetService from "@starcode/shared/Net";
+import { HostProcessArchitecture, HostProcessPlatform } from "@starcode/shared/hostProcess";
+import { resolveRemoteStarcodeCliPackageSpec } from "@starcode/ssh/command";
+import type { RemoteStarcodeRunnerOptions } from "@starcode/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
@@ -48,13 +49,16 @@ import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopDiscordPresence from "./presence/DesktopDiscordPresence.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
+import { resolveProductionRemoteForkSource } from "./ssh/RemoteForkRunner.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewPortBridge from "./preview/PortBridge.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
@@ -79,31 +83,52 @@ const desktopEnvironmentLayer = Layer.unwrap(
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   settings: DesktopAppSettings.DesktopSettings,
-): RemoteT3RunnerOptions => {
-  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
-  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+): Effect.Effect<RemoteStarcodeRunnerOptions, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteStarcodeServerEntryPath);
+    if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+      return {
+        nodeScriptPath: devRemoteEntryPath,
+        nodeEngineRange: serverPackageJson.engines.node,
+      };
+    }
+    if (environment.isDevelopment) {
+      return {
+        packageSpec: resolveRemoteStarcodeCliPackageSpec({
+          appVersion: environment.appVersion,
+          updateChannel: settings.updateChannel,
+          isDevelopment: true,
+        }),
+        nodeEngineRange: serverPackageJson.engines.node,
+      };
+    }
+
+    const fs = yield* FileSystem.FileSystem;
+    const packageJson = yield* fs
+      .readFileString(environment.path.join(environment.appRoot, "package.json"))
+      .pipe(Effect.option);
+    const commitHashOverride = Option.getOrUndefined(environment.commitHashOverride);
+    const appPackageJson = Option.getOrUndefined(packageJson);
     return {
-      nodeScriptPath: devRemoteEntryPath,
+      sourceCheckout: resolveProductionRemoteForkSource({
+        ...(commitHashOverride === undefined ? {} : { commitHashOverride }),
+        ...(appPackageJson === undefined ? {} : { appPackageJson }),
+      }),
       nodeEngineRange: serverPackageJson.engines.node,
     };
-  }
-  return {
-    packageSpec: resolveRemoteT3CliPackageSpec({
-      appVersion: environment.appVersion,
-      updateChannel: settings.updateChannel,
-      isDevelopment: environment.isDevelopment,
-    }),
-    nodeEngineRange: serverPackageJson.engines.node,
-  };
-};
+  });
 
 const desktopSshEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    const fs = yield* FileSystem.FileSystem;
     return DesktopSshEnvironment.layer({
       resolveCliRunner: settings.get.pipe(
-        Effect.map((currentSettings) => resolveDesktopSshCliRunner(environment, currentSettings)),
+        Effect.flatMap((currentSettings) =>
+          resolveDesktopSshCliRunner(environment, currentSettings),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fs),
       ),
     });
   }),
@@ -141,9 +166,12 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
-const desktopPreviewLayer = PreviewManager.layer.pipe(
-  Layer.provideMerge(BrowserSession.layer),
-  Layer.provideMerge(desktopFoundationLayer),
+const desktopPreviewLayer = Layer.merge(
+  PreviewManager.layer.pipe(
+    Layer.provideMerge(BrowserSession.layer),
+    Layer.provideMerge(desktopFoundationLayer),
+  ),
+  PreviewPortBridge.layer,
 );
 
 const desktopWindowLayer = DesktopWindow.layer.pipe(
@@ -178,6 +206,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
   DesktopShellEnvironment.layer,
+  DesktopDiscordPresence.layer,
   desktopSshLayer,
 ).pipe(
   Layer.provideMerge(DesktopUpdates.layer),

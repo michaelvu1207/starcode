@@ -2,7 +2,7 @@ import {
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
@@ -10,12 +10,15 @@ import { Button, buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { acquireBodyScrollLock } from "../split/bodyScrollLock";
 import { ModelPickerContent } from "./ModelPickerContent";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   ModelEsque,
+  getModelFamilyPresentation,
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
+  PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
@@ -70,6 +73,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
   ).length;
   const showInstanceBadge = Boolean(activeEntry?.accentColor) || duplicateDriverCount > 1;
+  const activeModelPresentation =
+    selectedModel && activeEntry
+      ? getModelFamilyPresentation(selectedModel, activeEntry.driverKind)
+      : null;
+  const ActiveModelIcon = activeModelPresentation
+    ? (PROVIDER_ICON_BY_PROVIDER[activeModelPresentation.iconDriverKind] ?? null)
+    : null;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -83,17 +93,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       return;
     }
 
-    const { documentElement, body } = document;
-    const previousDocumentOverscrollBehavior = documentElement.style.overscrollBehavior;
-    const previousBodyOverflow = body.style.overflow;
-    const previousBodyPaddingRight = body.style.paddingRight;
-    const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
-
-    documentElement.style.overscrollBehavior = "contain";
-    body.style.overflow = "hidden";
-    if (scrollbarWidth > 0) {
-      body.style.paddingRight = `${scrollbarWidth}px`;
-    }
+    // Fork: ref-counted, because split view can have one of these open per
+    // pane and a per-instance save/restore leaves the body locked forever.
+    const releaseBodyScrollLock = acquireBodyScrollLock();
 
     const shouldAllowOverlayScroll = (target: EventTarget | null) => {
       return target instanceof Element && target.closest("[data-model-picker-content]");
@@ -120,9 +122,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     return () => {
       document.removeEventListener("wheel", preventBackgroundWheel, { capture: true });
       document.removeEventListener("touchmove", preventBackgroundTouchMove, { capture: true });
-      documentElement.style.overscrollBehavior = previousDocumentOverscrollBehavior;
-      body.style.overflow = previousBodyOverflow;
-      body.style.paddingRight = previousBodyPaddingRight;
+      releaseBodyScrollLock();
     };
   }, [isMenuOpen]);
 
@@ -159,7 +159,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          {activeEntry ? (
+          {ActiveModelIcon ? (
+            <ActiveModelIcon
+              className={cn("size-4 shrink-0", props.activeProviderIconClassName)}
+              aria-hidden
+            />
+          ) : activeEntry ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}

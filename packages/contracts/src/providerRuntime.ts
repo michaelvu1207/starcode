@@ -14,6 +14,9 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderOptionSelections } from "./model.ts";
+import { ThreadGoal } from "./threadGoal.ts";
+import { HistorySessionId } from "./history.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -25,7 +28,10 @@ const RuntimeEventRawSource = Schema.Union([
   Schema.Literal("claude.sdk.message"),
   Schema.Literal("claude.sdk.permission"),
   Schema.Literal("codex.sdk.thread-event"),
+  // Legacy history only. OpenCode is no longer an active provider, but raw
+  // events already persisted in thread transcripts must remain readable.
   Schema.Literal("opencode.sdk.event"),
+  Schema.Literal("pi.agent.event"),
   Schema.Literal("acp.jsonrpc"),
   Schema.TemplateLiteral(["acp.", Schema.String, ".extension"]),
 ]);
@@ -75,7 +81,13 @@ export type RuntimeTurnState = typeof RuntimeTurnState.Type;
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
 
-const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
+const RuntimeItemStatus = Schema.Literals([
+  "inProgress",
+  "completed",
+  "failed",
+  "declined",
+  "stopped",
+]);
 export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
 
 const RuntimeContentStreamKind = Schema.Literals([
@@ -103,6 +115,7 @@ export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
 
 export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
+  "file_read",
   "file_change",
   "mcp_tool_call",
   "dynamic_tool_call",
@@ -154,6 +167,8 @@ const ProviderRuntimeEventType = Schema.Literals([
   "thread.state.changed",
   "thread.metadata.updated",
   "thread.token-usage.updated",
+  "thread.goal.updated",
+  "thread.goal.cleared",
   "thread.realtime.started",
   "thread.realtime.item-added",
   "thread.realtime.audio.delta",
@@ -176,6 +191,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "user-input.resolved",
   "task.started",
   "task.progress",
+  "task.updated",
   "task.completed",
   "hook.started",
   "hook.progress",
@@ -204,6 +220,8 @@ const ThreadStartedType = Schema.Literal("thread.started");
 const ThreadStateChangedType = Schema.Literal("thread.state.changed");
 const ThreadMetadataUpdatedType = Schema.Literal("thread.metadata.updated");
 const ThreadTokenUsageUpdatedType = Schema.Literal("thread.token-usage.updated");
+const ThreadGoalUpdatedType = Schema.Literal("thread.goal.updated");
+const ThreadGoalClearedType = Schema.Literal("thread.goal.cleared");
 const ThreadRealtimeStartedType = Schema.Literal("thread.realtime.started");
 const ThreadRealtimeItemAddedType = Schema.Literal("thread.realtime.item-added");
 const ThreadRealtimeAudioDeltaType = Schema.Literal("thread.realtime.audio.delta");
@@ -226,6 +244,7 @@ const UserInputRequestedType = Schema.Literal("user-input.requested");
 const UserInputResolvedType = Schema.Literal("user-input.resolved");
 const TaskStartedType = Schema.Literal("task.started");
 const TaskProgressType = Schema.Literal("task.progress");
+const TaskUpdatedType = Schema.Literal("task.updated");
 const TaskCompletedType = Schema.Literal("task.completed");
 const HookStartedType = Schema.Literal("hook.started");
 const HookProgressType = Schema.Literal("hook.progress");
@@ -328,6 +347,16 @@ const ThreadTokenUsageUpdatedPayload = Schema.Struct({
 });
 export type ThreadTokenUsageUpdatedPayload = typeof ThreadTokenUsageUpdatedPayload.Type;
 
+const ProviderThreadGoalUpdatedPayload = Schema.Struct({
+  goal: ThreadGoal,
+});
+export type ProviderThreadGoalUpdatedPayload = typeof ProviderThreadGoalUpdatedPayload.Type;
+
+const ProviderThreadGoalClearedPayload = Schema.Struct({
+  observedAt: IsoDateTime,
+});
+export type ProviderThreadGoalClearedPayload = typeof ProviderThreadGoalClearedPayload.Type;
+
 const ThreadRealtimeStartedPayload = Schema.Struct({
   realtimeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -405,7 +434,42 @@ export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The `tool_use` id of the Task call that owns this item, when the item was
+   * produced by a subagent rather than the main thread.
+   *
+   * This is the join key for the whole per-agent view: `task.started` reports
+   * the same id as `toolUseId`, so an item can be attributed to a task without
+   * the adapter having to thread task ids through the streaming layer. Absent
+   * means "the main thread produced this", which is the overwhelming majority
+   * of items and the only case that existed before subagent forwarding.
+   */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Short, single-line preview used as a row label. Adapters put the command
+   * here for `command_execution`, the path for `file_change`, and so on.
+   * Truncated aggressively downstream — never the place to put output.
+   */
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Captured process output, stdout and stderr aggregated in emission order.
+   * Kept separate from `detail` because it is rendered as a block, survives a
+   * far larger truncation budget, and must not be collapsed into the label.
+   */
+  output: Schema.optional(Schema.String),
+  /** True when `output` was clipped, so the UI can say so instead of lying. */
+  outputTruncated: Schema.optional(Schema.Boolean),
+  /** Process exit status. Absent when the provider does not report one. */
+  exitCode: Schema.optional(Schema.Int),
+  /**
+   * Lines added / removed by a `file_change` item, summed across its files.
+   *
+   * Computed by the adapter from the patch it already has, rather than left to
+   * each client to re-parse — the count is the same everywhere, and doing it
+   * once server-side keeps web and mobile from disagreeing about it.
+   */
+  linesAdded: Schema.optional(Schema.Int),
+  linesRemoved: Schema.optional(Schema.Int),
   data: Schema.optional(Schema.Unknown),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
@@ -413,6 +477,8 @@ export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
 const ContentDeltaPayload = Schema.Struct({
   streamKind: RuntimeContentStreamKind,
   delta: Schema.String,
+  /** Owning nested task when streamed command output belongs to a subagent. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   contentIndex: Schema.optional(Schema.Int),
   summaryIndex: Schema.optional(Schema.Int),
 });
@@ -420,6 +486,8 @@ export type ContentDeltaPayload = typeof ContentDeltaPayload.Type;
 
 const RequestOpenedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
+  /** Owning attached agent when approval originated outside the parent model loop. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   args: Schema.optional(Schema.Unknown),
 });
@@ -427,7 +495,12 @@ export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;
 
 const RequestResolvedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
+  /** Owning attached agent when approval originated outside the parent model loop. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   decision: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Original operation detail, retained so reconnect can render a tangible terminal row. */
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  args: Schema.optional(Schema.Unknown),
   resolution: Schema.optional(Schema.Unknown),
 });
 export type RequestResolvedPayload = typeof RequestResolvedPayload.Type;
@@ -450,36 +523,120 @@ export const UserInputQuestion = Schema.Struct({
 export type UserInputQuestion = typeof UserInputQuestion.Type;
 
 const UserInputRequestedPayload = Schema.Struct({
+  /** Owning attached agent when the structured prompt originated in a child session. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   questions: Schema.Array(UserInputQuestion),
 });
 export type UserInputRequestedPayload = typeof UserInputRequestedPayload.Type;
 
 const UserInputResolvedPayload = Schema.Struct({
+  /** Owning attached agent retained on the terminal row for reconnect rendering. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   answers: UnknownRecordSchema,
 });
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
+/**
+ * A task is a subagent, and these four events are its whole life.
+ *
+ * Every added field below is optional, and optional is the point rather than
+ * caution: a client that predates them keeps decoding, and a provider that has
+ * no answer for one omits it instead of inventing a placeholder the UI would
+ * then have to recognise as meaning "unknown".
+ */
 const TaskStartedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
+  /** The attached agent whose lifecycle this row represents. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** The named agent — `Explore`, `code-reviewer`. What a panel row is titled by. */
+  subagentType: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The `tool_use` id of the Task call that spawned this. The only thing tying
+   * a task to the row it already occupies in the transcript, so a panel can
+   * point at the timeline instead of duplicating it.
+   */
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The model the caller named for this subagent, when it named one. Absent
+   * means the subagent inherited the thread's — which is a fact the client
+   * already holds, so filling it in here would be the server restating
+   * something it would then have to keep in sync.
+   */
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Exact provider options used to launch and later resume this same session. */
+  options: Schema.optional(ProviderOptionSelections),
+  /** Opaque handle to a uniquely correlated on-disk CLI rollout, when one exists. */
+  historySessionId: Schema.optional(HistorySessionId),
+  /** Exact provider-native parent session in which this agent was launched. */
+  parentNativeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Configured provider instance selected for this same-task child. */
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  /** Open provider driver kind, used for heterogeneous child attribution. */
+  providerDriver: Schema.optional(ProviderDriverKind),
+  /** Parent AgentRun for a nested same-task child. Absent for direct children. */
+  parentAgentRunId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
+  /** Owning attached agent, used to keep lifecycle progress out of sibling timelines. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   description: TrimmedNonEmptyStringSchema,
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * `{ total_tokens, tool_uses, duration_ms }` as the provider reports it.
+   *
+   * `total_tokens` is a **running total for the task**, not a delta — verified
+   * against real runs, where one task climbed 18,945 → 81,724 across 117 of
+   * these. A consumer must replace rather than accumulate, or it will report
+   * roughly the square of the truth.
+   */
   usage: Schema.optional(Schema.Unknown),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
+  subagentType: Schema.optional(TrimmedNonEmptyStringSchema),
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
 
+/**
+ * A state patch, not an outcome.
+ *
+ * The terminal result arrives as `task.completed`; this is how the states
+ * *before* it are reachable — paused, killed, backgrounded — which otherwise
+ * leave a stopped subagent reading as still running until it finishes, which it
+ * never will.
+ */
+const TaskUpdatedPayload = Schema.Struct({
+  taskId: RuntimeTaskId,
+  /** Owning attached agent, used to keep lifecycle state in the child timeline. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  status: Schema.optional(
+    Schema.Literals(["pending", "running", "completed", "failed", "killed", "paused"]),
+  ),
+  description: Schema.optional(TrimmedNonEmptyStringSchema),
+  error: Schema.optional(TrimmedNonEmptyStringSchema),
+  isBackgrounded: Schema.optional(Schema.Boolean),
+  historySessionId: Schema.optional(HistorySessionId),
+});
+export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
+
 const TaskCompletedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
+  /** Owning attached agent, retained on the terminal result row. */
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   status: Schema.Literals(["completed", "failed", "stopped"]),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Frequently absent — only 3 of 17 terminal notifications carried it in the
+   * runs this was checked against. A consumer must keep the last progress
+   * figure rather than treat the omission as zero.
+   */
   usage: Schema.optional(Schema.Unknown),
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  historySessionId: Schema.optional(HistorySessionId),
 });
 export type TaskCompletedPayload = typeof TaskCompletedPayload.Type;
 
@@ -608,6 +765,7 @@ const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   class: Schema.optional(RuntimeErrorClass),
   detail: Schema.optional(Schema.Unknown),
+  parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type RuntimeErrorPayload = typeof RuntimeErrorPayload.Type;
 
@@ -671,6 +829,22 @@ const ProviderRuntimeThreadTokenUsageUpdatedEvent = Schema.Struct({
 });
 export type ProviderRuntimeThreadTokenUsageUpdatedEvent =
   typeof ProviderRuntimeThreadTokenUsageUpdatedEvent.Type;
+
+const ProviderRuntimeThreadGoalUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadGoalUpdatedType,
+  payload: ProviderThreadGoalUpdatedPayload,
+});
+export type ProviderRuntimeThreadGoalUpdatedEvent =
+  typeof ProviderRuntimeThreadGoalUpdatedEvent.Type;
+
+const ProviderRuntimeThreadGoalClearedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadGoalClearedType,
+  payload: ProviderThreadGoalClearedPayload,
+});
+export type ProviderRuntimeThreadGoalClearedEvent =
+  typeof ProviderRuntimeThreadGoalClearedEvent.Type;
 
 const ProviderRuntimeThreadRealtimeStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -835,6 +1009,13 @@ const ProviderRuntimeTaskProgressEvent = Schema.Struct({
 });
 export type ProviderRuntimeTaskProgressEvent = typeof ProviderRuntimeTaskProgressEvent.Type;
 
+const ProviderRuntimeTaskUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: TaskUpdatedType,
+  payload: TaskUpdatedPayload,
+});
+export type ProviderRuntimeTaskUpdatedEvent = typeof ProviderRuntimeTaskUpdatedEvent.Type;
+
 const ProviderRuntimeTaskCompletedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TaskCompletedType,
@@ -973,6 +1154,8 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeThreadStateChangedEvent,
   ProviderRuntimeThreadMetadataUpdatedEvent,
   ProviderRuntimeThreadTokenUsageUpdatedEvent,
+  ProviderRuntimeThreadGoalUpdatedEvent,
+  ProviderRuntimeThreadGoalClearedEvent,
   ProviderRuntimeThreadRealtimeStartedEvent,
   ProviderRuntimeThreadRealtimeItemAddedEvent,
   ProviderRuntimeThreadRealtimeAudioDeltaEvent,
@@ -995,6 +1178,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeUserInputResolvedEvent,
   ProviderRuntimeTaskStartedEvent,
   ProviderRuntimeTaskProgressEvent,
+  ProviderRuntimeTaskUpdatedEvent,
   ProviderRuntimeTaskCompletedEvent,
   ProviderRuntimeHookStartedEvent,
   ProviderRuntimeHookProgressEvent,

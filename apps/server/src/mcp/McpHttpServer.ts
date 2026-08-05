@@ -10,6 +10,7 @@ import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { applyCapabilityToolFilter } from "./capabilityToolFilter.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -22,6 +23,16 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { FeatureMapToolkitHandlersLive } from "./toolkits/featureMap/handlers.ts";
+import { FeatureMapToolkit } from "./toolkits/featureMap/tools.ts";
+import { PeerThreadsToolkitHandlersLive } from "./toolkits/peerThreads/handlers.ts";
+import { PeerThreadsToolkit } from "./toolkits/peerThreads/tools.ts";
+import { ProjectsToolkitHandlersLive } from "./toolkits/projects/handlers.ts";
+import { ProjectsToolkit } from "./toolkits/projects/tools.ts";
+import { ThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
+import { ThreadsToolkit } from "./toolkits/threads/tools.ts";
+import { GoalsToolkitHandlersLive } from "./toolkits/goals/handlers.ts";
+import { GoalsToolkit } from "./toolkits/goals/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -78,6 +89,12 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
         return yield* httpEffect.pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),
+          // The first point in the request where the bearer has been resolved
+          // to a session, so the first point that can decide which tools this
+          // session is allowed to see. The handlers still refuse the calls.
+          Effect.flatMap((response) =>
+            applyCapabilityToolFilter(response, invocation.capabilities),
+          ),
         );
       }),
   ),
@@ -208,10 +225,37 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const PeerThreadsToolkitRegistrationLive = McpServer.toolkit(PeerThreadsToolkit).pipe(
+  Layer.provide(PeerThreadsToolkitHandlersLive),
+);
+
+export const FeatureMapToolkitRegistrationLive = McpServer.toolkit(FeatureMapToolkit).pipe(
+  Layer.provide(FeatureMapToolkitHandlersLive),
+);
+
+export const ProjectsToolkitRegistrationLive = McpServer.toolkit(ProjectsToolkit).pipe(
+  Layer.provide(ProjectsToolkitHandlersLive),
+);
+
+export const ThreadsToolkitRegistrationLive = McpServer.toolkit(ThreadsToolkit).pipe(
+  Layer.provide(ThreadsToolkitHandlersLive),
+);
+
+export const GoalsToolkitRegistrationLive = McpServer.toolkit(GoalsToolkit).pipe(
+  Layer.provide(GoalsToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
+  name: "starcode",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  PeerThreadsToolkitRegistrationLive,
+  FeatureMapToolkitRegistrationLive,
+  ProjectsToolkitRegistrationLive,
+  ThreadsToolkitRegistrationLive,
+  GoalsToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

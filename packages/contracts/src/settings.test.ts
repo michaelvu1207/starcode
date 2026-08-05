@@ -16,6 +16,38 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("Pi provider settings", () => {
+  it("defaults to a bounded enabled embedded provider and round-trips trust controls", () => {
+    const defaults = decodeServerSettings({}).providers.pi;
+    expect(defaults).toMatchObject({
+      enabled: true,
+      maxAttachedAgents: 8,
+      maxAgentDepth: 3,
+      allowProjectExtensions: false,
+    });
+    const decoded = decodeServerSettings({
+      providers: {
+        pi: {
+          trustedExtensionPaths: ["/trusted/pi-extension.ts"],
+          allowProjectExtensions: true,
+          maxAttachedAgents: 4,
+          maxAgentDepth: 2,
+        },
+      },
+    });
+    expect(decoded.providers.pi.trustedExtensionPaths).toEqual(["/trusted/pi-extension.ts"]);
+    expect(encodedPi(decoded).providers?.pi?.maxAttachedAgents).toBe(4);
+  });
+
+  it("rejects unbounded attached-agent recursion and concurrency", () => {
+    expect(() => decodeServerSettings({ providers: { pi: { maxAttachedAgents: 33 } } })).toThrow();
+    expect(() => decodeServerSettings({ providers: { pi: { maxAgentDepth: 9 } } })).toThrow();
+  });
+});
+
+const encodedPi = (settings: ReturnType<typeof decodeServerSettings>) =>
+  encodeServerSettings(settings);
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);
@@ -49,22 +81,52 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
-describe("ClientSettings sidebar v2", () => {
-  it("defaults the beta off with a three-day auto-settle threshold", () => {
-    const settings = decodeClientSettings({});
-    expect(settings.sidebarV2Enabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+describe("ClientSettings sidebar", () => {
+  it("defaults to activity-ranked", () => {
+    expect(decodeClientSettings({}).sidebarV2ThreadSortOrder).toBe("activity");
   });
 
-  it("allows auto-settle by inactivity to be disabled", () => {
-    expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
-    ).toBeNull();
+  it("ignores the retired sidebar opt-out in persisted settings and patches", () => {
+    const settings = decodeClientSettings({
+      sidebarV2Enabled: false,
+    });
+    const patch = decodeClientSettingsPatch({
+      sidebarV2Enabled: false,
+    });
+
+    expect(settings).not.toHaveProperty("sidebarV2Enabled");
+    expect(patch).not.toHaveProperty("sidebarV2Enabled");
   });
 
-  it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  it("keeps the static creation order selectable", () => {
+    const settings = decodeClientSettings({
+      sidebarV2ThreadSortOrder: "created_at",
+    });
+
+    expect(settings.sidebarV2ThreadSortOrder).toBe("created_at");
+  });
+
+  it("rejects an unknown v2 thread sort order", () => {
+    expect(() => decodeClientSettings({ sidebarV2ThreadSortOrder: "updated_at" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV2ThreadSortOrder: "updated_at" })).toThrow();
+  });
+
+  it("defaults the v2 view mode to projects", () => {
+    expect(decodeClientSettings({}).sidebarV2ViewMode).toBe("projects");
+  });
+
+  it("keeps the inbox and the connections view selectable", () => {
+    // The default moved; the other two views did not go anywhere, and an
+    // operator who already chose one keeps it.
+    for (const mode of ["inbox", "connections", "projects"] as const) {
+      expect(decodeClientSettings({ sidebarV2ViewMode: mode }).sidebarV2ViewMode).toBe(mode);
+      expect(decodeClientSettingsPatch({ sidebarV2ViewMode: mode }).sidebarV2ViewMode).toBe(mode);
+    }
+  });
+
+  it("rejects an unknown v2 view mode", () => {
+    expect(() => decodeClientSettings({ sidebarV2ViewMode: "workbench" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV2ViewMode: "workbench" })).toThrow();
   });
 });
 
@@ -79,6 +141,22 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+  });
+
+  it("ignores retired OpenCode settings instead of advertising them", () => {
+    const decoded = decodeServerSettings({
+      providers: {
+        opencode: {
+          enabled: true,
+          binaryPath: "/legacy/opencode",
+          serverPassword: "legacy-secret",
+        },
+      },
+    });
+    const patch = decodeServerSettingsPatch({ providers: { opencode: { enabled: true } } });
+
+    expect(decoded.providers).not.toHaveProperty("opencode");
+    expect(patch.providers).not.toHaveProperty("opencode");
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
@@ -225,5 +303,28 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
+  });
+});
+
+describe("workbench master defaults", () => {
+  // Literals rather than `DEFAULT_RUNTIME_MODE`, because what is asserted is
+  // the pairing: a master is gated by plan mode, not by a second permission
+  // prompt, so its permission mode is the same one every other new thread
+  // starts in. An assertion written against the constant would follow the
+  // constant and prove neither half.
+  it("starts a master in plan mode with the app-wide permissions", () => {
+    const defaults = decodeServerSettings({}).workbenchMasterDefaults;
+
+    expect(defaults.runtimeMode).toBe("full-access");
+    expect(defaults.interactionMode).toBe("plan");
+  });
+
+  it("keeps a stored override, so an operator's choice outlives the default", () => {
+    const defaults = decodeServerSettings({
+      workbenchMasterDefaults: { runtimeMode: "approval-required" },
+    }).workbenchMasterDefaults;
+
+    expect(defaults.runtimeMode).toBe("approval-required");
+    expect(defaults.interactionMode).toBe("plan");
   });
 });

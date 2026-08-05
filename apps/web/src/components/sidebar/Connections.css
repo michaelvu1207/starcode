@@ -1,0 +1,26 @@
+/**
+ * Fork-owned styling for the machine mark.
+ *
+ * Writes nothing into `starcode-theme.css` and defines no token of its own —
+ * it reads what that file publishes and stops there, the same contract
+ * `Projects.css` keeps.
+ *
+ * One idea only: a machine's colour is a hue rotation applied to ink, never a
+ * literal colour, so four machines can be told apart at a glance without any
+ * of them leaving the palette.
+ */
+
+.sc-machine-mark {
+  /* Butter, not ink — the same trap the project mark documents. `--sc-glyph-ink`
+     is near-neutral and hue-rotating a neutral produces another neutral, which
+     would render every machine the same grey. The wordmark's gold is the
+     theme's one chromatic constant, so rotating *it* gives distinct hues that
+     cannot leave the palette's chroma level. */
+  color: color-mix(in srgb, var(--sc-butter) 55%, var(--sc-ink-900));
+  filter: hue-rotate(var(--sc-machine-hue, 0deg));
+}
+
+.dark .sc-machine-mark {
+  color: var(--sc-butter);
+  opacity: 0.85;
+}

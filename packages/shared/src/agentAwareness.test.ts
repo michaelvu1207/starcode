@@ -6,15 +6,15 @@ import type {
   OrchestrationThreadShell,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
-import { ProviderInstanceId } from "@t3tools/contracts";
+} from "@starcode/contracts";
+import { ProviderInstanceId } from "@starcode/contracts";
 
 import { projectThreadAwareness } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
 const project = {
-  title: "t3code",
+  title: "starcode",
 } satisfies Pick<OrchestrationProjectShell, "title">;
 
 function thread(
@@ -29,6 +29,7 @@ function thread(
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "goalSummary"
 > {
   return {
     id: "thread-1" as ThreadId,
@@ -152,6 +153,34 @@ describe("projectThreadAwareness", () => {
     });
 
     expect(state?.phase).toBe("completed");
+  });
+
+  it("keeps a ready session active while its provider goal is active", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        goalSummary: {
+          status: "active",
+          updatedAt: NOW,
+        },
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "ready",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
+      }),
+    });
+
+    expect(state).toMatchObject({
+      phase: "running",
+      headline: "Agent is working",
+      detail: "Goal is active in Codex.",
+    });
   });
 
   it("projects failures with the session error detail", () => {

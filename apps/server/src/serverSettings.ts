@@ -24,7 +24,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -45,9 +45,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
-import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { type DeepPartial, deepMerge } from "@starcode/shared/Struct";
+import { fromJsonStringPretty, fromLenientJson } from "@starcode/shared/schemaJson";
+import { applyServerSettingsPatch } from "@starcode/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
@@ -128,7 +128,7 @@ export class ServerSettingsService extends Context.Service<
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
   }
->()("t3/serverSettings/ServerSettingsService") {
+>()("starcode/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }

@@ -1,4 +1,4 @@
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import { EnvironmentHttpApi } from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
@@ -22,9 +22,9 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
+import * as FleetSessionBootstrapLive from "./provider/Layers/FleetSessionBootstrap.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
-import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -39,6 +39,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as PreviewPortBridge from "./preview/PortBridge.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -47,6 +48,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import { GoalContinuationReactorLive } from "./orchestration/Layers/GoalContinuationReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -54,7 +56,7 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
-import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as StarcodeProjectFileLoader from "./project/StarcodeProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -91,12 +93,22 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import * as NetService from "@t3tools/shared/Net";
-import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import { FeatureFlowServicesLive, featureFlowHttpApiLayer } from "./featureFlow/layer.ts";
+import { mailboxHttpApiLayer } from "./mailbox/layer.ts";
+import * as ThreadMailbox from "./mailbox/ThreadMailbox.ts";
+import { fleetHttpApiLayer, peersHttpApiLayer } from "./peers/layer.ts";
+import * as FleetRegistry from "./fleet/FleetRegistry.ts";
+import { ThreadServicesLive } from "./threads/layer.ts";
+import { UsageServicesLive, usageHttpApiLayer } from "./usage/layer.ts";
+import { HistoryServicesLive, historyHttpApiLayer } from "./history/layer.ts";
+import { ProjectCatalogServicesLive, projectCatalogHttpApiLayer } from "./projectCatalog/layer.ts";
+import * as NetService from "@starcode/shared/Net";
+import * as RelayClient from "@starcode/shared/relayClient";
+import { disableTailscaleServe, ensureTailscaleServe } from "@starcode/tailscale";
+import { createResilientNodeHttpServer } from "./recoverableTransportErrors.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
-// T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
+// starcode's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
 // already closes the websocket gracefully. Do not add an artificial drain before
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
@@ -133,11 +145,11 @@ const HttpServerLive = Layer.unwrap(
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       });
     } else {
-      const [NodeHttpServer, NodeHttp] = yield* Effect.all([
-        Effect.promise(() => import("@effect/platform-node/NodeHttpServer")),
-        Effect.promise(() => import("node:http")),
-      ]);
-      return NodeHttpServer.layer(NodeHttp.createServer, {
+      const NodeHttpServer = yield* Effect.promise(
+        () => import("@effect/platform-node/NodeHttpServer"),
+      );
+      const NodeHttp = yield* Effect.promise(() => import("node:http"));
+      return NodeHttpServer.layer(() => createResilientNodeHttpServer(NodeHttp.createServer), {
         host: config.host ?? "127.0.0.1",
         port: config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
@@ -164,6 +176,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(GoalContinuationReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
@@ -171,6 +184,7 @@ const ReactorLayerLive = Layer.empty.pipe(
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntime.layer),
 );
+const McpSessionRegistryLayerLive = McpSessionRegistry.layer;
 
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
@@ -181,6 +195,7 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provide(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  Layer.provide(McpSessionRegistryLayerLive),
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
@@ -240,6 +255,10 @@ const CheckpointingLayerLive = Layer.empty.pipe(
 );
 
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const PreviewPortBridgeLayerLive = PreviewPortBridge.layer.pipe(
+  Layer.provide(PortScannerLayerLive),
+  Layer.provide(NetService.layer),
+);
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
@@ -249,6 +268,7 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
 const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
   Layer.provideMerge(PortScannerLayerLive),
+  Layer.provideMerge(PreviewPortBridgeLayerLive),
 );
 
 const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
@@ -266,11 +286,20 @@ const WorkspaceLayerLive = Layer.mergeAll(
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
-  Layer.provide(T3ProjectFileLoader.layer),
+  Layer.provide(StarcodeProjectFileLoader.layer),
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
-  Layer.provideMerge(PersistenceLayerLive),
+  // Fork: the per-thread mailbox rides along with persistence so a single
+  // instance is shared by the turn reactor that drains it and the HTTP route
+  // that fills it. Merged into this entry rather than added as its own because
+  // the surrounding pipe is at its 20-argument overload limit.
+  Layer.provideMerge(
+    Layer.merge(
+      PersistenceLayerLive,
+      ThreadMailbox.layer.pipe(Layer.provide(PersistenceLayerLive)),
+    ),
+  ),
   Layer.provide(ServerSecretStore.layer),
 );
 
@@ -287,6 +316,16 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+const FleetSessionBootstrapLayerLive = FleetSessionBootstrapLive.layer.pipe(
+  Layer.provideMerge(FleetRegistry.layer),
+  Layer.provideMerge(ProjectCatalogServicesLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+);
+
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(FleetSessionBootstrapLayerLive),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
@@ -295,7 +334,16 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
+  // Fork: the per-thread mailbox rides along with persistence so a single
+  // instance is shared by the turn reactor that drains it and the HTTP route
+  // that fills it. Merged into this entry rather than added as its own because
+  // the surrounding pipe is at its 20-argument overload limit.
+  Layer.provideMerge(
+    Layer.merge(
+      PersistenceLayerLive,
+      ThreadMailbox.layer.pipe(Layer.provide(PersistenceLayerLive)),
+    ),
+  ),
   Layer.provideMerge(Keybindings.layer),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,
@@ -303,19 +351,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
   Layer.provideMerge(ProviderEventLoggers.ProviderEventLoggersLive),
-  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-  // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
-  // the rewritten registry reads snapshots off the instance registry and
-  // no longer transitively provides it. Exposing it at the runtime level
-  // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
@@ -355,17 +397,33 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(Layer.merge(peersHttpApiLayer, fleetHttpApiLayer)),
+      Layer.provide(mailboxHttpApiLayer),
+      Layer.provide(featureFlowHttpApiLayer),
+      Layer.provide(usageHttpApiLayer),
+      Layer.provide(historyHttpApiLayer),
+      Layer.provide(projectCatalogHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    PreviewPortBridge.routeLayer.pipe(Layer.provide(PreviewPortBridgeLayerLive)),
     staticAndDevRouteLayer,
-    websocketRpcRouteLayer,
+    websocketRpcRouteLayer.pipe(Layer.provide(PreviewPortBridgeLayerLive)),
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistryLayerLive)),
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
+  // HTTP and WebSocket handlers carry request-scoped requirement markers;
+  // MCP handlers consume the same service directly while their toolkit layer
+  // is built. Provide both views from one memoized canonical service layer.
+  HttpRouter.provideRequest(ThreadServicesLive),
+  Layer.provide(ThreadServicesLive),
+  Layer.provide(FeatureFlowServicesLive),
+  Layer.provide(UsageServicesLive),
+  Layer.provide(HistoryServicesLive),
+  Layer.provide(ProjectCatalogServicesLive),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(browserApiCorsLayer),
 );
@@ -466,9 +524,9 @@ export const makeServerLayer = Layer.unwrap(
           Effect.sleep("250 millis").pipe(
             Effect.andThen(reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`)),
             Effect.retry({ times: 4 }),
-            Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+            Effect.tap(() => Effect.logInfo("starcode Connect desired link reconciled on startup")),
             Effect.catch((cause) =>
-              Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+              Effect.logWarning("Failed to reconcile starcode Connect desired link on startup", {
                 cause,
               }),
             ),

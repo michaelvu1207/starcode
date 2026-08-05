@@ -1,11 +1,201 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ProviderRuntimeEvent } from "./providerRuntime.ts";
+import { ProviderRuntimeEvent, RuntimeEventRaw } from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("keeps legacy OpenCode raw transcript events decodable", () => {
+    const raw = Schema.decodeUnknownSync(RuntimeEventRaw)({
+      source: "opencode.sdk.event",
+      method: "message.updated",
+      payload: { text: "historical response" },
+    });
+
+    expect(raw.source).toBe("opencode.sdk.event");
+  });
+
+  it("round-trips file-read lifecycle cards with reconnect-complete details", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "item.completed",
+      eventId: "event-pi-read",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "tool-read-1",
+      payload: {
+        itemType: "file_read",
+        status: "completed",
+        title: "read",
+        detail: "package.json",
+        output: '{"name":"@starcode/monorepo"}',
+        data: { toolName: "read", input: { path: "package.json" } },
+      },
+    });
+
+    expect(parsed.type).toBe("item.completed");
+    if (parsed.type !== "item.completed") throw new Error("expected item.completed");
+    expect(parsed.payload).toMatchObject({
+      itemType: "file_read",
+      title: "read",
+      detail: "package.json",
+      status: "completed",
+    });
+  });
+
+  it("round-trips a stopped tool lifecycle for explicit cancellation rendering", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "item.completed",
+      eventId: "event-pi-command-stopped",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "tool-command-1",
+      payload: {
+        itemType: "command_execution",
+        status: "stopped",
+        title: "bash",
+        detail: "sleep 30",
+        output: "Command aborted",
+      },
+    });
+
+    expect(parsed.type).toBe("item.completed");
+    if (parsed.type !== "item.completed") throw new Error("expected item.completed");
+    expect(parsed.payload.status).toBe("stopped");
+    expect(parsed.payload.output).toBe("Command aborted");
+  });
+
+  it("round-trips heterogeneous same-task attribution without Pi-native types", () => {
+    const encoded = {
+      type: "task.started",
+      eventId: "event-pi-child",
+      provider: "pi",
+      providerInstanceId: "pi_personal",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      threadId: "parent-thread",
+      payload: {
+        taskId: "agent:child",
+        taskType: "attached_agent",
+        description: "Review the change",
+        subagentType: "Pi agent",
+        toolUseId: "agent:child",
+        model: "openai/gpt-5.4",
+        options: [{ id: "effort", value: "high" }],
+        providerInstanceId: "pi_personal",
+        providerDriver: "pi",
+        parentAgentRunId: "agent:parent",
+      },
+    } as const;
+    const parsed = decodeRuntimeEvent(encoded);
+    expect(parsed.type).toBe("task.started");
+    if (parsed.type !== "task.started") throw new Error("expected task.started");
+    expect(parsed.payload).toMatchObject({
+      taskId: "agent:child",
+      providerInstanceId: "pi_personal",
+      providerDriver: "pi",
+      parentAgentRunId: "agent:parent",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(JSON.stringify(parsed)).not.toContain("AgentSessionEvent");
+  });
+
+  it("preserves attached lifecycle and structured-input attribution", () => {
+    const progress = decodeRuntimeEvent({
+      type: "task.progress",
+      eventId: "event-child-progress",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      threadId: "parent-thread",
+      payload: {
+        taskId: "agent:child",
+        parentToolUseId: "agent:child",
+        description: "Inspecting",
+      },
+    });
+    expect(progress.type === "task.progress" && progress.payload.parentToolUseId).toBe(
+      "agent:child",
+    );
+
+    const prompt = decodeRuntimeEvent({
+      type: "user-input.requested",
+      eventId: "event-child-input",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:01.000Z",
+      threadId: "parent-thread",
+      requestId: "input-1",
+      payload: {
+        parentToolUseId: "agent:child",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question: "Continue?",
+            options: [{ label: "Yes", description: "Continue" }],
+          },
+        ],
+      },
+    });
+    expect(prompt.type === "user-input.requested" && prompt.payload.parentToolUseId).toBe(
+      "agent:child",
+    );
+  });
+
+  it("preserves attached-agent attribution for approvals and errors", () => {
+    const approval = decodeRuntimeEvent({
+      type: "request.opened",
+      eventId: "event-approval",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      threadId: "parent-thread",
+      requestId: "approval-1",
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "run tests",
+        parentToolUseId: "agent:child",
+      },
+    });
+    expect(approval.type === "request.opened" && approval.payload.parentToolUseId).toBe(
+      "agent:child",
+    );
+    const error = decodeRuntimeEvent({
+      type: "runtime.error",
+      eventId: "event-error",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:01.000Z",
+      threadId: "parent-thread",
+      payload: { message: "child failed", parentToolUseId: "agent:child" },
+    });
+    expect(error.type === "runtime.error" && error.payload.parentToolUseId).toBe("agent:child");
+  });
+
+  it("keeps approval operation detail on resolution for reconnect rendering", () => {
+    const resolved = decodeRuntimeEvent({
+      type: "request.resolved",
+      eventId: "event-approval-resolved",
+      provider: "pi",
+      createdAt: "2026-08-01T00:00:02.000Z",
+      threadId: "parent-thread",
+      requestId: "approval-1",
+      payload: {
+        requestType: "command_execution_approval",
+        decision: "accept",
+        detail: "bash: printf pi-ok",
+        args: { command: "printf pi-ok" },
+      },
+    });
+    expect(resolved.type).toBe("request.resolved");
+    if (resolved.type !== "request.resolved") throw new Error("expected request.resolved");
+    expect(resolved.payload).toMatchObject({
+      decision: "accept",
+      detail: "bash: printf pi-ok",
+      args: { command: "printf pi-ok" },
+    });
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

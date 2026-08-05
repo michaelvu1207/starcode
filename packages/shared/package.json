@@ -1,8 +1,16 @@
 {
-  "name": "@t3tools/shared",
+  "name": "@starcode/shared",
   "private": true,
   "type": "module",
   "exports": {
+    "./proposedPlanTitle": {
+      "types": "./src/proposedPlanTitle.ts",
+      "import": "./src/proposedPlanTitle.ts"
+    },
+    "./activityPhrasing": {
+      "types": "./src/activityPhrasing.ts",
+      "import": "./src/activityPhrasing.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
@@ -10,6 +18,10 @@
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"
+    },
+    "./claudeContextLimit": {
+      "types": "./src/claudeContextLimit.ts",
+      "import": "./src/claudeContextLimit.ts"
     },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
@@ -87,9 +99,9 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
-    "./t3ProjectFile": {
-      "types": "./src/t3ProjectFile.ts",
-      "import": "./src/t3ProjectFile.ts"
+    "./starcodeProjectFile": {
+      "types": "./src/starcodeProjectFile.ts",
+      "import": "./src/starcodeProjectFile.ts"
     },
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
@@ -187,6 +199,10 @@
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"
     },
+    "./codexCliSubagent": {
+      "types": "./src/codexCliSubagent.ts",
+      "import": "./src/codexCliSubagent.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
@@ -194,6 +210,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./devHome": {
+      "types": "./src/devHome.ts",
+      "import": "./src/devHome.ts"
     }
   },
   "scripts": {
@@ -203,7 +223,7 @@
   "dependencies": {
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
-    "@t3tools/contracts": "workspace:*",
+    "@starcode/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
     "yaml": "catalog:"

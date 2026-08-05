@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, ProviderInstanceId } from "@starcode/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -87,19 +87,17 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        sideOfThreadId: null,
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        goal: null,
       });
 
       const rows = yield* sql<{
@@ -133,14 +131,23 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
-  it.effect("round-trips non-null settlement values through the thread row", () =>
+  it.effect("round-trips provider goal state", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;
+      const goal = {
+        objective: "Finish the release",
+        status: "active" as const,
+        tokenBudget: 25_000,
+        tokensUsed: 1_500,
+        timeUsedSeconds: 90,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:01:30.000Z",
+      };
 
       yield* threads.upsert({
-        threadId: ThreadId.make("thread-settled"),
-        projectId: ProjectId.make("project-1"),
-        title: "Settled thread",
+        threadId: ThreadId.make("thread-with-goal"),
+        projectId: ProjectId.make("project-null-options"),
+        title: "Goal thread",
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -149,50 +156,23 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        sideOfThreadId: null,
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
-        updatedAt: "2026-03-25T00:00:00.000Z",
+        updatedAt: goal.updatedAt,
         archivedAt: null,
-        settledOverride: "settled",
-        settledAt: "2026-03-25T00:00:00.000Z",
-        snoozedUntil: "2026-03-26T09:00:00.000Z",
-        snoozedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        goal,
       });
 
       const persisted = yield* threads.getById({
-        threadId: ThreadId.make("thread-settled"),
+        threadId: ThreadId.make("thread-with-goal"),
       });
-      const row = Option.getOrNull(persisted);
-      if (!row) {
-        return yield* Effect.die("Expected settled projection_threads row to exist.");
-      }
-      assert.strictEqual(row.settledOverride, "settled");
-      assert.strictEqual(row.settledAt, "2026-03-25T00:00:00.000Z");
-      assert.strictEqual(row.snoozedUntil, "2026-03-26T09:00:00.000Z");
-      assert.strictEqual(row.snoozedAt, "2026-03-25T00:00:00.000Z");
-
-      // Un-settle to the keep-active pin and wake the snooze; confirm the
-      // flips persist.
-      yield* threads.upsert({
-        ...row,
-        settledOverride: "active",
-        settledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
-      });
-      const repersisted = yield* threads.getById({
-        threadId: ThreadId.make("thread-settled"),
-      });
-      const updated = Option.getOrNull(repersisted);
-      assert.strictEqual(updated?.settledOverride, "active");
-      assert.strictEqual(updated?.settledAt, null);
-      assert.strictEqual(updated?.snoozedUntil, null);
-      assert.strictEqual(updated?.snoozedAt, null);
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.goal, goal);
     }),
   );
 });

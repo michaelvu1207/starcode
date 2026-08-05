@@ -1,4 +1,4 @@
-import { defaultInstanceIdForDriver, ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
+import { defaultInstanceIdForDriver, ProviderDriverKind, type ThreadId } from "@starcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -182,12 +182,38 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const hasTerminalAttachedAgentProjection: ProviderSessionDirectoryShape["hasTerminalAttachedAgentProjection"] =
+    (input) =>
+      repository
+        .hasTerminalAttachedAgentProjection({
+          parentThreadId: input.parentThreadId,
+          providerName: input.provider,
+          agentRunId: input.agentRunId,
+        })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError("ProviderSessionDirectory.hasTerminalAttachedAgentProjection:query"),
+          ),
+        );
+
+  const hasRecoverableProjectedTurn: ProviderSessionDirectoryShape["hasRecoverableProjectedTurn"] =
+    (threadId) =>
+      repository
+        .hasRecoverableProjectedTurn({ threadId })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError("ProviderSessionDirectory.hasRecoverableProjectedTurn:query"),
+          ),
+        );
+
   return {
     upsert,
     getProvider,
     getBinding,
     listThreadIds,
     listBindings,
+    hasTerminalAttachedAgentProjection,
+    hasRecoverableProjectedTurn,
   } satisfies ProviderSessionDirectoryShape;
 });
 

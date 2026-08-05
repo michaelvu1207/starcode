@@ -20,9 +20,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+  appPath: "/Applications/starcode.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+  resourcesPath: "/Applications/starcode.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -39,7 +39,7 @@ interface ElectronAppCalls {
 const makeElectronAppLayer = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Code"),
+    name: Effect.succeed("starcode"),
     whenReady: Effect.void,
     quit: Effect.void,
     exit: () => Effect.void,
@@ -104,10 +104,15 @@ const withIdentity = <A, E, R>(
   >,
   input: {
     readonly calls?: ElectronAppCalls;
+    readonly copyError?: PlatformError.PlatformError;
+    readonly copyCalls?: Array<readonly [sourcePath: string, destinationPath: string]>;
     readonly environment?: TestEnvironmentInput;
-    readonly legacyPathExists?: boolean;
-    readonly legacyPathProbeError?: PlatformError.PlatformError;
+    readonly existingPaths?: readonly string[];
     readonly packageJson?: string;
+    readonly pathProbeError?: {
+      readonly path: string;
+      readonly cause: PlatformError.PlatformError;
+    };
     readonly pngIconPath?: Option.Option<string>;
   } = {},
 ) => {
@@ -123,13 +128,17 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              input.legacyPathProbeError
-                ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
-                  ),
+              input.pathProbeError?.path === path
+                ? Effect.fail(input.pathProbeError.cause)
+                : Effect.succeed(input.existingPaths?.includes(path) === true),
+            copy: (sourcePath, destinationPath) =>
+              input.copyError
+                ? Effect.fail(input.copyError)
+                : Effect.sync(() => {
+                    input.copyCalls?.push([sourcePath, destinationPath]);
+                  }),
             readFileString: () =>
-              Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
+              Effect.succeed(input.packageJson ?? '{"starcodeCommitHash":"abcdef1234567890"}'),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -141,20 +150,82 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("keeps using the legacy userData path when it already exists", () =>
-    withIdentity(
+  it.effect("prefers the new userData path without copying legacy data", () => {
+    const copyCalls: Array<readonly [string, string]> = [];
+    const userDataPath = "/Users/alice/Library/Application Support/starcode";
+
+    return withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const userDataPath = yield* identity.resolveUserDataPath;
+        const resolvedPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.equal(resolvedPath, userDataPath);
+        assert.deepEqual(copyCalls, []);
       }),
-      { legacyPathExists: true },
-    ),
-  );
+      {
+        copyCalls,
+        existingPaths: [
+          userDataPath,
+          "/Users/alice/Library/Application Support/starcode",
+          "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+        ],
+      },
+    );
+  });
+
+  it.effect("copies legacy userData into the new path when the new path is absent", () => {
+    const copyCalls: Array<readonly [string, string]> = [];
+    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const userDataPath = "/Users/alice/Library/Application Support/starcode";
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const resolvedPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(resolvedPath, userDataPath);
+        assert.deepEqual(copyCalls, [[legacyPath, userDataPath]]);
+      }),
+      { copyCalls, existingPaths: [legacyPath] },
+    );
+  });
+
+  it.effect("copies the newest legacy userData path when multiple legacy paths exist", () => {
+    const copyCalls: Array<readonly [string, string]> = [];
+    const newerLegacyPath = "/Users/alice/Library/Application Support/t3code";
+    const olderLegacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const userDataPath = "/Users/alice/Library/Application Support/starcode";
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const resolvedPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(resolvedPath, userDataPath);
+        assert.deepEqual(copyCalls, [[newerLegacyPath, userDataPath]]);
+      }),
+      { copyCalls, existingPaths: [newerLegacyPath, olderLegacyPath] },
+    );
+  });
+
+  it.effect("uses the new userData path without copying when no legacy path exists", () => {
+    const copyCalls: Array<readonly [string, string]> = [];
+    const userDataPath = "/Users/alice/Library/Application Support/starcode";
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const resolvedPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(resolvedPath, userDataPath);
+        assert.deepEqual(copyCalls, []);
+      }),
+      { copyCalls },
+    );
+  });
 
   it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const legacyPath = "/Users/alice/Library/Application Support/t3code";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
@@ -176,7 +247,36 @@ describe("DesktopAppIdentity", () => {
           `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
         );
       }),
-      { legacyPathProbeError: cause },
+      { pathProbeError: { path: legacyPath, cause } },
+    );
+  });
+
+  it.effect("preserves failures while copying legacy userData", () => {
+    const legacyPath = "/Users/alice/Library/Application Support/t3code";
+    const userDataPath = "/Users/alice/Library/Application Support/starcode";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "copy",
+      description: "permission denied",
+      pathOrDescriptor: legacyPath,
+    });
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
+        assert.equal(error.legacyPath, legacyPath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          error.message,
+          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+        );
+        assert.notEqual(error.legacyPath, userDataPath);
+      }),
+      { copyError: cause, existingPaths: [legacyPath] },
     );
   });
 
@@ -192,8 +292,8 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code (Alpha)"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
+        assert.deepEqual(calls.setName, ["starcode (Alpha)"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "starcode (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         assert.deepEqual(calls.setDockIcon, ["/icon.png"]);
@@ -202,7 +302,7 @@ describe("DesktopAppIdentity", () => {
         calls,
         environment: {
           env: {
-            T3CODE_COMMIT_HASH: "0123456789abcdef",
+            STARCODE_COMMIT_HASH: "0123456789abcdef",
           },
         },
         pngIconPath: Option.some("/icon.png"),

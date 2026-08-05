@@ -1,6 +1,6 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
-import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import type { ProviderRuntimeEvent } from "@starcode/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@starcode/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@starcode/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -33,12 +33,12 @@ import {
   type TestTurnResponse,
 } from "./TestProviderAdapter.integration.ts";
 import {
-  codexTurnApprovalFixture,
-  codexTurnToolFixture,
-  codexTurnTextFixture,
+  piTurnApprovalFixture,
+  piTurnToolFixture,
+  piTurnTextFixture,
 } from "./fixtures/providerRuntime.ts";
 
-const codexInstanceId = ProviderInstanceId.make("codex");
+const piInstanceId = ProviderInstanceId.make("pi");
 
 const makeWorkspaceDirectory = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -59,7 +59,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
   const harness = yield* makeTestProviderAdapterHarness();
 
   const registry = makeAdapterRegistryMock({
-    [ProviderDriverKind.make("codex")]: harness.adapter,
+    [ProviderDriverKind.make("pi")]: harness.adapter,
   });
 
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
@@ -132,8 +132,8 @@ it.live("replays typed runtime fixture events", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-typed"), {
         threadId: ThreadId.make("thread-integration-typed"),
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
+        provider: ProviderDriverKind.make("pi"),
+        providerInstanceId: piInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -144,16 +144,16 @@ it.live("replays typed runtime fixture events", () =>
         harness: fixture.harness,
         threadId: session.threadId,
         userText: "hello",
-        response: { events: codexTurnTextFixture },
+        response: { events: piTurnTextFixture },
       });
 
       assert.deepEqual(
         observedEvents.map((event) => event.type),
-        codexTurnTextFixture.map((event) => event.type),
+        piTurnTextFixture.map((event) => event.type),
       );
       assert.deepEqual(
         observedEvents.map((event) => event.providerInstanceId),
-        codexTurnTextFixture.map(() => codexInstanceId),
+        piTurnTextFixture.map(() => piInstanceId),
       );
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -169,8 +169,8 @@ it.live("replays file-changing fixture turn events", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-tools"), {
         threadId: ThreadId.make("thread-integration-tools"),
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
+        provider: ProviderDriverKind.make("pi"),
+        providerInstanceId: piInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -182,7 +182,7 @@ it.live("replays file-changing fixture turn events", () =>
         threadId: session.threadId,
         userText: "make a small change",
         response: {
-          events: codexTurnToolFixture,
+          events: piTurnToolFixture,
           mutateWorkspace: ({ cwd }) =>
             writeFileString(join(cwd, "README.md"), "v2\n").pipe(Effect.asVoid, Effect.ignore),
         },
@@ -190,7 +190,7 @@ it.live("replays file-changing fixture turn events", () =>
 
       assert.deepEqual(
         observedEvents.map((event) => event.type),
-        codexTurnToolFixture.map((event) => event.type),
+        piTurnToolFixture.map((event) => event.type),
       );
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -206,8 +206,8 @@ it.live("runs multi-turn tool/approval flow", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-multi"), {
         threadId: ThreadId.make("thread-integration-multi"),
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
+        provider: ProviderDriverKind.make("pi"),
+        providerInstanceId: piInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -219,14 +219,14 @@ it.live("runs multi-turn tool/approval flow", () =>
         threadId: session.threadId,
         userText: "turn 1",
         response: {
-          events: codexTurnToolFixture,
+          events: piTurnToolFixture,
           mutateWorkspace: ({ cwd }) =>
             writeFileString(join(cwd, "README.md"), "v2\n").pipe(Effect.asVoid, Effect.ignore),
         },
       });
       assert.deepEqual(
         firstTurnEvents.map((event) => event.type),
-        codexTurnToolFixture.map((event) => event.type),
+        piTurnToolFixture.map((event) => event.type),
       );
 
       const secondTurnEvents = yield* runTurn({
@@ -235,14 +235,14 @@ it.live("runs multi-turn tool/approval flow", () =>
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
-          events: codexTurnApprovalFixture,
+          events: piTurnApprovalFixture,
           mutateWorkspace: ({ cwd }) =>
             writeFileString(join(cwd, "README.md"), "v3\n").pipe(Effect.asVoid, Effect.ignore),
         },
       });
       assert.deepEqual(
         secondTurnEvents.map((event) => event.type),
-        codexTurnApprovalFixture.map((event) => event.type),
+        piTurnApprovalFixture.map((event) => event.type),
       );
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -258,8 +258,8 @@ it.live("rolls back provider conversation state only", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-rollback"), {
         threadId: ThreadId.make("thread-integration-rollback"),
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
+        provider: ProviderDriverKind.make("pi"),
+        providerInstanceId: piInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -271,7 +271,7 @@ it.live("rolls back provider conversation state only", () =>
         threadId: session.threadId,
         userText: "turn 1",
         response: {
-          events: codexTurnToolFixture,
+          events: piTurnToolFixture,
           mutateWorkspace: ({ cwd }) =>
             writeFileString(join(cwd, "README.md"), "v2\n").pipe(Effect.asVoid, Effect.ignore),
         },
@@ -283,7 +283,7 @@ it.live("rolls back provider conversation state only", () =>
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
-          events: codexTurnApprovalFixture,
+          events: piTurnApprovalFixture,
           mutateWorkspace: ({ cwd }) =>
             writeFileString(join(cwd, "README.md"), "v3\n").pipe(Effect.asVoid, Effect.ignore),
         },

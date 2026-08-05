@@ -6,7 +6,7 @@ import {
   type AuthClientSession,
   type AuthEnvironmentScope,
   type ServerAuthSessionMethod,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -397,10 +397,30 @@ export class SessionStore extends Context.Service<
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
->()("t3/auth/SessionStore") {}
+>()("starcode/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
+
+/**
+ * The lifetime for credentials held by a machine rather than by a person.
+ *
+ * Thirty days is a reasonable browser session and a terrible federation
+ * credential. A peer bearer is stored once at registration and never refreshed:
+ * there is no refresh grant, the pairing token that minted it was single-use,
+ * and re-registering means running a command by hand on two machines. So the
+ * thirty-day default did not mean "re-authenticate periodically", it meant
+ * every peer link in the fleet silently stopped working a month after it was
+ * set up, reported as an authorization failure that reads like a
+ * misconfiguration.
+ *
+ * Ten years is chosen to be plainly outside the life of any credential in this
+ * fleet while remaining a real expiry, so the claim stays well-formed and the
+ * check that reads it stays honest. What actually ends one of these is
+ * revocation, which is immediate and is the control that was always doing the
+ * work.
+ */
+export const MACHINE_SESSION_TTL = Duration.days(3_650);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
 const SessionClaims = Schema.Struct({

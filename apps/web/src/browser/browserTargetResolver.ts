@@ -2,8 +2,8 @@ import type {
   BrowserNavigationTarget,
   EnvironmentId,
   PreviewUrlResolution,
-} from "@t3tools/contracts";
-import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
+} from "@starcode/contracts";
+import { isLoopbackHost, normalizePreviewUrl } from "@starcode/shared/preview";
 
 import { readPreparedConnection } from "~/state/session";
 
@@ -48,26 +48,42 @@ const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
-const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
+const readEnvironmentConnection = (environmentId: EnvironmentId) => {
   const connection = readPreparedConnection(environmentId);
   if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
-  return new URL(connection.httpBaseUrl);
+  return connection;
+};
+
+const connectionRequiresClientBridge = (
+  connection: ReturnType<typeof readEnvironmentConnection>,
+): boolean => {
+  if (connection.target) return connection.target._tag !== "PrimaryConnectionTarget";
+  return !isLocalLoopbackHost(new URL(connection.httpBaseUrl).hostname);
 };
 
 const resolveEnvironmentPortTarget = (
   environmentId: EnvironmentId,
   target: Extract<BrowserNavigationTarget, { readonly kind: "environment-port" }>,
   environmentUrl: URL,
+  requiresBridge: boolean,
   requestedUrl?: string,
   sourceUrl?: URL,
 ): PreviewUrlResolution => {
-  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
-    throw new Error(
-      "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
-    );
-  }
   const protocol = target.protocol ?? "http";
   const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
+  const logicalUrl = requestedUrl ?? `${protocol}://localhost:${target.port}${path}`;
+  if (requiresBridge) {
+    return {
+      requestedUrl: logicalUrl,
+      resolvedUrl: logicalUrl,
+      resolutionKind: "client-bridge",
+      environmentId,
+      target,
+    };
+  }
+  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
+    throw new Error("This environment port is not reachable from the local preview client.");
+  }
   const normalizedEnvironmentHost = environmentUrl.hostname.replace(/^\[|\]$/g, "");
   const resolvedHost = normalizedEnvironmentHost.includes(":")
     ? `[${normalizedEnvironmentHost}]`
@@ -80,12 +96,13 @@ const resolveEnvironmentPortTarget = (
     resolved.port = String(target.port);
   }
   return {
-    requestedUrl: requestedUrl ?? `${protocol}://localhost:${target.port}${path}`,
+    requestedUrl: logicalUrl,
     resolvedUrl: resolved.toString(),
     resolutionKind: isLocalLoopbackHost(normalizedEnvironmentHost)
       ? "direct"
       : "direct-private-network",
     environmentId,
+    target,
   };
 };
 
@@ -102,8 +119,14 @@ export function resolveBrowserNavigationTarget(
       // reports malformed URL errors through its normal navigation path.
     }
     if (parsed && isLoopbackHost(parsed.hostname)) {
-      const environmentUrl = readEnvironmentUrl(environmentId);
-      if (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) {
+      const connection = readEnvironmentConnection(environmentId);
+      const environmentUrl = new URL(connection.httpBaseUrl);
+      const requiresBridge = connectionRequiresClientBridge(connection);
+      if (
+        requiresBridge ||
+        parsed.hostname === "0.0.0.0" ||
+        !isLocalLoopbackHost(environmentUrl.hostname)
+      ) {
         return resolveEnvironmentPortTarget(
           environmentId,
           {
@@ -113,6 +136,7 @@ export function resolveBrowserNavigationTarget(
             path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
           },
           environmentUrl,
+          requiresBridge,
           target.url,
           parsed,
         );
@@ -125,7 +149,13 @@ export function resolveBrowserNavigationTarget(
       environmentId,
     };
   }
-  return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
+  const connection = readEnvironmentConnection(environmentId);
+  return resolveEnvironmentPortTarget(
+    environmentId,
+    target,
+    new URL(connection.httpBaseUrl),
+    connectionRequiresClientBridge(connection),
+  );
 }
 
 export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {

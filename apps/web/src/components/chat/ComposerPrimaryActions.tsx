@@ -25,10 +25,12 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  canRunPlanAsGoal: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlanOnce: () => void;
+  onImplementPlanInNewThread: (runAsGoal: boolean) => void;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -64,9 +66,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  canRunPlanAsGoal,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
+  onImplementPlanOnce,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -165,7 +169,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {...pointerFocusProps}
           disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          {isConnecting || isSendBusy
+            ? "Sending..."
+            : canRunPlanAsGoal
+              ? "Run as goal"
+              : "Implement"}
         </Button>
         <Menu>
           <MenuTrigger
@@ -183,11 +191,27 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end" side="top">
+            {canRunPlanAsGoal ? (
+              <>
+                <MenuItem
+                  disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                  onClick={() => void onImplementPlanInNewThread(true)}
+                >
+                  Run as goal in a new thread
+                </MenuItem>
+                <MenuItem
+                  disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                  onClick={() => void onImplementPlanOnce()}
+                >
+                  Implement once
+                </MenuItem>
+              </>
+            ) : null}
             <MenuItem
               disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
-              onClick={() => void onImplementPlanInNewThread()}
+              onClick={() => void onImplementPlanInNewThread(false)}
             >
-              Implement in a new thread
+              {canRunPlanAsGoal ? "Implement once in a new thread" : "Implement in a new thread"}
             </MenuItem>
           </MenuPopup>
         </Menu>

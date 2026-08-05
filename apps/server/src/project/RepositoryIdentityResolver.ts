@@ -1,8 +1,8 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import type { RepositoryIdentity } from "@starcode/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
+} from "@starcode/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -15,11 +15,13 @@ import * as ProcessRunner from "../processRunner.ts";
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const DEFAULT_PROCESS_TIMEOUT = Duration.seconds(2);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly processTimeout?: Duration.Input;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -27,7 +29,7 @@ export class RepositoryIdentityResolver extends Context.Service<
   {
     readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
   }
->()("t3/project/RepositoryIdentityResolver") {}
+>()("starcode/project/RepositoryIdentityResolver") {}
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
@@ -88,7 +90,7 @@ function buildRepositoryIdentity(input: {
 }
 
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
-  function* (cwd: string) {
+  function* (cwd: string, processTimeout: Duration.Input) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     let cacheKey = cwd;
 
@@ -98,6 +100,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        timeout: processTimeout,
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
@@ -118,12 +121,14 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
+  processTimeout: Duration.Input,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
     .run({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
+      timeout: processTimeout,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -139,10 +144,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const processTimeout = options.processTimeout ?? DEFAULT_PROCESS_TIMEOUT;
 
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
     (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+      resolveRepositoryIdentityFromCacheKey(cacheKey, processTimeout).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
@@ -160,7 +166,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
+    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd, processTimeout).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
     return yield* Cache.get(repositoryIdentityCache, cacheKey);

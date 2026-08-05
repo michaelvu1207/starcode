@@ -1,9 +1,8 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@starcode/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   legacyProjectCwdPreferenceKey,
-  markThreadUnread,
   markThreadVisited,
   parsePersistedState,
   PERSISTED_STATE_KEY,
@@ -37,20 +36,6 @@ describe("uiStateStore pure functions", () => {
     expect(visited.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
     expect(markThreadVisited(visited, threadId, "2026-02-25T12:30:00.000Z")).toBe(visited);
     expect(markThreadVisited(visited, threadId, "not-a-date")).toBe(visited);
-  });
-
-  it("marks a completed thread unread using the server completion timestamp", () => {
-    const threadId = ThreadId.make("thread-1");
-    const initialState = makeUiState({
-      threadLastVisitedAtById: {
-        [threadId]: "2026-02-25T12:35:00.000Z",
-      },
-    });
-
-    const next = markThreadUnread(initialState, threadId, "2026-02-25T12:30:00.000Z");
-
-    expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
-    expect(markThreadUnread(next, threadId, null)).toBe(next);
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {

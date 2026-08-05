@@ -11,8 +11,8 @@ export function cloudDebugLog(event: string, data?: Record<string, unknown>): vo
     return;
   }
   if (data) {
-    console.log(`[t3-cloud] ${event}`, data);
+    console.log(`[starcode-cloud] ${event}`, data);
   } else {
-    console.log(`[t3-cloud] ${event}`);
+    console.log(`[starcode-cloud] ${event}`);
   }
 }

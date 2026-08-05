@@ -1,5 +1,5 @@
-import type { DesktopBridge } from "@t3tools/contracts";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import type { DesktopBridge } from "@starcode/contracts";
+import { safeErrorLogAttributes } from "@starcode/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
@@ -12,7 +12,7 @@ type ThemeSnapshot = {
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
-const STORAGE_KEY = "t3code:theme";
+const STORAGE_KEY = "starcode:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
@@ -151,8 +151,21 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
   return value?.trim() ?? null;
 }
 
+/**
+ * The surface whose colour the browser and native titlebars should match.
+ *
+ * This used to sample the main pane. The pane is now tinted glass over the sky
+ * layer (`starcode-theme.css` section 4c), so its computed background carries an
+ * alpha channel and the titlebar would be handed a colour that means nothing on
+ * its own. `.starcode-sky` is the opaque thing behind it, and its
+ * `background-color` is the average of the field's top row by construction —
+ * which is the colour at the top of the window, which is exactly what a titlebar
+ * should match. The old selectors stay as the fallback chain for the moments
+ * before the layer mounts.
+ */
 function resolveBrowserChromeSurface(): HTMLElement {
   return (
+    document.querySelector<HTMLElement>(".starcode-sky") ??
     document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']") ??
     document.querySelector<HTMLElement>("[data-slot='sidebar-inner']") ??
     document.body
@@ -168,8 +181,13 @@ export function syncBrowserChromeTheme() {
   const backgroundColor = surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
+  // `html` only. Painting `body` as well used to be belt and braces; it is now
+  // actively wrong, because the sky layer is a `z-index: -1` child of body and
+  // body's own background paints over it. `html`'s colour still does the job it
+  // was added for — it is what fills an overscroll bounce — and it sits behind
+  // the sky rather than in front of it. See the `body` rule in
+  // `starcode-theme.css` section 4.
   document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 

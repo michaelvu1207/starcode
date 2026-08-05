@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@starcode/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@starcode/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -18,6 +18,28 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("drops the removed Agents surface during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagents",
+            surfaces: [{ id: "subagents", kind: "subagents" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        },
+      },
+    });
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -445,5 +467,76 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+});
+
+describe("side conversation surfaces", () => {
+  it("keys the surface by its thread so two can coexist", () => {
+    // Not a singleton, unlike plan or diff. Closing a side surface deletes the
+    // thread behind it, so a singleton that adopted the newest side thread
+    // would leave the previous one orphaned on the server with nothing left
+    // pointing at it.
+    useRightPanelStore.getState().openSide(refA, "thread-side-1");
+    useRightPanelStore.getState().openSide(refA, "thread-side-2");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "side:thread-side-1",
+      "side:thread-side-2",
+    ]);
+    expect(state.activeSurfaceId).toBe("side:thread-side-2");
+  });
+
+  it("re-activates an already open side conversation instead of duplicating it", () => {
+    useRightPanelStore.getState().openSide(refA, "thread-side-1");
+    useRightPanelStore.getState().openSide(refA, "thread-side-2");
+    useRightPanelStore.getState().openSide(refA, "thread-side-1");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(state.activeSurfaceId).toBe("side:thread-side-1");
+  });
+
+  it("scopes side conversations to the thread that opened them", () => {
+    useRightPanelStore.getState().openSide(refA, "thread-side-1");
+
+    const other = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB);
+    expect(other.surfaces).toEqual([]);
+  });
+
+  it("keeps a persisted side surface that still names its thread", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "side:thread-side-1",
+          surfaces: [{ id: "side:thread-side-1", kind: "side", threadId: "thread-side-1" }],
+        },
+      },
+    });
+
+    expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces).toEqual([
+      { id: "side:thread-side-1", kind: "side", threadId: "thread-side-1" },
+    ]);
+  });
+
+  it("drops a persisted side surface whose thread id did not survive", () => {
+    // Such a surface cannot be mounted and cannot be closed — closing is what
+    // deletes the thread — so it would render as a tab that does nothing.
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "side:thread-side-1",
+          surfaces: [
+            { id: "side:thread-side-1", kind: "side" },
+            { id: "side:mismatched", kind: "side", threadId: "thread-side-9" },
+          ],
+        },
+      },
+    });
+
+    expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces).toEqual([]);
+    expect(migrated.byThreadKey["env-1:thread-A"]?.activeSurfaceId).toBe(null);
   });
 });

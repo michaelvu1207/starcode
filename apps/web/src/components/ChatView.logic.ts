@@ -1,14 +1,14 @@
 import {
+  type AgentRun,
   type EnvironmentId,
-  isProviderDriverKind,
   ProjectId,
   type ModelSelection,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -21,11 +21,23 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "starcode:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+/** Exact immutable model metadata for an attached AgentRun composer. */
+export function agentRunModelSelection(
+  run: Pick<AgentRun, "providerInstanceId" | "model" | "options"> | null,
+): ModelSelection | null {
+  if (!run?.providerInstanceId || !run.model) return null;
+  return {
+    instanceId: run.providerInstanceId,
+    model: run.model,
+    ...(run.options !== undefined ? { options: run.options } : {}),
+  };
+}
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
@@ -72,14 +84,13 @@ export function buildLocalDraftThread(
     createdAt: draftThread.createdAt,
     updatedAt: draftThread.createdAt,
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
     deletedAt: null,
     latestTurn: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
     checkpoints: [],
     activities: [],
+    agentRuns: [],
     proposedPlans: [],
   };
 }
@@ -335,18 +346,13 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+// Started threads fail closed. A removed custom instance may no longer have a
+// registry snapshot from which the UI can recover its driver kind; treating
+// that unknown id as unlocked silently routes historical conversation through
+// the first available Pi instance. Callers resolve live custom instances to
+// their advertised driver before reaching this function, so an unresolved
+// non-empty value is specifically a deleted/unknown historical capability and
+// remains a read-only lock.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
@@ -356,18 +362,9 @@ export function deriveLockedProvider(input: {
     return null;
   }
   const sessionProvider = input.thread?.session?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
-  }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+  if (sessionProvider) return ProviderDriverKind.make(sessionProvider);
+  if (input.threadProvider) return ProviderDriverKind.make(input.threadProvider);
+  return input.selectedProvider ? ProviderDriverKind.make(input.selectedProvider) : null;
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
@@ -541,4 +538,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionStatus !== (session?.status ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
+}
+
+export function supportsManagedGoalUi(providerName: string | null | undefined): boolean {
+  return providerName === "codex" || providerName === "claudeAgent" || providerName === "pi";
 }

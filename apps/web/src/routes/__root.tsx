@@ -1,6 +1,6 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { type ServerLifecycleWelcomePayload } from "@starcode/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@starcode/client-runtime/environment";
+import { squashAtomCommandFailure } from "@starcode/client-runtime/state/runtime";
 import {
   Outlet,
   createRootRoute,
@@ -14,9 +14,12 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
+import { ImportConversationDialog } from "../components/history/ImportConversationDialog";
+import { StarcodeSky } from "../components/brand/StarcodeSky";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { Button } from "../components/ui/button";
@@ -97,10 +100,14 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  // The sky is mounted in all three branches, not only the app shell. Pairing
+  // and the pre-auth screens are the first thing anyone sees, and "the whole
+  // app" has to include them or the backdrop changes the moment you sign in.
   if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {
     return (
       <>
         <DocumentTitleSync />
+        <StarcodeSky />
         <Outlet />
       </>
     );
@@ -110,17 +117,24 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <StarcodeSky />
         <Outlet />
       </>
     );
   }
 
+  // Fork: the diff worker pool used to be mounted per `ChatView`. Split view
+  // mounts two, and each pool spawns up to six workers plus its own 240-entry
+  // highlight cache. One pool for the app is correct for the single-pane case
+  // too — the pane you switch away from stops paying for a warm cache.
   const appShell = (
-    <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
+    <DiffWorkerPoolProvider>
+      <CommandPalette>
+        <AppSidebarLayout>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    </DiffWorkerPoolProvider>
   );
 
   return (
@@ -128,6 +142,12 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
+        {/* The one backdrop, portalled to `document.body` behind everything.
+            Mounted here rather than inside the sidebar wrapper because every
+            `@base-ui` portal — dialogs, menus, tooltips — lands on the body, and
+            those surfaces blur their backdrop; a sky inside the wrapper is not
+            in their backdrop chain, so each one would blur nothing. */}
+        <StarcodeSky />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
@@ -136,6 +156,10 @@ function RootRouteView() {
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+        {/* Listens on the import-picker seam; renders nothing until something
+            asks for it. Mounted beside the other app-level dialogs rather than
+            inside the sidebar, because the sidebar is not the only door. */}
+        {primaryEnvironmentAuthenticated ? <ImportConversationDialog /> : null}
         {appShell}
       </AnchoredToastProvider>
     </ToastProvider>

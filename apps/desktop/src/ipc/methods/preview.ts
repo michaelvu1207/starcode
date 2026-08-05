@@ -9,6 +9,9 @@ import {
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
+  DesktopPreviewPortBridgeCloseInputSchema,
+  DesktopPreviewPortBridgeOpenInputSchema,
+  DesktopPreviewPortBridgeOpenResultSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
@@ -19,13 +22,14 @@ import {
   PreviewAnnotationPayloadSchema,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import * as PreviewPortBridge from "../../preview/PortBridge.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -204,6 +208,26 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const openPortBridge = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_OPEN_PORT_BRIDGE_CHANNEL,
+  payload: DesktopPreviewPortBridgeOpenInputSchema,
+  result: DesktopPreviewPortBridgeOpenResultSchema,
+  handler: Effect.fn("desktop.ipc.preview.openPortBridge")(function* (input) {
+    const bridge = yield* PreviewPortBridge.PreviewPortBridge;
+    return yield* bridge.open(input);
+  }),
+});
+
+export const closePortBridge = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLOSE_PORT_BRIDGE_CHANNEL,
+  payload: DesktopPreviewPortBridgeCloseInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.closePortBridge")(function* ({ bridgeId }) {
+    const bridge = yield* PreviewPortBridge.PreviewPortBridge;
+    yield* bridge.close(bridgeId);
+  }),
+});
+
 export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
   payload: DesktopPreviewAnnotationThemeInputSchema,
@@ -379,3 +403,5 @@ export const methods = [
   stopRecording,
   saveRecording,
 ] as const;
+
+export const bridgeMethods = [openPortBridge, closePortBridge] as const;

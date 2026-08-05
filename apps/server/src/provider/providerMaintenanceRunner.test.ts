@@ -4,8 +4,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
-} from "@t3tools/contracts";
-import { ServerProviderUpdateError } from "@t3tools/contracts";
+} from "@starcode/contracts";
+import { ServerProviderUpdateError } from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,12 +17,13 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { HostProcessEnvironment, HostProcessPlatform } from "@starcode/shared/hostProcess";
+import { SpawnExecutableResolution } from "@starcode/shared/shell";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
@@ -30,11 +31,13 @@ import {
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const NATIVE_TEST_DRIVER = ProviderDriverKind.make("nativeTest");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const PI_DRIVER = ProviderDriverKind.make("pi");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
-const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
-const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+const NATIVE_TEST_INSTANCE_ID = ProviderInstanceId.make("nativeTest");
+const CLAUDE_AGENT_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
+const PI_INSTANCE_ID = ProviderInstanceId.make("pi");
 const encoder = new TextEncoder();
 
 // Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
@@ -44,22 +47,28 @@ const encoder = new TextEncoder();
 const NonWindowsPlatform = Layer.succeed(HostProcessPlatform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
-  if (provider === CURSOR_DRIVER) {
+  if (provider === PI_DRIVER) {
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider,
+      packageName: "@earendil-works/pi-coding-agent",
+    });
+  }
+  if (provider === NATIVE_TEST_DRIVER) {
     return makeProviderMaintenanceCapabilities({
       provider,
       packageName: null,
-      updateExecutable: "cursor-agent",
+      updateExecutable: "provider-agent",
       updateArgs: ["update"],
-      updateLockKey: "cursor-agent",
+      updateLockKey: "provider-agent",
     });
   }
   return makeProviderMaintenanceCapabilities({
     provider,
-    packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+    packageName: provider === CLAUDE_AGENT_DRIVER ? "@anthropic-ai/claude-code" : "@openai/codex",
     updateExecutable: "npm",
     updateArgs:
-      provider === OPENCODE_DRIVER
-        ? ["install", "-g", "opencode-ai@latest"]
+      provider === CLAUDE_AGENT_DRIVER
+        ? ["install", "-g", "@anthropic-ai/claude-code@latest"]
         : ["install", "-g", "@openai/codex@latest"],
     updateLockKey: "npm-global",
   });
@@ -79,16 +88,22 @@ const baseProvider: ServerProvider = {
   skills: [],
 };
 
-const baseCursorProvider: ServerProvider = {
+const baseNativeProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: CURSOR_INSTANCE_ID,
-  driver: CURSOR_DRIVER,
+  instanceId: NATIVE_TEST_INSTANCE_ID,
+  driver: NATIVE_TEST_DRIVER,
 };
 
-const baseOpenCodeProvider: ServerProvider = {
+const basePiProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: OPENCODE_INSTANCE_ID,
-  driver: OPENCODE_DRIVER,
+  instanceId: PI_INSTANCE_ID,
+  driver: PI_DRIVER,
+};
+
+const baseClaudeProvider: ServerProvider = {
+  ...baseProvider,
+  instanceId: CLAUDE_AGENT_INSTANCE_ID,
+  driver: CLAUDE_AGENT_DRIVER,
 };
 
 const latestVersionHttpClient = (version: string) =>
@@ -217,16 +232,40 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   );
 
 describe("providerMaintenanceRunner", () => {
+  it.effect("keeps Pi maintenance manual-only without spawning an update command", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(basePiProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      const error = yield* updater.updateProvider(PI_DRIVER).pipe(Effect.flip);
+      assert.strictEqual(error.provider, PI_DRIVER);
+      assert.strictEqual(error.reason, "This provider does not support one-click updates.");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "unexpected" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry(baseCursorProvider);
+      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeProvider);
       const updater = yield* makeTestRunner(registry);
 
-      const result = yield* updater.updateProvider(CURSOR_DRIVER);
+      const result = yield* updater.updateProvider(NATIVE_TEST_DRIVER);
       assert.deepStrictEqual(calls, [
         {
-          command: "cursor-agent",
+          command: "provider-agent",
           args: ["update"],
         },
       ]);
@@ -509,18 +548,19 @@ describe("providerMaintenanceRunner", () => {
     });
     const calls: Array<string> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
+      const { registry } = yield* makeRegistry([baseProvider, baseClaudeProvider]);
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,
-              packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+              packageName:
+                provider === CLAUDE_AGENT_DRIVER ? "@anthropic-ai/claude-code" : "@openai/codex",
               updateExecutable: "npm",
               updateArgs:
-                provider === OPENCODE_DRIVER
-                  ? ["install", "-g", "opencode-ai@latest"]
+                provider === CLAUDE_AGENT_DRIVER
+                  ? ["install", "-g", "@anthropic-ai/claude-code@latest"]
                   : ["install", "-g", "@openai/codex@latest"],
               updateLockKey: "npm-global",
             }),
@@ -530,12 +570,12 @@ describe("providerMaintenanceRunner", () => {
       const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
       yield* Effect.promise(() => firstStarted);
 
-      const second = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+      const second = yield* updater.updateProvider(CLAUDE_AGENT_DRIVER).pipe(Effect.forkScoped);
       let providersWhileQueued: ReadonlyArray<ServerProvider> = [];
       for (let attempt = 0; attempt < 20; attempt += 1) {
         providersWhileQueued = yield* registry.getProviders;
         const queuedStatus = providersWhileQueued.find(
-          (provider) => provider.instanceId === OPENCODE_INSTANCE_ID,
+          (provider) => provider.instanceId === CLAUDE_AGENT_INSTANCE_ID,
         )?.updateState?.status;
         if (queuedStatus === "queued") {
           break;
@@ -544,7 +584,7 @@ describe("providerMaintenanceRunner", () => {
       }
       assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
       assert.strictEqual(
-        providersWhileQueued.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)
+        providersWhileQueued.find((provider) => provider.instanceId === CLAUDE_AGENT_INSTANCE_ID)
           ?.updateState?.status,
         "queued",
       );
@@ -554,7 +594,7 @@ describe("providerMaintenanceRunner", () => {
       yield* Fiber.join(second);
       assert.deepStrictEqual(calls, [
         "install -g @openai/codex@latest",
-        "install -g opencode-ai@latest",
+        "install -g @anthropic-ai/claude-code@latest",
       ]);
     }).pipe(
       Effect.provide(

@@ -17,13 +17,13 @@ import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
   type ServerSettings,
   type ServerProviderState,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
 
@@ -33,7 +33,7 @@ import { formatProviderDriverKindLabel } from "./providerModels";
  * send until a live provider replaces it.
  */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
-  instanceId: ProviderInstanceId.make("t3code_no_provider"),
+  instanceId: ProviderInstanceId.make("starcode_no_provider"),
   model: "",
 };
 
@@ -60,8 +60,25 @@ export interface ProviderInstanceEntry {
   readonly isDefault: boolean;
   /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
+  /** False for historical routing aliases that must not appear in new selections. */
+  readonly selectable: boolean;
+  /** Preferred account for its account-blind Claude or GPT model family. */
+  readonly preferredAccount?: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+
+/**
+ * Whether this build may start new work through a provider driver.
+ *
+ * Legacy driver snapshots remain projected so existing tasks can retain their
+ * labels, icons, and account metadata. They are deliberately excluded only at
+ * launch boundaries; Pi is Starcode's sole execution runtime.
+ */
+export function isLaunchableProviderDriver(driverKind: ProviderDriverKind): boolean {
+  return driverKind === PI_DRIVER_KIND;
 }
 
 /**
@@ -71,12 +88,18 @@ export interface ProviderInstanceEntry {
  * `ready` probe status can remain in the streamed snapshot until reconciliation.
  */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  return (
+    isLaunchableProviderDriver(entry.driverKind) &&
+    entry.selectable &&
+    entry.enabled &&
+    entry.isAvailable &&
+    entry.status === "ready"
+  );
 }
 
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled;
+  return isLaunchableProviderDriver(entry.driverKind) && entry.selectable && entry.enabled;
 }
 
 /**
@@ -159,27 +182,34 @@ function resolveInstanceDisplayName(
 export function deriveProviderInstanceEntries(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  return providers.map((snapshot) => {
-    const instanceId = snapshot.instanceId;
-    const driverKind = snapshot.driver;
-    const defaultId = defaultInstanceIdForDriver(driverKind);
-    const isDefault = instanceId === defaultId;
-    const displayName = resolveInstanceDisplayName(snapshot, instanceId, driverKind, isDefault);
-    return {
-      instanceId,
-      driverKind,
-      displayName,
-      accentColor: normalizeProviderAccentColor(snapshot.accentColor),
-      continuationGroupKey: snapshot.continuation?.groupKey,
-      enabled: snapshot.enabled,
-      installed: snapshot.installed,
-      status: snapshot.status,
-      isDefault,
-      isAvailable: snapshot.availability !== "unavailable",
-      snapshot,
-      models: snapshot.models,
-    } satisfies ProviderInstanceEntry;
-  });
+  // OpenCode snapshots can still arrive while a server or cached connection
+  // is rolling forward. Keep them out of every active web surface instead of
+  // letting stale discovery data revive a removed provider.
+  return providers
+    .filter((snapshot) => snapshot.driver !== "opencode")
+    .map((snapshot) => {
+      const instanceId = snapshot.instanceId;
+      const driverKind = snapshot.driver;
+      const defaultId = defaultInstanceIdForDriver(driverKind);
+      const isDefault = instanceId === defaultId;
+      const displayName = resolveInstanceDisplayName(snapshot, instanceId, driverKind, isDefault);
+      return {
+        instanceId,
+        driverKind,
+        displayName,
+        accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+        continuationGroupKey: snapshot.continuation?.groupKey,
+        enabled: snapshot.enabled,
+        installed: snapshot.installed,
+        status: snapshot.status,
+        isDefault,
+        isAvailable: snapshot.availability !== "unavailable",
+        selectable: snapshot.selectable !== false,
+        preferredAccount: false,
+        snapshot,
+        models: snapshot.models,
+      } satisfies ProviderInstanceEntry;
+    });
 }
 
 /**
@@ -204,10 +234,24 @@ export function applyProviderInstanceSettings(
     const explicitInstance = settings.providerInstances?.[entry.instanceId];
     const enabled = explicitInstance
       ? (explicitInstance.enabled ?? true)
-      : entry.isDefault
-        ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
+      : entry.snapshot.instanceSource === "catalog"
+        ? entry.enabled
+        : entry.isDefault
+          ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
+          : false;
+    const launchableEnabled = isLaunchableProviderDriver(entry.driverKind) ? enabled : false;
+    const explicitConfig = explicitInstance?.config;
+    const preferredAccount =
+      explicitConfig !== null &&
+      typeof explicitConfig === "object" &&
+      !Array.isArray(explicitConfig)
+        ? (explicitConfig as Record<string, unknown>).activeForConnection === true
         : false;
-    return enabled === entry.enabled ? entry : { ...entry, enabled };
+    return {
+      ...entry,
+      enabled: launchableEnabled,
+      preferredAccount,
+    };
   });
 }
 
@@ -236,9 +280,10 @@ export function sortProviderInstanceEntries(
   }
   const sorted: ProviderInstanceEntry[] = [];
   for (const bucket of byKind.values()) {
-    const defaults = bucket.filter((entry) => entry.isDefault);
-    const customs = bucket.filter((entry) => !entry.isDefault);
-    sorted.push(...defaults, ...customs);
+    const preferred = bucket.filter((entry) => entry.preferredAccount);
+    const defaults = bucket.filter((entry) => !entry.preferredAccount && entry.isDefault);
+    const customs = bucket.filter((entry) => !entry.preferredAccount && !entry.isDefault);
+    sorted.push(...preferred, ...defaults, ...customs);
   }
   return sorted;
 }
@@ -287,7 +332,10 @@ export function getDefaultProviderInstanceModel(
 }
 
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
-  entry.enabled && entry.isAvailable;
+  isLaunchableProviderDriver(entry.driverKind) &&
+  entry.selectable &&
+  entry.enabled &&
+  entry.isAvailable;
 
 /**
  * Resolve an exact stored instance when it remains enabled and available.

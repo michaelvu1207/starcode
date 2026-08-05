@@ -1,13 +1,18 @@
 import {
   AuthAdministrativeScopes,
+  AuthEnvironmentScope,
+  AuthOrchestrationReadScope,
   AuthSessionId,
   AuthStandardClientScopes,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -71,9 +76,61 @@ const subjectFlag = Flag.string("subject").pipe(
   Flag.optional,
 );
 
+const isAuthEnvironmentScope = Schema.is(AuthEnvironmentScope);
+
+/**
+ * Comma-separated environment scopes. Exists so a token can be issued with
+ * less than full administrative authority — a federation peer, for instance,
+ * only ever needs `orchestration:read`.
+ */
+const EnvironmentScopeListFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Array(AuthEnvironmentScope),
+    SchemaTransformation.transformOrFail({
+      decode: (value) => {
+        const requested = value
+          .split(",")
+          .map((scope) => scope.trim())
+          .filter((scope) => scope.length > 0);
+        const granted = requested.filter(isAuthEnvironmentScope);
+        if (requested.length === 0 || granted.length !== requested.length) {
+          const invalid = requested.filter((scope) => !isAuthEnvironmentScope(scope));
+          return Effect.fail(
+            new SchemaIssue.InvalidValue(Option.some(value), {
+              message: `Unknown scope${invalid.length === 1 ? "" : "s"} ${invalid.join(", ")}. Valid scopes: ${AuthAdministrativeScopes.join(", ")}.`,
+            }),
+          );
+        }
+        return Effect.succeed<ReadonlyArray<AuthEnvironmentScope>>(granted);
+      },
+      encode: (scopes) => Effect.succeed(scopes.join(",")),
+    }),
+  ),
+);
+
+const scopesFlag = Flag.string("scopes").pipe(
+  Flag.withSchema(EnvironmentScopeListFromString),
+  Flag.withDescription("Comma-separated scopes to grant. Defaults to full administrative scopes."),
+  Flag.optional,
+);
+
+const readOnlyFlag = Flag.boolean("read-only").pipe(
+  Flag.withDescription(
+    "Shorthand for `--scopes orchestration:read`, the least privilege a federation peer needs.",
+  ),
+  Flag.withDefault(false),
+);
+
 const baseUrlFlag = Flag.string("base-url").pipe(
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
   Flag.optional,
+);
+
+const fleetPairingFlag = Flag.boolean("fleet").pipe(
+  Flag.withDescription(
+    "Issue an administrative one-time token for joining this server to a trusted StarCode fleet.",
+  ),
+  Flag.withDefault(false),
 );
 
 const tokenOnlyFlag = Flag.boolean("token-only").pipe(
@@ -86,6 +143,7 @@ const pairingCreateCommand = Command.make("create", {
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
+  fleet: fleetPairingFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
@@ -95,8 +153,8 @@ const pairingCreateCommand = Command.make("create", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.createPairingLink({
-            scopes: AuthStandardClientScopes,
-            subject: "one-time-token",
+            scopes: flags.fleet ? AuthAdministrativeScopes : AuthStandardClientScopes,
+            subject: flags.fleet ? "fleet-pairing" : "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           });
@@ -159,11 +217,21 @@ const pairingCommand = Command.make("pairing").pipe(
   Command.withSubcommands([pairingCreateCommand, pairingListCommand, pairingRevokeCommand]),
 );
 
+const resolveIssuedScopes = (flags: {
+  readonly scopes: Option.Option<ReadonlyArray<AuthEnvironmentScope>>;
+  readonly readOnly: boolean;
+}): ReadonlyArray<AuthEnvironmentScope> => {
+  if (Option.isSome(flags.scopes)) return flags.scopes.value;
+  return flags.readOnly ? [AuthOrchestrationReadScope] : AuthAdministrativeScopes;
+};
+
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
+  scopes: scopesFlag,
+  readOnly: readOnlyFlag,
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
@@ -174,7 +242,7 @@ const sessionIssueCommand = Command.make("issue", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.issueSession({
-            scopes: AuthAdministrativeScopes,
+            scopes: resolveIssuedScopes(flags),
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),

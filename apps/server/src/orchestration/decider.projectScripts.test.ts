@@ -6,8 +6,8 @@ import {
   ProjectId,
   ThreadId,
   ProviderInstanceId,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@starcode/contracts";
+import { createModelSelection } from "@starcode/shared/model";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -253,6 +253,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sideOfThreadId: null,
           createdAt: now,
           updatedAt: now,
         },
@@ -350,6 +351,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sideOfThreadId: null,
           createdAt: now,
           updatedAt: now,
         },
@@ -428,6 +430,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sideOfThreadId: null,
           createdAt: now,
           updatedAt: now,
         },

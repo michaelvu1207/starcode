@@ -3,7 +3,7 @@ import type {
   OrchestrationProjectShell,
   OrchestrationThreadShell,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "goalSummary"
   >;
 }
 
@@ -90,6 +91,12 @@ function resolveThreadAwarenessPhase(
     return "starting";
   }
   if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
+    return "running";
+  }
+  if (
+    thread.goalSummary?.status === "active" &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
     return "running";
   }
   if (thread.latestTurn?.state === "completed") {
@@ -146,6 +153,9 @@ function detailForPhase(
     return "Review the completed task.";
   }
   if (phase === "running" && thread.session?.providerName) {
+    if (thread.goalSummary?.status === "active") {
+      return `Goal is active in ${thread.session.providerName}.`;
+    }
     return `${thread.session.providerName} is active.`;
   }
   return undefined;

@@ -21,9 +21,9 @@ const isDesktopShellEnvironmentCommandError = Schema.is(
 function envOutput(values: Readonly<Record<string, string>>): string {
   return Object.entries(values)
     .flatMap(([name, value]) => [
-      `__T3CODE_ENV_${name}_START__`,
+      `__STARCODE_ENV_${name}_START__`,
       value,
-      `__T3CODE_ENV_${name}_END__`,
+      `__STARCODE_ENV_${name}_END__`,
     ])
     .join("\n");
 }
@@ -122,6 +122,10 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
+      assert.deepEqual(
+        commands[0]?._tag === "StandardCommand" ? commands[0].args.slice(0, 1) : [],
+        ["-lc"],
+      );
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");

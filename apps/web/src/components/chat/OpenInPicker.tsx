@@ -1,8 +1,10 @@
-import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@starcode/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -198,6 +200,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
@@ -231,7 +234,9 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     if (!enableShortcut) return;
+    // Fork: one keypress must not open two editor windows in split view.
     const handler = (e: globalThis.KeyboardEvent) => {
+      if (!paneOwnsKeyboard()) return;
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
@@ -253,6 +258,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     keybindings,
     openInCwd,
     openInEditorMutation,
+    paneOwnsKeyboard,
     preferredEditor,
   ]);
 

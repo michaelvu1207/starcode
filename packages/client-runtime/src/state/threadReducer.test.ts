@@ -8,8 +8,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
-import type { OrchestrationThread } from "@t3tools/contracts";
+} from "@starcode/contracts";
+import type { OrchestrationThread } from "@starcode/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
@@ -30,18 +30,19 @@ const baseThread: OrchestrationThread = {
   interactionMode: "default",
   branch: null,
   worktreePath: null,
+  sideOfThreadId: null,
   latestTurn: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
   deletedAt: null,
   messages: [],
   proposedPlans: [],
   activities: [],
+  agentRuns: [],
   checkpoints: [],
   session: null,
+  goal: null,
 };
 
 describe("applyThreadDetailEvent", () => {
@@ -56,7 +57,7 @@ describe("applyThreadDetailEvent", () => {
         type: "project.created",
         payload: {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "starcode",
           workspaceRoot: "/repo",
           repositoryIdentity: null,
           defaultModelSelection: null,
@@ -88,6 +89,7 @@ describe("applyThreadDetailEvent", () => {
           interactionMode: "default",
           branch: "main",
           worktreePath: null,
+          sideOfThreadId: null,
           createdAt: "2026-04-01T01:00:00.000Z",
           updatedAt: "2026-04-01T01:00:00.000Z",
         },
@@ -99,8 +101,88 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.title).toBe("New Thread");
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
+        expect(result.thread.agentRuns).toEqual([]);
         expect(result.thread.session).toBeNull();
       }
+    });
+
+    it("retains legacy OpenCode identity for readable historical threads", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 1,
+        occurredAt: "2025-08-01T01:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-opencode-history"),
+        type: "thread.created",
+        payload: {
+          threadId: ThreadId.make("thread-opencode-history"),
+          projectId: ProjectId.make("project-1"),
+          title: "Historical OpenCode thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "openai/gpt-5",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          sideOfThreadId: null,
+          createdAt: "2025-08-01T01:00:00.000Z",
+          updatedAt: "2025-08-01T01:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.modelSelection).toEqual({
+          instanceId: "opencode",
+          model: "openai/gpt-5",
+        });
+      }
+    });
+  });
+
+  describe("thread goal events", () => {
+    it("projects updates and ignores a stale clear", () => {
+      const updatedAt = "2026-04-01T02:00:00.000Z";
+      const update = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 2,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          goal: {
+            objective: "Ship goal support",
+            status: "active",
+            tokenBudget: null,
+            tokensUsed: 500,
+            timeUsedSeconds: 20,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt,
+          },
+        },
+      });
+
+      expect(update.kind).toBe("updated");
+      if (update.kind !== "updated") return;
+      expect(update.thread.goal?.objective).toBe("Ship goal support");
+
+      const staleClear = applyThreadDetailEvent(update.thread, {
+        ...baseEventFields,
+        sequence: 3,
+        occurredAt: "2026-04-01T01:30:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          observedAt: "2026-04-01T01:30:00.000Z",
+        },
+      });
+      expect(staleClear.kind).toBe("unchanged");
     });
   });
 
@@ -162,62 +244,6 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.archivedAt).toBeNull();
-      }
-    });
-  });
-
-  describe("thread.settled / thread.unsettled", () => {
-    it("sets the settled override and timestamp", () => {
-      const settledAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: settledAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.settled",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          settledAt,
-          updatedAt: settledAt,
-        },
-      });
-
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.settledOverride).toBe("settled");
-        expect(result.thread.settledAt).toBe(settledAt);
-      }
-    });
-
-    it.each([
-      ["user", "active"],
-      ["activity", null],
-    ] as const)("unsettles for %s with override %s", (reason, settledOverride) => {
-      const settledThread: OrchestrationThread = {
-        ...baseThread,
-        settledOverride: "settled",
-        settledAt: "2026-04-01T05:00:00.000Z",
-      };
-      const updatedAt = "2026-04-01T06:00:00.000Z";
-      const result = applyThreadDetailEvent(settledThread, {
-        ...baseEventFields,
-        sequence: 6,
-        occurredAt: updatedAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.unsettled",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          reason,
-          updatedAt,
-        },
-      });
-
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.settledOverride).toBe(settledOverride);
-        expect(result.thread.settledAt).toBeNull();
       }
     });
   });
@@ -622,6 +648,253 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities).toHaveLength(130);
         expect(result.thread.activities[0]?.id).toBe("activity-0");
+      }
+    });
+
+    it("projects one agent run from task lifecycle activities", () => {
+      const started = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 12,
+        occurredAt: "2026-04-01T11:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("agent-started"),
+            tone: "info",
+            kind: "task.started",
+            summary: "Agent started",
+            payload: {
+              taskId: "agent-1",
+              taskType: "local_agent",
+              subagentType: "reviewer",
+              toolUseId: "tool-1",
+              options: [{ id: "effort", value: "high" }],
+              detail: "Review the patch",
+            },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T11:00:00.000Z",
+          },
+        },
+      });
+      expect(started.kind).toBe("updated");
+      if (started.kind !== "updated") return;
+
+      const completed = applyThreadDetailEvent(started.thread, {
+        ...baseEventFields,
+        sequence: 13,
+        occurredAt: "2026-04-01T11:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("agent-completed"),
+            tone: "info",
+            kind: "task.completed",
+            summary: "Agent completed",
+            payload: {
+              taskId: "agent-1",
+              status: "completed",
+              historySessionId: "a".repeat(32),
+            },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T11:01:00.000Z",
+          },
+        },
+      });
+
+      expect(completed.kind).toBe("updated");
+      if (completed.kind === "updated") {
+        expect(completed.thread.agentRuns).toEqual([
+          expect.objectContaining({
+            parentThreadId: "thread-1",
+            provider: "claude",
+            agentRunId: "agent-1",
+            status: "completed",
+            historySessionId: "a".repeat(32),
+            transcriptState: "linked",
+            options: [{ id: "effort", value: "high" }],
+          }),
+        ]);
+      }
+    });
+
+    it("never projects local Bash jobs and never regresses a terminal run", () => {
+      const terminalRun = {
+        parentThreadId: ThreadId.make("thread-1"),
+        provider: "claude" as const,
+        agentRunId: "agent-1",
+        launchToolUseId: "tool-1",
+        taskType: "local_agent",
+        agentType: "reviewer",
+        model: null,
+        description: "Review",
+        status: "completed" as const,
+        startedAt: "2026-04-01T10:00:00.000Z",
+        updatedAt: "2026-04-01T11:00:00.000Z",
+        historySessionId: null,
+        transcriptState: "unavailable" as const,
+      };
+      const withTerminal = { ...baseThread, agentRuns: [terminalRun] };
+      const staleProgress = applyThreadDetailEvent(withTerminal, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T10:30:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("stale-progress"),
+            tone: "info",
+            kind: "task.progress",
+            summary: "Still running",
+            payload: { taskId: "agent-1" },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T10:30:00.000Z",
+          },
+        },
+      });
+      expect(staleProgress.kind).toBe("updated");
+      if (staleProgress.kind === "updated") {
+        expect(staleProgress.thread.agentRuns[0]?.status).toBe("completed");
+        expect(staleProgress.thread.agentRuns[0]?.transcriptState).toBe("unavailable");
+      }
+
+      const bash = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T12:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("bash-started"),
+            tone: "info",
+            kind: "task.started",
+            summary: "Bash started",
+            payload: { taskId: "bash-1", taskType: "local_bash" },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T12:00:00.000Z",
+          },
+        },
+      });
+      expect(bash.kind).toBe("updated");
+      if (bash.kind === "updated") {
+        expect(bash.thread.agentRuns).toEqual([]);
+      }
+    });
+
+    it("keeps the stable agent description when progress details arrive", () => {
+      const started = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T10:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("agent-started"),
+            tone: "info",
+            kind: "task.started",
+            summary: "Agent started",
+            payload: {
+              taskId: "agent-1",
+              taskType: "attached_agent",
+              providerDriver: "pi",
+              description: "Audit scripts and launch",
+            },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T10:00:00.000Z",
+          },
+        },
+      });
+      expect(started.kind).toBe("updated");
+      if (started.kind !== "updated") return;
+
+      const progressed = applyThreadDetailEvent(started.thread, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T10:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("agent-progress"),
+            tone: "info",
+            kind: "task.progress",
+            summary: "Agent progress",
+            payload: {
+              taskId: "agent-1",
+              taskType: "attached_agent",
+              providerDriver: "pi",
+              description: "raw command output that must not become the row title",
+            },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T10:01:00.000Z",
+          },
+        },
+      });
+      expect(progressed.kind).toBe("updated");
+      if (progressed.kind === "updated") {
+        expect(progressed.thread.agentRuns[0]?.description).toBe("Audit scripts and launch");
+      }
+    });
+
+    it("keeps provider-colliding run ids separate", () => {
+      const claude = {
+        parentThreadId: ThreadId.make("thread-1"),
+        provider: "claude" as const,
+        agentRunId: "shared",
+        launchToolUseId: "claude-tool",
+        taskType: "local_agent",
+        agentType: null,
+        model: null,
+        description: "Claude",
+        status: "running" as const,
+        startedAt: "2026-04-01T10:00:00.000Z",
+        updatedAt: "2026-04-01T10:00:00.000Z",
+        historySessionId: null,
+        transcriptState: "pending" as const,
+      };
+      const result = applyThreadDetailEvent(
+        { ...baseThread, agentRuns: [claude] },
+        {
+          ...baseEventFields,
+          sequence: 16,
+          occurredAt: "2026-04-01T12:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: {
+              id: EventId.make("codex-started"),
+              tone: "info",
+              kind: "task.started",
+              summary: "Codex started",
+              payload: { taskId: "shared", taskType: "codex_cli" },
+              turnId: TurnId.make("turn-1"),
+              createdAt: "2026-04-01T12:00:00.000Z",
+            },
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.agentRuns.map((run) => run.provider)).toEqual(["claude", "codex"]);
       }
     });
   });

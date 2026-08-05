@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+} from "@starcode/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
@@ -14,8 +14,8 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@starcode/contracts";
+import { createModelSelection } from "@starcode/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
 // `stickyModelSelectionByProvider` maps are keyed by `ProviderInstanceId`
@@ -1174,6 +1174,53 @@ describe("composerDraftStore modelSelection", () => {
         fastMode: true,
       }),
     );
+  });
+
+  it("does not create active OpenCode model options", () => {
+    useComposerDraftStore
+      .getState()
+      .setModelOptions(threadRef, providerModelOptions({ opencode: { effort: "high" } }));
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("preserves a legacy OpenCode selection while hydrating old draft storage", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [],
+            terminalContexts: [],
+            provider: "opencode",
+            model: "openai/gpt-5",
+            modelOptions: { opencode: [{ id: "effort", value: "high" }] },
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toMatchObject({
+      activeProvider: "opencode",
+      modelSelectionByProvider: {
+        opencode: {
+          instanceId: "opencode",
+          model: "openai/gpt-5",
+          options: [{ id: "effort", value: "high" }],
+        },
+      },
+    });
   });
 
   it("keeps default-only model selections on the draft", () => {

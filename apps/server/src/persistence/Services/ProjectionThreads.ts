@@ -14,8 +14,10 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  ThreadTitleSource,
+  ThreadGoal,
   TurnId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -27,24 +29,26 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  // Optional to match the contract: a required field would make every caller
+  // that builds a row name a provenance it has no opinion about.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  /** Null for an ordinary thread. See `SideOfThreadId` in the contracts. */
+  sideOfThreadId: Schema.NullOr(ThreadId),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
-  settledAt: Schema.NullOr(IsoDateTime),
-  snoozedUntil: Schema.NullOr(IsoDateTime),
-  snoozedAt: Schema.NullOr(IsoDateTime),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
+  goal: Schema.NullOr(ThreadGoal),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 
@@ -104,4 +108,4 @@ export interface ProjectionThreadRepositoryShape {
 export class ProjectionThreadRepository extends Context.Service<
   ProjectionThreadRepository,
   ProjectionThreadRepositoryShape
->()("t3/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}
+>()("starcode/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}

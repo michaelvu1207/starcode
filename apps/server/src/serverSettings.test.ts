@@ -5,8 +5,8 @@ import {
   ProviderInstanceId,
   ServerSettings,
   ServerSettingsPatch,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@starcode/contracts";
+import { createModelSelection } from "@starcode/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
@@ -27,7 +27,7 @@ const makeServerSettingsLayer = () =>
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3code-server-settings-test-",
+          prefix: "starcode-server-settings-test-",
         }),
       ),
     ),
@@ -60,7 +60,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     });
     const configLayer = Layer.fresh(
       ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3code-server-settings-secret-failure-test-",
+        prefix: "starcode-server-settings-secret-failure-test-",
       }),
     );
     const settingsLayer = ServerSettingsModule.layer.pipe(
@@ -188,6 +188,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: ["claude-custom"],
         launchArgs: "",
+        contextLimitTokens: "",
       });
       assert.deepEqual(
         next.textGenerationModelSelection,
@@ -408,11 +409,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
-          opencode: {
-            binaryPath: "  /opt/homebrew/bin/opencode  ",
-            serverUrl: "  http://127.0.0.1:4096  ",
-            serverPassword: "  secret-password  ",
-          },
         },
       });
 
@@ -430,13 +426,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: [],
         launchArgs: "",
-      });
-      assert.deepEqual(next.providers.opencode, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
-        customModels: [],
+        contextLimitTokens: "",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -496,10 +486,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
-          },
         },
         automaticGitFetchInterval: Duration.seconds(10),
       });
@@ -517,10 +503,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
-          },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
           },
         },
         automaticGitFetchInterval: 10_000,

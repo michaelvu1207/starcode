@@ -4,7 +4,7 @@ import {
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -314,6 +314,42 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,
       },
+    }),
+    startPiAccountAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-auth-start",
+      tag: WS_METHODS.piAccountAuthStart,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    capturePiAccountAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-auth-capture",
+      tag: WS_METHODS.piAccountAuthCapture,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    deletePiAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-delete",
+      tag: WS_METHODS.piAccountDelete,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+      },
+    }),
+    testPiAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-test",
+      tag: WS_METHODS.piAccountTest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+      },
+    }),
+    refreshPiAccountUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-usage-refresh",
+      tag: WS_METHODS.piAccountUsageRefresh,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    syncPiAccounts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pi-account-sync",
+      tag: WS_METHODS.piAccountSync,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",

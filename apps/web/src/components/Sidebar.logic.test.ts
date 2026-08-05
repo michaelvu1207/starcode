@@ -3,7 +3,6 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
-  getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -19,23 +18,29 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  selectFinishedSidebarAgentRuns,
+  selectOwnedSidebarAgentRuns,
   formatWorkingDurationLabel,
+  shouldClearSelectedSidebarAgent,
   shouldNavigateAfterProjectRemoval,
+  shouldShowFinishedSubagentDisclosure,
+  shouldShowFinishedSubagentRows,
+  shouldShowSidebarSubagentRows,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
+  type AgentRun,
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -45,6 +50,111 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldShowSidebarSubagentRows", () => {
+  it("shows child rows only for the task open in the main pane", () => {
+    expect(shouldShowSidebarSubagentRows(true, 2)).toBe(true);
+    expect(shouldShowSidebarSubagentRows(false, 2)).toBe(false);
+  });
+
+  it("keeps an open task without subagents flat", () => {
+    expect(shouldShowSidebarSubagentRows(true, 0)).toBe(false);
+  });
+
+  it("shows the selected task when only finished agent history exists", () => {
+    expect(shouldShowSidebarSubagentRows(true, 0, 2)).toBe(true);
+    expect(shouldShowSidebarSubagentRows(false, 0, 2)).toBe(false);
+  });
+});
+
+function agentRun(
+  agentRunId: string,
+  status: AgentRun["status"],
+  overrides: Partial<AgentRun> = {},
+): AgentRun {
+  return {
+    parentThreadId: ThreadId.make("parent"),
+    provider: "claude",
+    agentRunId,
+    launchToolUseId: `tool-${agentRunId}`,
+    taskType: "local_agent",
+    agentType: null,
+    model: null,
+    description: agentRunId,
+    status,
+    historySessionId: null,
+    transcriptState: "pending",
+    startedAt: "2026-07-30T12:00:00.000Z",
+    updatedAt: "2026-07-30T12:01:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("finished sidebar subagents", () => {
+  it("filters the AgentRun projection down to terminal agents", () => {
+    const result = selectFinishedSidebarAgentRuns([
+      agentRun("running", "running"),
+      agentRun("paused", "paused"),
+      agentRun("completed", "completed"),
+      agentRun("failed", "failed"),
+      agentRun("stopped", "stopped"),
+    ]);
+
+    expect(result.map((agent) => agent.agentRunId)).toEqual(["completed", "failed", "stopped"]);
+  });
+
+  it("scopes rows to the selected parent without inferring ownership", () => {
+    const selected = agentRun("selected", "completed");
+    const other = agentRun("other", "completed", {
+      parentThreadId: ThreadId.make("another-parent"),
+    });
+
+    expect(
+      selectOwnedSidebarAgentRuns([selected, other], ThreadId.make("parent")).map(
+        (agent) => agent.agentRunId,
+      ),
+    ).toEqual(["selected"]);
+  });
+
+  it("gates the disclosure to the selected task with finished history", () => {
+    expect(shouldShowFinishedSubagentDisclosure(true, 2)).toBe(true);
+    expect(shouldShowFinishedSubagentDisclosure(false, 2)).toBe(false);
+    expect(shouldShowFinishedSubagentDisclosure(true, 0)).toBe(false);
+  });
+
+  it("shows finished rows only after the disclosure is expanded", () => {
+    expect(shouldShowFinishedSubagentRows(true, 2, false)).toBe(false);
+    expect(shouldShowFinishedSubagentRows(true, 2, true)).toBe(true);
+    expect(shouldShowFinishedSubagentRows(false, 2, true)).toBe(false);
+  });
+
+  it("uses normal row selection and toggles back only for the current agent", () => {
+    const claude = agentRun("same-id", "completed");
+    const codex = agentRun("same-id", "completed", { provider: "codex" });
+    expect(shouldClearSelectedSidebarAgent(true, null, claude)).toBe(false);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        true,
+        { provider: codex.provider, agentRunId: codex.agentRunId },
+        claude,
+      ),
+    ).toBe(false);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        true,
+        { provider: claude.provider, agentRunId: claude.agentRunId },
+        claude,
+      ),
+    ).toBe(true);
+    expect(
+      shouldClearSelectedSidebarAgent(
+        false,
+        { provider: claude.provider, agentRunId: claude.agentRunId },
+        claude,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -151,9 +261,10 @@ describe("archiveSelectedThreadEntries", () => {
 
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
-    expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
-    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+    const items = buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false });
+
+    expect(items).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+    expect(items.map((item) => item.id)).toEqual(["archive", "delete"]);
   });
 
   it("disables bulk archive when a selected thread is running", () => {
@@ -245,6 +356,24 @@ describe("hasUnseenCompletion", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not report completion while a provider goal is active", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        session: null,
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {
@@ -306,20 +435,6 @@ describe("createThreadJumpHintVisibilityController", () => {
     vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
 
     expect(visibilityChanges).toEqual([]);
-  });
-});
-
-describe("getSidebarThreadIdsToPrewarm", () => {
-  it("returns only the first visible thread ids up to the prewarm limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "t3"], 2)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns all visible thread ids when they fit within the limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 10)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns no thread ids when the limit is zero", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
   });
 });
 
@@ -600,6 +715,58 @@ describe("resolveSidebarV2Status", () => {
 
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
 
+  const runningAgent = {
+    taskId: "task-1",
+    toolUseId: "toolu_01",
+    description: "Review the auth module",
+    subagentType: null,
+    status: "running" as const,
+    isBackgrounded: true,
+    lastToolName: null,
+    totalTokens: null,
+    startedAt: "2026-03-09T10:00:00.000Z",
+  };
+
+  it("reports agents when the session is idle but subagents are still running", () => {
+    // The case the tone exists for: a backgrounded subagent outlives the turn
+    // that spawned it, so the session reads ready while work continues.
+    expect(resolveSidebarV2Status({ ...idle, session: null, subagents: [runningAgent] })).toBe(
+      "agents",
+    );
+  });
+
+  it("keeps working ahead of agents when the main agent is running too", () => {
+    // "Working" already says the thread is busy; the child rows say who.
+    expect(resolveSidebarV2Status({ ...idle, session, subagents: [runningAgent] })).toBe("working");
+  });
+
+  it("keeps approval and input ahead of agents", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingApprovals: true,
+        session: null,
+        subagents: [runningAgent],
+      }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingUserInput: true,
+        session: null,
+        subagents: [runningAgent],
+      }),
+    ).toBe("input");
+  });
+
+  it("stays ready when the subagent list is absent or empty", () => {
+    // Absent is what every server without the rollup sends, and an empty array
+    // is what a thread whose agents have all finished sends. Neither is a
+    // reason to claim work is happening.
+    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+    expect(resolveSidebarV2Status({ ...idle, session: null, subagents: [] })).toBe("ready");
+  });
+
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
       "approval",
@@ -626,6 +793,32 @@ describe("resolveSidebarV2Status", () => {
         session: { ...session, status: "starting" as const },
       }),
     ).toBe("working");
+  });
+
+  it("reports an active provider goal as working while the session is ready", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "ready" as const, activeTurnId: null },
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe("working");
+  });
+
+  it("does not hide a provider error behind an active goal", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        goalSummary: {
+          status: "active",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe("failed");
   });
 
   it("reports failed only while the session status is error", () => {
@@ -674,74 +867,6 @@ describe("sortThreadsForSidebarV2", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
       sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
-  });
-});
-
-describe("sortSettledThreadsForSidebarV2", () => {
-  const settled = (input: {
-    id: string;
-    settledAt?: string | null;
-    latestUserMessageAt?: string | null;
-    latestTurn?: OrchestrationLatestTurn | null;
-    updatedAt?: string;
-  }) => ({
-    id: input.id,
-    settledAt: input.settledAt ?? null,
-    latestUserMessageAt: input.latestUserMessageAt ?? null,
-    latestTurn: input.latestTurn ?? null,
-    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
-  });
-
-  it("orders by settle time, most recently settled first", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
-      settled({
-        id: "settled-first",
-        settledAt: "2026-03-09T10:00:00.000Z",
-        // Created/active later than the other thread: settle time must win.
-        latestUserMessageAt: "2026-03-09T09:59:00.000Z",
-      }),
-      settled({
-        id: "settled-last",
-        settledAt: "2026-03-09T12:00:00.000Z",
-        latestUserMessageAt: "2026-03-09T08:00:00.000Z",
-      }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["settled-last", "settled-first"]);
-  });
-
-  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
-      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
-      settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
-      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
-  });
-
-  it("counts a turn completion as activity for auto-settled threads", () => {
-    // The message came in before the other thread's, but its turn finished
-    // after: completion time is the real "work ended" moment.
-    const sorted = sortSettledThreadsForSidebarV2([
-      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
-      settled({
-        id: "completed-later",
-        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
-        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
-      }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
-  });
-
-  it("breaks timestamp ties by id so the order is stable", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
-      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
-      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
@@ -1079,8 +1204,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     proposedPlans: [],
     createdAt: "2026-03-09T10:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,
@@ -1088,6 +1211,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
+    agentRuns: [],
     ...overrides,
   };
 }

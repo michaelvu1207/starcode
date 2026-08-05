@@ -7,8 +7,8 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { EnvironmentId, ThreadId, type ProjectScript } from "@starcode/contracts";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@starcode/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
@@ -196,6 +196,12 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const setThreadGoal = useAtomCommand(threadEnvironment.setGoal, "set thread goal");
+  const setThreadGoalStatus = useAtomCommand(
+    threadEnvironment.setGoalStatus,
+    "set thread goal status",
+  );
+  const clearThreadGoal = useAtomCommand(threadEnvironment.clearGoal, "clear thread goal");
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -277,6 +283,44 @@ function ThreadRouteContent(
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
+  const handleSetGoal = useCallback(
+    async (objective: string) => {
+      if (!selectedThread) return false;
+      const result = await setThreadGoal({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          objective,
+        },
+      });
+      return result._tag === "Success";
+    },
+    [selectedThread, setThreadGoal],
+  );
+  const handleSetGoalStatus = useCallback(
+    async (status: "active" | "paused") => {
+      if (!selectedThread) return false;
+      const result = await setThreadGoalStatus({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          status,
+        },
+      });
+      return result._tag === "Success";
+    },
+    [selectedThread, setThreadGoalStatus],
+  );
+  const handleClearGoal = useCallback(async () => {
+    if (!selectedThread) return false;
+    const result = await clearThreadGoal({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThread.id,
+      },
+    });
+    return result._tag === "Success";
+  }, [clearThreadGoal, selectedThread]);
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -750,6 +794,7 @@ function ThreadRouteContent(
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          goal={selectedThreadDetail?.goal}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}
@@ -789,6 +834,9 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          onSetGoal={handleSetGoal}
+          onSetGoalStatus={handleSetGoalStatus}
+          onClearGoal={handleClearGoal}
         />
       </View>
     </>

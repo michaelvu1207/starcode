@@ -60,6 +60,26 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  PiAccountAuthCaptureInput,
+  PiAccountAuthCaptureResult,
+  PiAccountDeleteInput,
+  PiAccountDeleteResult,
+  PiAccountAuthError,
+  PiAccountAuthStartInput,
+  PiAccountAuthStartResult,
+  PiAccountTestInput,
+  PiAccountTestResult,
+  PiAccountUsageRefreshInput,
+  PiAccountUsageRefreshResult,
+  PiAccountSyncInput,
+  PiAccountSyncResult,
+} from "./piAccountAuth.ts";
+import {
+  MessageSimplificationError,
+  MessageSimplificationInput,
+  MessageSimplificationResult,
+} from "./messageSimplification.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -101,6 +121,8 @@ import {
   PreviewListResult,
   PreviewNavigateInput,
   PreviewOpenInput,
+  PreviewPortBridgeTicket,
+  PreviewPortBridgeTicketInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
@@ -199,9 +221,11 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewCreatePortBridgeTicket: "preview.createPortBridgeTicket",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+  messageSimplify: "message.simplify",
 
   // Server meta
   serverProbe: "server.probe",
@@ -218,6 +242,12 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  piAccountAuthStart: "piAccountAuth.start",
+  piAccountAuthCapture: "piAccountAuth.capture",
+  piAccountDelete: "piAccount.delete",
+  piAccountTest: "piAccount.test",
+  piAccountUsageRefresh: "piAccount.usage.refresh",
+  piAccountSync: "piAccount.sync",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -299,6 +329,42 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountAuthStartRpc = Rpc.make(WS_METHODS.piAccountAuthStart, {
+  payload: PiAccountAuthStartInput,
+  success: PiAccountAuthStartResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountAuthCaptureRpc = Rpc.make(WS_METHODS.piAccountAuthCapture, {
+  payload: PiAccountAuthCaptureInput,
+  success: PiAccountAuthCaptureResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountDeleteRpc = Rpc.make(WS_METHODS.piAccountDelete, {
+  payload: PiAccountDeleteInput,
+  success: PiAccountDeleteResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountTestRpc = Rpc.make(WS_METHODS.piAccountTest, {
+  payload: PiAccountTestInput,
+  success: PiAccountTestResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountUsageRefreshRpc = Rpc.make(WS_METHODS.piAccountUsageRefresh, {
+  payload: PiAccountUsageRefreshInput,
+  success: PiAccountUsageRefreshResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsPiAccountSyncRpc = Rpc.make(WS_METHODS.piAccountSync, {
+  payload: PiAccountSyncInput,
+  success: PiAccountSyncResult,
+  error: Schema.Union([PiAccountAuthError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -486,7 +552,7 @@ export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
 
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
- * Not the persisted T3 Review model. Future review sessions should use
+ * Not the persisted starcode Review model. Future review sessions should use
  * review.open* + review.getSnapshot.
  */
 export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
@@ -573,6 +639,15 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewCreatePortBridgeTicketRpc = Rpc.make(
+  WS_METHODS.previewCreatePortBridgeTicket,
+  {
+    payload: PreviewPortBridgeTicketInput,
+    success: PreviewPortBridgeTicket,
+    error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -615,6 +690,12 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
     error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsMessageSimplifyRpc = Rpc.make(WS_METHODS.messageSimplify, {
+  payload: MessageSimplificationInput,
+  success: MessageSimplificationResult,
+  error: Schema.Union([MessageSimplificationError, EnvironmentAuthorizationError]),
+});
 
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
@@ -708,6 +789,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsPiAccountAuthStartRpc,
+  WsPiAccountAuthCaptureRpc,
+  WsPiAccountDeleteRpc,
+  WsPiAccountTestRpc,
+  WsPiAccountUsageRefreshRpc,
+  WsPiAccountSyncRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
@@ -754,6 +841,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewCreatePortBridgeTicketRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
@@ -762,6 +850,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsMessageSimplifyRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

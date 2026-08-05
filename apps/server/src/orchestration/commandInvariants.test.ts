@@ -8,7 +8,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationReadModel,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 
 import {
@@ -68,12 +68,11 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
       latestTurn: null,
       messages: [],
       session: null,
       activities: [],
+      agentRuns: [],
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,
@@ -93,12 +92,11 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
       latestTurn: null,
       messages: [],
       session: null,
       activities: [],
+      agentRuns: [],
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,

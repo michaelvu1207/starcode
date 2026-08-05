@@ -6,14 +6,14 @@ import type {
   OrchestrationThreadShell,
   ProviderInteractionMode,
   RuntimeMode,
-  ServerConfig as T3ServerConfig,
-} from "@t3tools/contracts";
+  ServerConfig as StarcodeServerConfig,
+} from "@starcode/contracts";
 import {
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
-} from "@t3tools/shared/composerTrigger";
+} from "@starcode/shared/composerTrigger";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -53,14 +53,20 @@ import {
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  isRemovedProviderThreadReadOnly,
+  modelOptionDetailLabel,
+  unavailableModelGuidance,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
+} from "@starcode/shared/searchRanking";
 import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
@@ -98,7 +104,7 @@ export interface ThreadComposerProps {
    */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
-  readonly serverConfig: T3ServerConfig | null;
+  readonly serverConfig: StarcodeServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
@@ -255,7 +261,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
           <View className="h-2 w-2 rounded-full bg-red-500" />
         )}
         <Text
-          className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
+          className="max-w-[260px] text-sm font-starcode-bold leading-snug text-foreground"
           numberOfLines={1}
         >
           {props.status.label}
@@ -279,7 +285,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
-  const canSend = hasContent;
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -522,7 +527,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // the app is foregrounded and the activity token can be registered.
     armAgentAwarenessLiveActivityForLocalWork({
       threadTitle: props.selectedThread.title,
-      projectTitle: props.environmentLabel ?? "T3 Code",
+      projectTitle: props.environmentLabel ?? "starcode",
     });
     try {
       await onSendMessage();
@@ -591,6 +596,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
+  const legacyThreadReadOnly = isRemovedProviderThreadReadOnly(
+    props.serverConfig,
+    props.selectedThread,
+  );
+  const canSend = hasContent && currentModelOption !== null && !legacyThreadReadOnly;
   const providerOptionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
@@ -616,6 +626,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         subactions: group.models.map((option) => ({
           id: `model:${option.key}`,
           title: option.label,
+          subtitle: modelOptionDetailLabel(option),
           state:
             option.selection.instanceId === currentModelSelection.instanceId &&
             option.selection.model === currentModelSelection.model
@@ -677,6 +688,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   // ── Menu handlers ────────────────────────────────────────
   function handleModelMenuAction(event: string) {
+    if (legacyThreadReadOnly) return;
     if (!event.startsWith("model:")) {
       return;
     }
@@ -740,6 +752,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             status={connectionStatus}
             onPress={props.onReconnectEnvironment}
           />
+        ) : null}
+
+        {legacyThreadReadOnly || currentModelOption === null ? (
+          <Text
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            className="px-2 pb-2 text-xs text-danger"
+          >
+            {legacyThreadReadOnly
+              ? "This legacy model is read-only. Start a new Pi task to continue."
+              : unavailableModelGuidance(props.serverConfig, currentModelSelection)}
+          </Text>
         ) : null}
 
         <ComposerSurface
@@ -828,7 +852,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ))}
               {props.draftAttachments.length > 3 ? (
                 <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
-                  <Text className="text-foreground-muted text-2xs font-t3-bold">
+                  <Text className="text-foreground-muted text-2xs font-starcode-bold">
                     +{props.draftAttachments.length - 3}
                   </Text>
                 </View>
@@ -866,15 +890,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   showChevron={false}
                 />
                 <ControlPillMenu
-                  actions={modelMenuActions}
+                  actions={legacyThreadReadOnly ? [] : modelMenuActions}
                   onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
                 >
                   <ComposerToolbarTrigger
-                    accessibilityLabel="Model"
+                    accessibilityLabel={legacyThreadReadOnly ? "Legacy model, read-only" : "Model"}
+                    icon={currentModelOption ? undefined : "exclamationmark.triangle"}
                     iconNode={
-                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                      currentModelOption ? (
+                        <ProviderIcon provider={currentModelOption.providerDriver} size={16} />
+                      ) : undefined
                     }
-                    label={currentModelOption?.label ?? currentModelSelection.model}
+                    label={currentModelOption?.label ?? "Unavailable model"}
                   />
                 </ControlPillMenu>
                 <ControlPillMenu

@@ -1,15 +1,17 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  AgentRun,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
+  isListableThread,
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
@@ -20,6 +22,8 @@ import {
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
+  ThreadAgentTurnStartCommand,
+  ThreadAgentTurnInterruptCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
@@ -33,6 +37,10 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadAgentTurnStartCommand = Schema.decodeUnknownEffect(ThreadAgentTurnStartCommand);
+const decodeThreadAgentTurnInterruptCommand = Schema.decodeUnknownEffect(
+  ThreadAgentTurnInterruptCommand,
+);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -42,6 +50,57 @@ const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSessi
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
+const decodeAgentRun = Schema.decodeUnknownSync(AgentRun);
+
+describe("AgentRun attached-agent attribution", () => {
+  it("decodes Pi and heterogeneous nested same-task ownership", () => {
+    const run = decodeAgentRun({
+      parentThreadId: "thread-parent",
+      provider: "pi",
+      providerInstanceId: "pi_work",
+      agentRunId: "agent:child",
+      parentAgentRunId: "agent:parent",
+      launchToolUseId: "agent:child",
+      taskType: "attached_agent",
+      agentType: "Pi agent",
+      model: "openai/gpt-5.4",
+      options: [{ id: "effort", value: "minimal" }],
+      description: "Review changes",
+      status: "running",
+      startedAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+      historySessionId: null,
+      transcriptState: "pending",
+    });
+    expect(run).toMatchObject({
+      provider: "pi",
+      providerInstanceId: "pi_work",
+      parentAgentRunId: "agent:parent",
+      options: [{ id: "effort", value: "minimal" }],
+    });
+  });
+
+  it("keeps legacy OpenCode agent-run history decodable", () => {
+    const run = decodeAgentRun({
+      parentThreadId: "thread-parent",
+      provider: "opencode",
+      agentRunId: "legacy-agent",
+      parentAgentRunId: null,
+      launchToolUseId: null,
+      taskType: "agent",
+      agentType: null,
+      model: "openai/gpt-5",
+      description: "Historical task",
+      status: "completed",
+      startedAt: "2025-08-01T00:00:00.000Z",
+      updatedAt: "2025-08-01T00:01:00.000Z",
+      historySessionId: null,
+      transcriptState: "unavailable",
+    });
+
+    expect(run.provider).toBe("opencode");
+  });
+});
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
@@ -53,6 +112,38 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+const legacyThreadWithoutAgentRuns = {
+  id: "thread-legacy",
+  projectId: "project-legacy",
+  title: "Legacy thread",
+  modelSelection: {
+    instanceId: "codex",
+    model: "gpt-5-codex",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  sideOfThreadId: null,
+  latestTurn: null,
+  createdAt: "2026-07-30T20:00:00.000Z",
+  updatedAt: "2026-07-30T20:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+};
+
+it.effect("decodes legacy thread payloads without agent runs", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeOrchestrationThread(legacyThreadWithoutAgentRuns);
+    assert.deepEqual(decoded.agentRuns, []);
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -251,6 +342,30 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("decodes interactive nested Pi turn commands without top-level thread fields", () =>
+  Effect.gen(function* () {
+    const start = yield* decodeThreadAgentTurnStartCommand({
+      type: "thread.agent.turn.start",
+      commandId: "cmd-agent-turn-1",
+      threadId: "thread-parent",
+      agentRunId: "agent:child",
+      message: { messageId: "msg-agent-1", role: "user", text: "continue" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const interrupt = yield* decodeThreadAgentTurnInterruptCommand({
+      type: "thread.agent.turn.interrupt",
+      commandId: "cmd-agent-interrupt-1",
+      threadId: "thread-parent",
+      agentRunId: "agent:child",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    assert.strictEqual(start.agentRunId, "agent:child");
+    assert.strictEqual(start.message.text, "continue");
+    assert.strictEqual(interrupt.agentRunId, "agent:child");
+    assert.ok(!("modelSelection" in start));
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -280,7 +395,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
         prepareWorktree: {
           projectCwd: "/tmp/workspace",
           baseBranch: "main",
-          branch: "t3code/example",
+          branch: "starcode/example",
           startFromOrigin: true,
         },
         runSetupScript: true,
@@ -348,36 +463,7 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
-it.effect("decodes thread settle and unsettle commands", () =>
-  Effect.gen(function* () {
-    const settle = yield* decodeOrchestrationCommand({
-      type: "thread.settle",
-      commandId: "cmd-settle-1",
-      threadId: "thread-1",
-    });
-    const unsettle = yield* decodeOrchestrationCommand({
-      type: "thread.unsettle",
-      commandId: "cmd-unsettle-1",
-      threadId: "thread-1",
-      reason: "user",
-    });
-
-    assert.strictEqual(settle.type, "thread.settle");
-    assert.strictEqual(unsettle.type, "thread.unsettle");
-
-    // "activity" is server-owned: it exists on the event, never on the
-    // command, so a client cannot forge the neutral reset.
-    const forged = yield* decodeOrchestrationCommand({
-      type: "thread.unsettle",
-      commandId: "cmd-unsettle-2",
-      threadId: "thread-1",
-      reason: "activity",
-    }).pipe(Effect.flip);
-    assert.ok(forged);
-  }),
-);
-
-it.effect("defaults settled fields when decoding historical thread data", () =>
+it.effect("defaults optional fields when decoding historical thread data", () =>
   Effect.gen(function* () {
     const common = {
       id: "thread-1",
@@ -410,10 +496,25 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
       hasActionableProposedPlan: false,
     });
 
-    assert.strictEqual(thread.settledOverride, null);
-    assert.strictEqual(thread.settledAt, null);
-    assert.strictEqual(shell.settledOverride, null);
-    assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(thread.archivedAt, null);
+    assert.strictEqual(shell.archivedAt, null);
+    // A shell from a server that predates the task-progress rollup omits the
+    // key entirely; clients read that as "this environment has no bar to draw".
+    assert.strictEqual(shell.planSummary, undefined);
+
+    const withPlan = yield* decodeOrchestrationThreadShell({
+      ...common,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      planSummary: { total: 4, completed: 2, activeStep: "Write the code" },
+    });
+    assert.deepStrictEqual(withPlan.planSummary, {
+      total: 4,
+      completed: 2,
+      activeStep: "Write the code",
+    });
   }),
 );
 
@@ -458,48 +559,6 @@ it.effect("decodes thread archived and unarchived events", () =>
     }
     assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
     assert.strictEqual(unarchived.type, "thread.unarchived");
-  }),
-);
-
-it.effect("decodes thread settled and unsettled events", () =>
-  Effect.gen(function* () {
-    const settled = yield* decodeOrchestrationEvent({
-      sequence: 1,
-      eventId: "event-settle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.settled",
-      occurredAt: "2026-01-01T00:00:00.000Z",
-      commandId: "cmd-settle-1",
-      causationEventId: null,
-      correlationId: "cmd-settle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        settledAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    });
-    const unsettled = yield* decodeOrchestrationEvent({
-      sequence: 2,
-      eventId: "event-unsettle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.unsettled",
-      occurredAt: "2026-01-02T00:00:00.000Z",
-      commandId: "cmd-unsettle-1",
-      causationEventId: null,
-      correlationId: "cmd-unsettle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        reason: "user",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-    });
-
-    assert.strictEqual(settled.type, "thread.settled");
-    assert.strictEqual(unsettled.type, "thread.unsettled");
   }),
 );
 
@@ -653,6 +712,25 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts a goal objective in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-plan-goal",
+      threadId: "thread-2",
+      message: {
+        messageId: "msg-plan-goal",
+        role: "user",
+        text: "implement this",
+        attachments: [],
+      },
+      goalObjective: "  Complete the approved plan and verify every item.  ",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.goalObjective, "Complete the approved plan and verify every item.");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -666,6 +744,7 @@ it.effect(
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
+      assert.strictEqual(parsed.goalObjective, undefined);
     }),
 );
 
@@ -684,6 +763,18 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
       threadId: "thread-1",
       planId: "plan-1",
     });
+  }),
+);
+
+it.effect("decodes thread.turn-start-requested goal metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-2",
+      messageId: "msg-2",
+      goalObjective: "Complete the approved plan and verify every item.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.goalObjective, "Complete the approved plan and verify every item.");
   }),
 );
 
@@ -727,7 +818,6 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       status: "idle",
       providerName: null,
       providerSessionId: null,
-      providerThreadId: null,
       activeTurnId: null,
       lastError: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -858,3 +948,25 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
     assert.strictEqual(result._tag, "Failure");
   }),
 );
+
+describe("isListableThread", () => {
+  it("hides archived threads, as every list already did", () => {
+    expect(isListableThread({ archivedAt: "2026-07-28T00:00:00.000Z" })).toBe(false);
+    expect(isListableThread({ archivedAt: null })).toBe(true);
+  });
+
+  it("hides side threads", () => {
+    // The whole point of /side is a conversation you do not have to file. One
+    // that showed up in the sidebar would read as a stray thread to clean up.
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: "thread-parent" })).toBe(false);
+  });
+
+  it("treats an absent marker as an ordinary thread", () => {
+    // Absent means "this server predates side threads", and a reader that
+    // distinguished that from "not a side thread" would show the thread either
+    // way — so collapsing them loses nothing and a stricter reading would hide
+    // every thread served by an older machine.
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: undefined })).toBe(true);
+    expect(isListableThread({ archivedAt: null, sideOfThreadId: null })).toBe(true);
+  });
+});

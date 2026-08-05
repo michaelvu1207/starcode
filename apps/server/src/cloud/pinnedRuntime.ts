@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 
 /**
  * A pinned runtime is an exact `t3@<version>` npm-installed into
@@ -36,6 +37,10 @@ export function pinnedRuntimePaths(
   const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
   return {
     versionDir,
+    // `t3`, not `starcode`: this is upstream's package as published on the public
+    // npm registry, not this workspace's. The rename to starcode stopped here on
+    // purpose — pointing it at `starcode` would resolve to a package that does
+    // not exist, and would only ever be reached with FORK_DISABLE_SELF_UPDATE off.
     entryPath: path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
@@ -59,11 +64,13 @@ export class PinnedRuntimeInstallError extends Schema.TaggedErrorClass<PinnedRun
 }
 
 /**
- * Installs `t3@<version>` into the pinned runtime directory unless a complete
- * install is already there, and returns its paths. The sentinel is written
- * only after npm exits 0; checking the entry file alone is not enough — npm
- * extracts files before running native builds (node-pty), so a killed
- * install leaves a plausible-looking but broken tree behind.
+ * The one place `t3@<version>` is fetched from the public npm registry, and so
+ * the one place this fork has to refuse — see FORK_DISABLE_SELF_UPDATE. Every
+ * caller (server self-update, `starcode service install|update`, the onboarding
+ * prompt) funnels through here, and refusing before the already-pinned check
+ * matters: a runtime installed earlier is still upstream's build, so handing
+ * back its paths would point a systemd unit at upstream code without touching
+ * the network. Callers running from a stable checkout never reach this.
  */
 export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   function* (input: {
@@ -73,83 +80,111 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     readonly path: Path.Path;
     readonly runner: ProcessRunner.ProcessRunner["Service"];
   }) {
-    const { fs, runner } = input;
-    const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
-
-    return yield* pinnedRuntimeInstallLock.withPermit(
-      Effect.gen(function* () {
-        const alreadyPinned = yield* Effect.all([
-          fs.exists(paths.sentinelPath),
-          fs.exists(paths.entryPath),
-        ]).pipe(
-          Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
-          ),
-        );
-        if (alreadyPinned) {
-          return paths;
-        }
-
-        yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-          Effect.andThen(fs.makeDirectory(paths.versionDir, { recursive: true })),
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({
-                step: "preparing the pinned runtime directory",
-                cause,
-              }),
-          ),
-        );
-
-        const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
-        yield* runner
-          .run({
-            command: "npm",
-            args: [
-              "install",
-              "--prefix",
-              paths.versionDir,
-              "--no-fund",
-              "--no-audit",
-              `t3@${input.version}`,
-            ],
-            // Native deps (node-pty) can compile from source on slow boxes; the
-            // ProcessRunner default of 60s would kill a healthy install.
-            timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
-          })
-          .pipe(
-            Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
-            Effect.filterOrFail(
-              (result) => result.code === 0,
-              (result) =>
-                new PinnedRuntimeInstallError({
-                  step: installStep,
-                  exitCode: Number(result.code),
-                  stdoutLength: result.stdout.length,
-                  stderrLength: result.stderr.length,
-                }),
-            ),
-            Effect.tapError(() =>
-              fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(Effect.ignore),
-            ),
-          );
-
-        yield* fs
-          .writeFileString(paths.sentinelPath, `${input.version}\n`)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
-            ),
-          );
-
-        return paths;
-      }),
-    );
+    if (FORK_DISABLE_SELF_UPDATE) {
+      // Phrased to read correctly through PinnedRuntimeInstallError.message,
+      // and kept starting with "installing" so bootService surfaces it as a
+      // BootServiceCommandError (which prints the step) rather than the
+      // catch-all BootServiceInstallError (which does not).
+      return yield* new PinnedRuntimeInstallError({
+        step:
+          `installing the pinned starcode runtime, which this fork disables: ` +
+          `\`npm install t3@${input.version}\` would replace this server with upstream's ` +
+          `published build. Update by pulling and rebuilding the fork checkout instead`,
+      });
+    }
+    return yield* installPinnedRuntime(input);
   },
 );
+
+/**
+ * Installs `t3@<version>` into the pinned runtime directory unless a complete
+ * install is already there, and returns its paths. The sentinel is written
+ * only after npm exits 0; checking the entry file alone is not enough — npm
+ * extracts files before running native builds (node-pty), so a killed
+ * install leaves a plausible-looking but broken tree behind.
+ */
+export const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.install")(function* (input: {
+  readonly baseDir: string;
+  readonly version: string;
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly runner: ProcessRunner.ProcessRunner["Service"];
+}) {
+  const { fs, runner } = input;
+  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
+
+  return yield* pinnedRuntimeInstallLock.withPermit(
+    Effect.gen(function* () {
+      const alreadyPinned = yield* Effect.all([
+        fs.exists(paths.sentinelPath),
+        fs.exists(paths.entryPath),
+      ]).pipe(
+        Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
+        Effect.mapError(
+          (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
+        ),
+      );
+      if (alreadyPinned) {
+        return paths;
+      }
+
+      yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
+        Effect.andThen(fs.makeDirectory(paths.versionDir, { recursive: true })),
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({
+              step: "preparing the pinned runtime directory",
+              cause,
+            }),
+        ),
+      );
+
+      const installStep = "installing the pinned starcode runtime (this can take a few minutes)";
+      yield* runner
+        .run({
+          command: "npm",
+          args: [
+            "install",
+            "--prefix",
+            paths.versionDir,
+            "--no-fund",
+            "--no-audit",
+            `t3@${input.version}`,
+          ],
+          // Native deps (node-pty) can compile from source on slow boxes; the
+          // ProcessRunner default of 60s would kill a healthy install.
+          timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
+        })
+        .pipe(
+          Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
+          Effect.filterOrFail(
+            (result) => result.code === 0,
+            (result) =>
+              new PinnedRuntimeInstallError({
+                step: installStep,
+                exitCode: Number(result.code),
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+          ),
+          Effect.tapError(() =>
+            fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(Effect.ignore),
+          ),
+        );
+
+      yield* fs
+        .writeFileString(paths.sentinelPath, `${input.version}\n`)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
+          ),
+        );
+
+      return paths;
+    }),
+  );
+});
 
 /** Removes one pinned runtime while holding the same process-wide lock used
  * by install/check/sentinel work, so cleanup cannot race another caller that

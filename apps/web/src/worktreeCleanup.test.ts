@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
@@ -22,12 +22,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     checkpoints: [],
     activities: [],
+    agentRuns: [],
     proposedPlans: [],
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
     deletedAt: null,
     latestTurn: null,
     branch: null,
@@ -88,19 +87,19 @@ describe("getOrphanedWorktreePathForThread", () => {
 describe("formatWorktreePathForDisplay", () => {
   it("shows only the last path segment for unix-like paths", () => {
     const result = formatWorktreePathForDisplay(
-      "/Users/julius/.t3/worktrees/t3code-mvp/t3code-4e609bb8",
+      "/Users/julius/.starcode/worktrees/starcode-mvp/starcode-4e609bb8",
     );
-    expect(result).toBe("t3code-4e609bb8");
+    expect(result).toBe("starcode-4e609bb8");
   });
 
   it("normalizes windows separators before selecting the final segment", () => {
     const result = formatWorktreePathForDisplay(
-      "C:\\Users\\julius\\.t3\\worktrees\\t3code-mvp\\t3code-4e609bb8",
+      "C:\\Users\\julius\\.t3\\worktrees\\starcode-mvp\\starcode-4e609bb8",
     );
-    expect(result).toBe("t3code-4e609bb8");
+    expect(result).toBe("starcode-4e609bb8");
   });
 
-  it("uses the final segment even when outside ~/.t3/worktrees", () => {
+  it("uses the final segment even when outside ~/.starcode/worktrees", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree");
     expect(result).toBe("my-worktree");
   });

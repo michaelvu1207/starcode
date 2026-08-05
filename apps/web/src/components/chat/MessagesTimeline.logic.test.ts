@@ -5,6 +5,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  summarizeWorkLogGroup,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -203,6 +204,36 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("summarizeWorkLogGroup", () => {
+  it("does not count approval lifecycle rows as extra commands or edits", () => {
+    expect(
+      summarizeWorkLogGroup(
+        [
+          {
+            id: "approval-1",
+            createdAt: "2026-08-01T00:00:00.000Z",
+            label: "Approval resolved",
+            tone: "info",
+            requestKind: "command",
+            sourceActivityKind: "approval.resolved",
+            toolLifecycleStatus: "completed",
+          },
+          {
+            id: "command-1",
+            createdAt: "2026-08-01T00:00:01.000Z",
+            label: "bash",
+            tone: "tool",
+            itemType: "command_execution",
+            command: "printf pi-ok",
+            toolLifecycleStatus: "completed",
+          },
+        ],
+        true,
+      ),
+    ).toBe("Ran a command");
   });
 });
 
@@ -676,6 +707,53 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps a stopped tool result visible inside an expanded interrupted turn", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "stopped-tool-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "stopped-tool",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-1" as never,
+            label: "sleep 30",
+            tone: "tool" as const,
+            detail: "Command aborted",
+            toolLifecycleStatus: "stopped" as const,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "interrupted",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:08Z",
+      },
+      expandedTurnIds: new Set(["turn-1" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "work",
+          groupedEntries: [
+            expect.objectContaining({
+              id: "stopped-tool",
+              detail: "Command aborted",
+              toolLifecycleStatus: "stopped",
+            }),
+          ],
+        }),
+      ]),
+    );
+  });
+
   it("keeps the previous turn folded while a newly sent message awaits its turn", () => {
     // Right after send, isWorking is true but latestTurn still points at the
     // previous, settled turn — it must stay folded through that window.
@@ -786,11 +864,15 @@ describe("deriveMessagesTimelineRows", () => {
       revertTurnCountByUserMessageId: new Map(),
     });
 
-    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    // The running turn gets a header, but it hides nothing — the trail below it
+    // stays visible while the work happens. The header carries the running
+    // state, so the standalone "Working…" row is not also emitted.
+    const foldRow = rows.find((row) => row.kind === "turn-fold");
+    expect(foldRow).toMatchObject({ running: true, expanded: true });
     expect(rows.map((row) => row.id)).toEqual([
+      "turn-fold:turn-1",
       "assistant-thought-entry",
       "work-entry-1",
-      "working-indicator-row",
     ]);
   });
 
@@ -849,9 +931,15 @@ describe("deriveMessagesTimelineRows", () => {
       revertTurnCountByUserMessageId: new Map(),
     });
 
-    expect(rows.filter((row) => row.kind === "turn-fold").map((row) => row.turnId)).toEqual([
-      "turn-1",
-    ]);
+    // Both turns get a header, but only the settled one folds anything away.
+    // The running turn's header is the "Working for …" state of the same row.
+    const foldRows = rows.filter((row) => row.kind === "turn-fold");
+    expect(foldRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+    expect(foldRows.find((row) => row.turnId === "turn-2")).toMatchObject({
+      running: true,
+      expanded: true,
+    });
+    expect(foldRows.find((row) => row.turnId === "turn-1")).toMatchObject({ running: false });
     expect(rows.map((row) => row.id)).toContain("running-work-entry");
   });
 
@@ -994,20 +1082,22 @@ describe("deriveMessagesTimelineRows", () => {
       expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
     });
 
-    expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
-    expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
+    // Collapsed, the run is one summary line — not the last entry plus a
+    // "+N previous" affordance.
+    expect(collapsedRows.map((row) => row.id)).toEqual(["work-group-summary:work-entry-1"]);
+    expect(collapsedRows.find((row) => row.kind === "work-group-summary")).toMatchObject({
       groupId: "work-group:work-entry-1",
-      hiddenCount: 2,
+      entryCount: 3,
       expanded: false,
-      onlyToolEntries: true,
     });
+    // Expanded, the summary stays as the header and the lines appear beneath it.
     expect(expandedRows.map((row) => row.id)).toEqual([
+      "work-group-summary:work-entry-1",
       "work-1",
       "work-2",
       "work-3",
-      "work-toggle:work-entry-1",
     ]);
-    expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
+    expect(expandedRows.find((row) => row.kind === "work-group-summary")).toMatchObject({
       expanded: true,
     });
   });

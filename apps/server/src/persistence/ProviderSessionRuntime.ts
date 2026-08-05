@@ -15,7 +15,7 @@ import {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import {
   PersistenceDecodeError,
@@ -58,6 +58,19 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const HasTerminalAttachedAgentProjectionInput = Schema.Struct({
+  parentThreadId: ThreadId,
+  providerName: Schema.String,
+  agentRunId: Schema.String,
+});
+export type HasTerminalAttachedAgentProjectionInput =
+  typeof HasTerminalAttachedAgentProjectionInput.Type;
+
+export const HasRecoverableProjectedTurnInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type HasRecoverableProjectedTurnInput = typeof HasRecoverableProjectedTurnInput.Type;
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -94,13 +107,33 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     >;
 
     /**
+     * Check the canonical AgentRun projection before reviving an attached
+     * provider session. A process can stop after publishing task.completed
+     * but before marking its provider binding stopped; in that narrow gap the
+     * projection is authoritative and the stale binding must not run again.
+     */
+    readonly hasTerminalAttachedAgentProjection: (
+      input: HasTerminalAttachedAgentProjectionInput,
+    ) => Effect.Effect<boolean, ProviderSessionRuntimeRepositoryError>;
+
+    /**
+     * Detect the narrow legacy restart state produced by older graceful
+     * shutdowns: provider runtime was rewritten to stopped even though the
+     * canonical projection still owns a running active turn. This lets startup
+     * repair that state without reviving intentionally stopped sessions.
+     */
+    readonly hasRecoverableProjectedTurn: (
+      input: HasRecoverableProjectedTurnInput,
+    ) => Effect.Effect<boolean, ProviderSessionRuntimeRepositoryError>;
+
+    /**
      * Delete provider runtime state by canonical thread id.
      */
     readonly deleteByThreadId: (
       input: DeleteProviderSessionRuntimeInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
   }
->()("t3/persistence/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}
+>()("starcode/persistence/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}
 
 const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
   Struct.assign({
@@ -226,6 +259,39 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const findTerminalAttachedAgentProjection = SqlSchema.findOneOption({
+    Request: HasTerminalAttachedAgentProjectionInput,
+    Result: Schema.Struct({ found: Schema.Number }),
+    execute: ({ parentThreadId, providerName, agentRunId }) =>
+      sql`
+        SELECT 1 AS found
+        FROM projection_agent_runs
+        WHERE parent_thread_id = ${parentThreadId}
+          AND provider = ${providerName}
+          AND agent_run_id = ${agentRunId}
+          AND status IN ('completed', 'failed', 'stopped')
+        LIMIT 1
+      `,
+  });
+
+  const findRecoverableProjectedTurn = SqlSchema.findOneOption({
+    Request: HasRecoverableProjectedTurnInput,
+    Result: Schema.Struct({ found: Schema.Number }),
+    execute: ({ threadId }) =>
+      sql`
+        SELECT 1 AS found
+        FROM projection_thread_sessions AS sessions
+        INNER JOIN projection_turns AS turns
+          ON turns.thread_id = sessions.thread_id
+          AND turns.turn_id = sessions.active_turn_id
+        WHERE sessions.thread_id = ${threadId}
+          AND sessions.status = 'running'
+          AND sessions.active_turn_id IS NOT NULL
+          AND turns.state = 'running'
+        LIMIT 1
+      `,
+  });
+
   const deleteRuntimeByThreadId = SqlSchema.void({
     Request: DeleteRuntimeRequestSchema,
     execute: ({ threadId }) =>
@@ -308,6 +374,32 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const hasTerminalAttachedAgentProjection: ProviderSessionRuntimeRepository["Service"]["hasTerminalAttachedAgentProjection"] =
+    (input) =>
+      findTerminalAttachedAgentProjection(input).pipe(
+        Effect.map(Option.isSome),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.hasTerminalAttachedAgentProjection:query",
+            "ProviderSessionRuntimeRepository.hasTerminalAttachedAgentProjection:decodeRow",
+            { threadId: input.parentThreadId },
+          ),
+        ),
+      );
+
+  const hasRecoverableProjectedTurn: ProviderSessionRuntimeRepository["Service"]["hasRecoverableProjectedTurn"] =
+    (input) =>
+      findRecoverableProjectedTurn(input).pipe(
+        Effect.map(Option.isSome),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.hasRecoverableProjectedTurn:query",
+            "ProviderSessionRuntimeRepository.hasRecoverableProjectedTurn:decodeRow",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
   const deleteByThreadId: ProviderSessionRuntimeRepository["Service"]["deleteByThreadId"] = (
     input,
   ) =>
@@ -326,6 +418,8 @@ export const make = Effect.gen(function* () {
     upsert,
     getByThreadId,
     list,
+    hasTerminalAttachedAgentProjection,
+    hasRecoverableProjectedTurn,
     deleteByThreadId,
   } satisfies ProviderSessionRuntimeRepository["Service"];
 });

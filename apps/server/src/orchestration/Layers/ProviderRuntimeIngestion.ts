@@ -1,35 +1,50 @@
 import {
   ApprovalRequestId,
-  type AssistantDeliveryMode,
+  AUTOMATIC_THREAD_TITLE_SOURCES,
+  CheckpointRef,
   CommandId,
+  isToolLifecycleItemType,
   MessageId,
+  resolveThreadTitleSource,
+  ThreadId,
+  ThreadTitleSource,
+  TurnId,
+  type AssistantDeliveryMode,
+  type OrchestrationCheckpointSummary,
   type OrchestrationEvent,
   type OrchestrationMessage,
-  type OrchestrationProposedPlanId,
-  CheckpointRef,
-  isToolLifecycleItemType,
-  ThreadId,
-  type ThreadTokenUsageSnapshot,
-  TurnId,
-  type OrchestrationCheckpointSummary,
+  EventId,
+  ProviderDriverKind,
+  RuntimeTaskId,
+  type IsoDateTime,
   type OrchestrationProposedPlan,
+  type OrchestrationProposedPlanId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+  type ThreadTokenUsageSnapshot,
+} from "@starcode/contracts";
 import * as Cache from "effect/Cache";
+import { proposedPlanTitle } from "@starcode/shared/proposedPlanTitle";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@starcode/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { readAttachedAgentStartupRecovery } from "../../provider/AttachedAgentHost.ts";
+import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
+import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { recordUsageFromRuntimeEvent } from "../../usage/ingest.ts";
+import { normalizeTurnTokens } from "../../usage/normalize.ts";
+import { UsageStore, layer as UsageStoreLive } from "../../usage/UsageStore.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -54,7 +69,14 @@ function findTaskTitleInActivities(
   }
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (!activity || (activity.kind !== "task.started" && activity.kind !== "task.progress")) {
+    if (
+      !activity ||
+      (activity.kind !== "task.started" &&
+        activity.kind !== "task.progress" &&
+        // Fork: a patch can rename a task, so it is a title source like the
+        // other two. Left out, a renamed task would keep its original label.
+        activity.kind !== "task.updated")
+    ) {
       continue;
     }
     const payload =
@@ -92,7 +114,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
-const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const STRICT_PROVIDER_LIFECYCLE_GUARD =
+  process.env.STARCODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -202,6 +225,135 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+/**
+ * Budget for captured process output.
+ *
+ * `detail` is a one-line row label and stays at ~180 chars, but output is
+ * rendered as a scrollable block, so it gets a far larger allowance. The cap
+ * exists to bound event-store and websocket payloads, not to keep the label
+ * short — a full test run should survive it.
+ */
+const OUTPUT_CHAR_LIMIT = 16_000;
+
+/**
+ * Keep the tail rather than the head: the interesting part of a failing
+ * command's output — the error, the summary line, the exit status — is at the
+ * end, and the UI is bottom-anchored for the same reason.
+ */
+function truncateOutput(value: string): { output: string; truncated: boolean } {
+  if (value.length <= OUTPUT_CHAR_LIMIT) {
+    return { output: value, truncated: false };
+  }
+  return { output: value.slice(value.length - OUTPUT_CHAR_LIMIT), truncated: true };
+}
+
+/** The runtime event's session sequence, when the provider stamped one. */
+function runtimeEventSequence(event: ProviderRuntimeEvent): number | undefined {
+  return (event as ProviderRuntimeEvent & { sessionSequence?: number }).sessionSequence;
+}
+
+/**
+ * The provider's own item id, echoed into the activity payload as `itemId`.
+ *
+ * This is the join key that lets the client fold `tool.started` →
+ * `tool.updated` → `tool.completed` into one row. Every adapter already stamps
+ * `itemId` on all three, whereas `data.toolCallId` is only populated by ACP —
+ * so without this the client is left matching on labels, which collapses two
+ * genuinely different calls to the same command into one row.
+ */
+function itemJoinKeyFields(event: ProviderRuntimeEvent): Record<string, unknown> {
+  const itemId = typeof event.itemId === "string" ? event.itemId.trim() : "";
+  return itemId.length > 0 ? { itemId } : {};
+}
+
+/**
+ * The Task call an item belongs to, when a subagent produced it.
+ *
+ * Carried onto every activity so a client can partition one thread's activity
+ * stream into per-agent transcripts without a second query. Absent on
+ * main-thread items, which is what keeps their payloads byte-identical to what
+ * a server without subagent forwarding produced.
+ */
+function subagentJoinKeyFields(payload: {
+  readonly parentToolUseId?: string | undefined;
+}): Record<string, unknown> {
+  const parent = payload.parentToolUseId?.trim() ?? "";
+  return parent.length > 0 ? { parentToolUseId: parent } : {};
+}
+
+/**
+ * True when an item event came from a subagent.
+ *
+ * Item events are normally filtered down to tool lifecycle types, because
+ * assistant text and reasoning reach the transcript through the message and
+ * reasoning paths instead. Subagent items have no such path — the agent's
+ * transcript *is* its activity stream — so for those the filter is skipped and
+ * every item type becomes an activity.
+ */
+function isSubagentItemEvent(payload: { readonly parentToolUseId?: string | undefined }): boolean {
+  return (payload.parentToolUseId?.trim().length ?? 0) > 0;
+}
+
+/**
+ * Activity kind for a subagent item, mirroring the main thread's vocabulary
+ * where one exists so clients can reuse their row renderers.
+ */
+function subagentActivityKind(itemType: string, lifecycle: "started" | "updated" | "completed") {
+  if (itemType === "user_message") return "agent.user.message";
+  if (itemType === "assistant_message") return "agent.message";
+  if (itemType === "reasoning") return "agent.reasoning";
+  return `tool.${lifecycle}`;
+}
+
+/** An agent's prose is narration, not tool work, so it takes the info tone. */
+function subagentActivityTone(kind: string): "info" | "tool" {
+  return kind.startsWith("agent.") ? "info" : "tool";
+}
+
+/**
+ * Row label for an item activity.
+ *
+ * Tool rows are titled by the adapter ("Command run"), but an agent's message
+ * has no title and its text *is* the label — so for those the detail is
+ * promoted rather than falling through to a generic "Tool".
+ */
+function itemActivitySummary(
+  payload: { readonly title?: string | undefined; readonly detail?: string | undefined },
+  kind: string,
+  fallback: string,
+): string {
+  if (payload.title) {
+    return payload.title;
+  }
+  if (kind.startsWith("agent.") && payload.detail) {
+    return truncateDetail(payload.detail);
+  }
+  return kind === "agent.reasoning" ? "Thinking" : kind === "agent.message" ? "Agent" : fallback;
+}
+
+/** Payload fragment carrying captured output, for spreading into an activity. */
+function outputPayloadFields(payload: {
+  readonly output?: string | undefined;
+  readonly exitCode?: number | undefined;
+  readonly linesAdded?: number | undefined;
+  readonly linesRemoved?: number | undefined;
+}): Record<string, unknown> {
+  const statFields = {
+    ...(payload.exitCode !== undefined ? { exitCode: payload.exitCode } : {}),
+    ...(payload.linesAdded !== undefined ? { linesAdded: payload.linesAdded } : {}),
+    ...(payload.linesRemoved !== undefined ? { linesRemoved: payload.linesRemoved } : {}),
+  };
+  if (payload.output === undefined || payload.output.length === 0) {
+    return statFields;
+  }
+  const { output, truncated } = truncateOutput(payload.output);
+  return {
+    output,
+    ...(truncated ? { outputTruncated: true } : {}),
+    ...statFields,
+  };
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -338,8 +490,10 @@ export function runtimeEventToActivities(
                   : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
+            ...subagentJoinKeyFields(event.payload),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
+            status: "inProgress",
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -362,9 +516,17 @@ export function runtimeEventToActivities(
           summary: "Approval resolved",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
+            ...subagentJoinKeyFields(event.payload),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.decision ? { decision: event.payload.decision } : {}),
+            status:
+              event.payload.decision === "decline"
+                ? "declined"
+                : event.payload.decision === "cancel"
+                  ? "stopped"
+                  : "completed",
+            ...(event.payload.detail ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -382,6 +544,8 @@ export function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            detail: truncateDetail(event.payload.message),
+            ...subagentJoinKeyFields(event.payload),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -459,6 +623,7 @@ export function runtimeEventToActivities(
           summary: "User input requested",
           payload: {
             ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...subagentJoinKeyFields(event.payload),
             questions: event.payload.questions,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -477,6 +642,7 @@ export function runtimeEventToActivities(
           summary: "User input submitted",
           payload: {
             ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...subagentJoinKeyFields(event.payload),
             answers: event.payload.answers,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -500,9 +666,31 @@ export function runtimeEventToActivities(
                 : "Task started",
           payload: {
             taskId: event.payload.taskId,
+            ...subagentJoinKeyFields(event.payload),
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
+              : {}),
+            // Fork: carried through so a tasks panel can fold these activities
+            // into per-subagent rows. Nothing existing reads them.
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.model ? { model: event.payload.model } : {}),
+            ...(event.payload.options ? { options: event.payload.options } : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
+            ...(event.payload.parentNativeSessionId
+              ? { parentNativeSessionId: event.payload.parentNativeSessionId }
+              : {}),
+            ...(event.payload.providerInstanceId
+              ? { providerInstanceId: event.payload.providerInstanceId }
+              : {}),
+            ...(event.payload.providerDriver
+              ? { providerDriver: event.payload.providerDriver }
+              : {}),
+            ...(event.payload.parentAgentRunId
+              ? { parentAgentRunId: event.payload.parentAgentRunId }
               : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -524,6 +712,7 @@ export function runtimeEventToActivities(
               : "Reasoning update",
           payload: {
             taskId: event.payload.taskId,
+            ...subagentJoinKeyFields(event.payload),
             ...(event.payload.description.trim().length > 0
               ? { title: truncateDetail(event.payload.description, 120) }
               : {}),
@@ -531,6 +720,52 @@ export function runtimeEventToActivities(
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    /**
+     * Fork: the state patch between start and finish.
+     *
+     * Tone follows the status rather than being flat info — a killed or failed
+     * subagent is not a neutral progress note, and a work log that renders it
+     * as one buries the one line the reader needed.
+     */
+    case "task.updated": {
+      const status = event.payload.status;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: status === "failed" || status === "killed" ? "error" : "info",
+          kind: "task.updated",
+          summary:
+            status === "killed"
+              ? "Task killed"
+              : status === "failed"
+                ? "Task failed"
+                : status === "paused"
+                  ? "Task paused"
+                  : "Task updated",
+          payload: {
+            taskId: event.payload.taskId,
+            ...subagentJoinKeyFields(event.payload),
+            ...(status ? { status } : {}),
+            ...(event.payload.description
+              ? { title: truncateDetail(event.payload.description, 120) }
+              : {}),
+            ...(event.payload.error ? { detail: truncateDetail(event.payload.error) } : {}),
+            ...(event.payload.isBackgrounded !== undefined
+              ? { isBackgrounded: event.payload.isBackgrounded }
+              : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -553,6 +788,7 @@ export function runtimeEventToActivities(
                 : "Task completed",
           payload: {
             taskId: event.payload.taskId,
+            ...subagentJoinKeyFields(event.payload),
             status: event.payload.status,
             ...(taskTitle ? { title: truncateDetail(taskTitle, 120) } : {}),
             // summary + detail mirror task.progress: clients label the row from
@@ -564,6 +800,10 @@ export function runtimeEventToActivities(
                 }
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.historySessionId
+              ? { historySessionId: event.payload.historySessionId }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -614,20 +854,28 @@ export function runtimeEventToActivities(
     }
 
     case "item.updated": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
+          tone: subagentActivityTone(subagentActivityKind(event.payload.itemType, "updated")),
+          kind: subagentActivityKind(event.payload.itemType, "updated"),
+          summary: itemActivitySummary(
+            event.payload,
+            subagentActivityKind(event.payload.itemType, "updated"),
+            "Tool updated",
+          ),
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
             ...(event.payload.status ? { status: event.payload.status } : {}),
+            ...(event.payload.title ? { title: truncateDetail(event.payload.title, 120) } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...outputPayloadFields(event.payload),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -637,19 +885,25 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
+      const completedKind = subagentActivityKind(event.payload.itemType, "completed");
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.completed",
-          summary: event.payload.title ?? "Tool",
+          tone: subagentActivityTone(completedKind),
+          kind: completedKind,
+          summary: itemActivitySummary(event.payload, completedKind, "Tool"),
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
+            ...(event.payload.status ? { status: event.payload.status } : {}),
+            ...(event.payload.title ? { title: truncateDetail(event.payload.title, 120) } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...outputPayloadFields(event.payload),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -659,19 +913,28 @@ export function runtimeEventToActivities(
     }
 
     case "item.started": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      if (!isToolLifecycleItemType(event.payload.itemType) && !isSubagentItemEvent(event.payload)) {
         return [];
       }
+      const startedKind = subagentActivityKind(event.payload.itemType, "started");
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
+          tone: subagentActivityTone(startedKind),
+          kind: startedKind,
+          // No "started" suffix: the client renders the verb from lifecycle
+          // status ("Running …" vs "Ran …"), so baking tense into the summary
+          // here would fight the phrasing layer and double up.
+          summary: itemActivitySummary(event.payload, startedKind, "Tool"),
           payload: {
             itemType: event.payload.itemType,
+            ...itemJoinKeyFields(event),
+            ...subagentJoinKeyFields(event.payload),
+            status: event.payload.status ?? "inProgress",
+            ...(event.payload.title ? { title: truncateDetail(event.payload.title, 120) } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -692,7 +955,9 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const usageStore = yield* UsageStore;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -732,6 +997,137 @@ const make = Effect.gen(function* () {
     timeToLive: TASK_DESCRIPTION_BY_TASK_TTL,
     lookup: () => Effect.succeed(""),
   });
+
+  // Reasoning arrives as a token stream but reads as paragraphs, so it is
+  // accumulated per summary part and republished under a stable activity id.
+  // Activities upsert by id all the way down (reducer, projector, and the
+  // projection repository), so re-emitting the same id grows one row in place
+  // rather than appending a row per token.
+  // `createdAt` and `sequence` are pinned to the part's first delta and reused
+  // on every republish. Re-stamping them would move the paragraph later in the
+  // transcript each time it grew, so reasoning would visibly drift downward
+  // past the tool calls it was explaining.
+  const reasoningTextByPartKey = yield* Cache.make<
+    string,
+    { text: string; createdAt: IsoDateTime; sequence: number | undefined }
+  >({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () =>
+      Effect.die(
+        new Error("reasoning buffers must be read through getOption before initialization"),
+      ),
+  });
+  const nestedTextByItemKey = yield* Cache.make<
+    string,
+    { text: string; createdAt: IsoDateTime; sequence: number | undefined }
+  >({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.die(new Error("nested text buffers must be read through getOption first")),
+  });
+
+  const reasoningPartKey = (threadId: ThreadId, turnKey: string, partIndex: number) =>
+    `${threadId}${turnKey}${partIndex}`;
+
+  /**
+   * Republish cadence for in-flight reasoning.
+   *
+   * Every token would mean an event-store write per token; waiting for the
+   * part to finish would mean reasoning appears only after it stops being
+   * interesting. A few hundred characters is roughly a sentence, which is the
+   * granularity the text reads at anyway.
+   */
+  const REASONING_REPUBLISH_CHARS = 320;
+
+  /**
+   * Upper bound when sweeping a turn's reasoning parts at flush time. Real
+   * turns produce a handful; this only has to be larger than that, and bounds
+   * the sweep for a provider that decides otherwise.
+   */
+  const REASONING_MAX_PARTS_PER_TURN = 256;
+
+  /**
+   * Publish (or republish) one reasoning paragraph as an activity.
+   *
+   * The id is synthetic and derived from the part's coordinates rather than
+   * from `event.eventId`, which is what makes republishing land on the same row
+   * instead of stacking a new one per flush.
+   */
+  const emitReasoningActivity = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnKey: string;
+    readonly partIndex: number;
+    readonly buffered: {
+      readonly text: string;
+      readonly createdAt: IsoDateTime;
+      readonly sequence: number | undefined;
+    };
+  }) =>
+    Effect.gen(function* () {
+      const text = input.buffered.text.trim();
+      if (text.length === 0) {
+        return;
+      }
+      const { output } = truncateOutput(text);
+      const activityId = EventId.make(
+        `reasoning:${input.threadId}:${input.turnKey}:${input.partIndex}`,
+      );
+      const commandId = yield* providerCommandId(input.event, "reasoning-activity");
+      yield* orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId,
+        threadId: input.threadId,
+        activity: {
+          id: activityId,
+          createdAt: input.buffered.createdAt,
+          tone: "info",
+          kind: "reasoning",
+          // The summary is the row label for surfaces that only show labels;
+          // the full paragraph lives in the payload and is what gets rendered
+          // as prose.
+          summary: truncateDetail(output, 120),
+          payload: { text: output, partIndex: input.partIndex },
+          turnId: toTurnId(input.event.turnId) ?? null,
+          // Carried so reasoning interleaves with tool activity: the ordering
+          // comparator sorts every activity that lacks a sequence ahead of
+          // every activity that has one, which would strand reasoning at the
+          // top of the thread.
+          ...(input.buffered.sequence !== undefined ? { sequence: input.buffered.sequence } : {}),
+        },
+        createdAt: input.buffered.createdAt,
+      });
+    });
+
+  /** Republish every buffered reasoning part for a turn and drop the buffers. */
+  const flushReasoningForTurn = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnKey: string;
+    readonly createdAt: IsoDateTime;
+  }) =>
+    Effect.gen(function* () {
+      // Parts are sparse and small in number, so probing indices is cheaper
+      // than keeping a second index of which parts a turn opened.
+      for (let partIndex = 0; partIndex < REASONING_MAX_PARTS_PER_TURN; partIndex += 1) {
+        const partKey = reasoningPartKey(input.threadId, input.turnKey, partIndex);
+        const buffered = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        if (!buffered || buffered.text.length === 0) {
+          continue;
+        }
+        yield* emitReasoningActivity({
+          event: input.event,
+          threadId: input.threadId,
+          turnKey: input.turnKey,
+          partIndex,
+          buffered,
+        });
+        yield* Cache.invalidate(reasoningTextByPartKey, partKey);
+      }
+    });
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
@@ -1124,6 +1520,57 @@ const make = Effect.gen(function* () {
       });
     });
 
+  /**
+   * Renames a thread to the plan it just proposed.
+   *
+   * A thread is named before anyone knows what it is for: either "New thread"
+   * or a guess the first-turn titler made from the opening message. A plan is
+   * the first time the work states its own name, so it is the best title the
+   * thread will ever have — and the sidebar is where that matters, because a
+   * list of threads called "Investigate the thing" is a list you cannot scan.
+   *
+   * Never touches a title a person typed. That is the whole reason provenance
+   * is tracked: silently renaming somebody's thread is worse than leaving a
+   * stale name on it.
+   */
+  const maybeRenameThreadToPlan = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    currentTitle: string;
+    currentTitleSource: ThreadTitleSource | undefined;
+    planMarkdown: string;
+  }) =>
+    Effect.gen(function* () {
+      if (
+        !AUTOMATIC_THREAD_TITLE_SOURCES.includes(resolveThreadTitleSource(input.currentTitleSource))
+      ) {
+        return;
+      }
+      const title = proposedPlanTitle(input.planMarkdown);
+      // No heading is a plan that never named itself; a title identical to the
+      // current one is a replan that landed on the same name. Both are a
+      // no-op, and dispatching either would put a pointless rename in history.
+      if (!title || title === input.currentTitle) {
+        return;
+      }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* providerCommandId(input.event, "thread-title-from-plan"),
+        threadId: input.threadId,
+        title,
+        titleSource: "plan",
+      });
+    }).pipe(
+      // A rename is a courtesy on top of persisting the plan. If it fails, the
+      // plan is still saved and the thread keeps its old name.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to rename thread to its proposed plan", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const finalizeBufferedProposedPlan = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
@@ -1137,6 +1584,9 @@ const make = Effect.gen(function* () {
     turnId?: TurnId;
     fallbackMarkdown?: string;
     updatedAt: string;
+    /** Current name and provenance, so the rename can refuse a human's title. */
+    currentTitle?: string;
+    currentTitleSource?: ThreadTitleSource | undefined;
   }) =>
     Effect.gen(function* () {
       const bufferedPlan = yield* takeBufferedProposedPlan(input.planId);
@@ -1161,6 +1611,16 @@ const make = Effect.gen(function* () {
         updatedAt: input.updatedAt,
       });
       yield* clearBufferedProposedPlan(input.planId);
+
+      if (input.currentTitle !== undefined) {
+        yield* maybeRenameThreadToPlan({
+          event: input.event,
+          threadId: input.threadId,
+          currentTitle: input.currentTitle,
+          currentTitleSource: input.currentTitleSource,
+          planMarkdown,
+        });
+      }
     });
 
   const clearTurnStateForSession = (threadId: ThreadId) =>
@@ -1292,6 +1752,11 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      // Ahead of the thread lookup: rate limits describe the account, not the
+      // thread, and are worth recording even for an event whose thread this
+      // server no longer knows about.
+      yield* recordUsageFromRuntimeEvent(usageStore, event);
+
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
@@ -1306,6 +1771,107 @@ const make = Effect.gen(function* () {
         });
 
       const now = event.createdAt;
+
+      if (
+        event.type === "content.delta" &&
+        isSubagentItemEvent(event.payload) &&
+        event.itemId !== undefined &&
+        (event.payload.streamKind === "assistant_text" ||
+          event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text")
+      ) {
+        const parentToolUseId = event.payload.parentToolUseId!;
+        const key = `${thread.id}\u001f${parentToolUseId}\u001f${event.itemId}`;
+        const existing = yield* Cache.getOption(nestedTextByItemKey, key).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        const next = {
+          text: `${existing?.text ?? ""}${event.payload.delta}`,
+          createdAt: existing?.createdAt ?? now,
+          sequence: existing?.sequence ?? runtimeEventSequence(event),
+        };
+        yield* Cache.set(nestedTextByItemKey, key, next);
+        const shouldPublish =
+          existing === undefined ||
+          Math.floor(next.text.length / 160) > Math.floor(existing.text.length / 160);
+        if (shouldPublish && next.text.trim().length > 0) {
+          const reasoning = event.payload.streamKind !== "assistant_text";
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: yield* providerCommandId(event, "nested-text-activity"),
+            threadId: thread.id,
+            activity: {
+              id: EventId.make(`nested-text:${thread.id}:${parentToolUseId}:${event.itemId}`),
+              createdAt: next.createdAt,
+              tone: "info",
+              kind: reasoning ? "agent.reasoning" : "agent.message",
+              summary: reasoning ? "Pi reasoning" : "Pi response",
+              payload: {
+                itemId: event.itemId,
+                parentToolUseId,
+                status: "inProgress",
+                output: truncateOutput(next.text).output,
+              },
+              turnId: toTurnId(event.turnId) ?? null,
+              ...(next.sequence !== undefined ? { sequence: next.sequence } : {}),
+            },
+            createdAt: next.createdAt,
+          });
+        }
+      }
+
+      if (event.type === "thread.goal.updated" || event.type === "thread.goal.cleared") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId: yield* providerCommandId(event, "thread-goal-sync"),
+          threadId: thread.id,
+          goal: event.type === "thread.goal.updated" ? event.payload.goal : null,
+          observedAt:
+            event.type === "thread.goal.updated"
+              ? event.payload.goal.updatedAt
+              : event.payload.observedAt,
+          createdAt: now,
+        });
+        return;
+      }
+
+      if (event.type === "turn.completed" && thread.session?.providerName === "claudeAgent") {
+        const detailedThread = yield* getLoadedThreadDetail();
+        if (detailedThread?.goal?.status === "active") {
+          const goal = detailedThread.goal;
+          const usage = normalizeTurnTokens(event.payload.usage);
+          const turnTokens =
+            usage.inputTokens +
+            usage.cachedInputTokens +
+            usage.outputTokens +
+            usage.reasoningOutputTokens;
+          const startedAt = detailedThread.latestTurn?.startedAt;
+          const elapsedSeconds = startedAt
+            ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(startedAt)) / 1_000))
+            : 0;
+          const tokensUsed = goal.tokensUsed + turnTokens;
+          const nextGoal = {
+            ...goal,
+            tokensUsed,
+            timeUsedSeconds: goal.timeUsedSeconds + elapsedSeconds,
+            status:
+              goal.tokenBudget !== null && tokensUsed >= goal.tokenBudget
+                ? ("budgetLimited" as const)
+                : goal.status,
+            updatedAt: now,
+          };
+          yield* orchestrationEngine.dispatch({
+            type: "thread.goal.sync",
+            commandId: yield* providerCommandId(event, "managed-goal-usage"),
+            threadId: thread.id,
+            goal: nextGoal,
+            observedAt: now,
+            createdAt: now,
+          });
+          loadedThreadDetail = { ...detailedThread, goal: nextGoal };
+        }
+      }
+
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
@@ -1321,7 +1887,7 @@ const make = Effect.gen(function* () {
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
       // provider session already tracks the event's turn as its active turn:
-      // steering a running turn makes some providers (e.g. opencode) open a
+      // steering a running turn can make a provider open a
       // new turn without ever completing the superseded one. A stale
       // turn.started for some other turn id still gets rejected.
       const conflictingTurnStartIsPendingTurnStart =
@@ -1373,6 +1939,13 @@ const make = Effect.gen(function* () {
           switch (event.type) {
             case "session.state.changed": {
               const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              // Providers become transport-ready immediately after a failed
+              // turn. That does not make the user-visible turn successful:
+              // preserving the error until the next turn starts is what keeps
+              // the sidebar and transcript from silently reading "Done".
+              if (runtimeStatus === "ready" && thread.session?.status === "error") {
+                return "error";
+              }
               return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
             }
             case "turn.started":
@@ -1407,9 +1980,11 @@ const make = Effect.gen(function* () {
             : event.type === "turn.completed" &&
                 normalizeRuntimeTurnState(event.payload.state) === "failed"
               ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
+              : event.type === "turn.started"
                 ? null
-                : (thread.session?.lastError ?? null);
+                : status === "ready"
+                  ? null
+                  : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1443,6 +2018,16 @@ const make = Effect.gen(function* () {
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
+              ...((event.type === "thread.started"
+                ? event.payload.providerThreadId
+                : thread.session?.providerThreadId) !== undefined
+                ? {
+                    providerThreadId:
+                      event.type === "thread.started"
+                        ? event.payload.providerThreadId
+                        : thread.session?.providerThreadId,
+                  }
+                : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
@@ -1453,8 +2038,54 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // Both stream kinds are reasoning: Codex emits `reasoning_summary_text`,
+      // Some providers emit `reasoning_text`. Treating only one of them as
+      // reasoning is why this looked provider-specific before.
+      const reasoningDelta =
+        event.type === "content.delta" &&
+        !isSubagentItemEvent(event.payload) &&
+        (event.payload.streamKind === "reasoning_summary_text" ||
+          event.payload.streamKind === "reasoning_text")
+          ? event.payload
+          : undefined;
+
+      if (reasoningDelta && reasoningDelta.delta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const partIndex = reasoningDelta.summaryIndex ?? reasoningDelta.contentIndex ?? 0;
+        const turnKey = turnId ?? "no-turn";
+        const partKey = reasoningPartKey(thread.id, turnKey, partIndex);
+        const existing = yield* Cache.getOption(reasoningTextByPartKey, partKey).pipe(
+          Effect.map(Option.getOrUndefined),
+        );
+        const previousText = existing?.text ?? "";
+        const buffered = {
+          text: previousText + reasoningDelta.delta,
+          createdAt: existing?.createdAt ?? now,
+          sequence: existing?.sequence ?? runtimeEventSequence(event),
+        };
+        yield* Cache.set(reasoningTextByPartKey, partKey, buffered);
+
+        // Republish on a character cadence rather than per token. Crossing a
+        // bucket boundary is the signal, so a burst of tiny deltas still costs
+        // one write.
+        const crossedBucket =
+          Math.floor(buffered.text.length / REASONING_REPUBLISH_CHARS) >
+          Math.floor(previousText.length / REASONING_REPUBLISH_CHARS);
+        if (crossedBucket) {
+          yield* emitReasoningActivity({
+            event,
+            threadId: thread.id,
+            turnKey,
+            partIndex,
+            buffered,
+          });
+        }
+      }
+
       const assistantDelta =
-        event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+        event.type === "content.delta" &&
+        !isSubagentItemEvent(event.payload) &&
+        event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
       const proposedPlanDelta =
@@ -1552,7 +2183,9 @@ const make = Effect.gen(function* () {
       }
 
       const assistantCompletion =
-        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+        event.type === "item.completed" &&
+        event.payload.itemType === "assistant_message" &&
+        !isSubagentItemEvent(event.payload)
           ? {
               messageId: MessageId.make(
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
@@ -1631,6 +2264,8 @@ const make = Effect.gen(function* () {
           ...(proposedPlanCompletion.turnId ? { turnId: proposedPlanCompletion.turnId } : {}),
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
           updatedAt: now,
+          currentTitle: thread.title,
+          currentTitleSource: thread.titleSource,
         });
       }
 
@@ -1639,6 +2274,15 @@ const make = Effect.gen(function* () {
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
+        // Flush before the early return below: the tail of the last reasoning
+        // paragraph is whatever sits under the republish threshold, and without
+        // this it would never be published at all.
+        yield* flushReasoningForTurn({
+          event,
+          threadId: thread.id,
+          turnKey: turnId ?? "no-turn",
+          createdAt: now,
+        });
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
@@ -1666,6 +2310,8 @@ const make = Effect.gen(function* () {
             planId: proposedPlanIdForTurn(thread.id, turnId),
             turnId,
             updatedAt: now,
+            currentTitle: thread.title,
+            currentTitleSource: thread.titleSource,
           });
         }
       }
@@ -1749,7 +2395,13 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "task.started" || event.type === "task.progress") {
+      if (
+        event.type === "task.started" ||
+        event.type === "task.progress" ||
+        // Fork: a patch carrying a description is a rename, and remembering it
+        // is what lets the terminal event still find a title for the row.
+        event.type === "task.updated"
+      ) {
         const description = event.payload.description?.trim();
         if (description) {
           yield* rememberTaskDescription(thread.id, event.payload.taskId, description);
@@ -1802,6 +2454,143 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
+  const reconcileActiveProviderSessions = Effect.fn("reconcileActiveProviderSessions")(
+    function* () {
+      const sessions = yield* providerService.listSessions();
+      yield* Effect.forEach(
+        sessions,
+        (session) => {
+          const state = (() => {
+            switch (session.status) {
+              case "connecting":
+                return "starting" as const;
+              case "ready":
+                return "ready" as const;
+              case "running":
+                return "running" as const;
+              case "error":
+                return "error" as const;
+              case "closed":
+                return "stopped" as const;
+            }
+          })();
+          const event: Extract<ProviderRuntimeEvent, { type: "session.state.changed" }> = {
+            eventId: EventId.make(
+              `startup-session-reconcile:${session.threadId}:${session.updatedAt}:${state}`,
+            ),
+            provider: session.provider,
+            ...(session.providerInstanceId !== undefined
+              ? { providerInstanceId: session.providerInstanceId }
+              : {}),
+            threadId: session.threadId,
+            createdAt: session.updatedAt,
+            type: "session.state.changed",
+            payload: { state },
+          };
+          return worker.enqueue({ source: "runtime", event });
+        },
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
+
+  const reconcileAttachedAgentRuns = Effect.fn("reconcileAttachedAgentRuns")(
+    function* () {
+      const startupRecovery = readAttachedAgentStartupRecovery();
+      if (!startupRecovery) return;
+
+      const recovered = yield* Effect.tryPromise(() => startupRecovery.awaitCompletion());
+      // A recovered child may have completed immediately after the subscription
+      // was installed. Drain those ordinary runtime events first so the query
+      // below only sees projections that are still genuinely nonterminal.
+      yield* worker.drain;
+
+      const recoveredByRun = new Map(
+        recovered.map((runtime) => [
+          `${runtime.snapshot.parentThreadId}:${runtime.snapshot.agentRunId}`,
+          runtime,
+        ]),
+      );
+      const projected = yield* projectionAgentRunRepository.listNonterminalAttached();
+      yield* Effect.forEach(
+        projected,
+        (run) =>
+          Effect.gen(function* () {
+            const runtime = recoveredByRun.get(`${run.parentThreadId}:${run.agentRunId}`);
+            // A paused attached agent still owns a live, resumable provider
+            // session. Paused is the normal between-turn state, so treating it
+            // as unrestored here destroys a successfully recovered child.
+            if (
+              runtime?.live &&
+              (runtime.snapshot.status === "running" || runtime.snapshot.status === "paused")
+            ) {
+              if (runtime.snapshot.status === "paused" && run.status !== "paused") {
+                const createdAt = DateTime.formatIso(yield* DateTime.now);
+                const event: Extract<ProviderRuntimeEvent, { type: "task.updated" }> = {
+                  eventId: EventId.make(
+                    `startup-attached-agent-status-reconcile:${run.parentThreadId}:${run.agentRunId}:${run.updatedAt}:paused`,
+                  ),
+                  provider: runtime.driver,
+                  providerInstanceId: runtime.snapshot.providerInstanceId,
+                  threadId: run.parentThreadId,
+                  createdAt,
+                  type: "task.updated",
+                  payload: {
+                    taskId: RuntimeTaskId.make(run.agentRunId),
+                    status: "paused",
+                    description: runtime.snapshot.description,
+                  },
+                };
+                yield* worker.enqueue({ source: "runtime", event });
+              }
+              return;
+            }
+
+            const runtimeStatus = runtime?.snapshot.status;
+            const status =
+              runtimeStatus === "completed" ||
+              runtimeStatus === "failed" ||
+              runtimeStatus === "stopped"
+                ? runtimeStatus
+                : "stopped";
+            const summary =
+              runtime?.snapshot.error?.trim() ||
+              runtime?.snapshot.result?.trim() ||
+              "Agent stopped during server restart because its attached provider runtime could not be restored.";
+            const createdAt = DateTime.formatIso(yield* DateTime.now);
+            const event: Extract<ProviderRuntimeEvent, { type: "task.completed" }> = {
+              eventId: EventId.make(
+                `startup-attached-agent-reconcile:${run.parentThreadId}:${run.agentRunId}:${run.updatedAt}`,
+              ),
+              provider: ProviderDriverKind.make(String(runtime?.driver ?? run.provider)),
+              ...(run.providerInstanceId
+                ? { providerInstanceId: run.providerInstanceId }
+                : runtime?.snapshot.providerInstanceId
+                  ? { providerInstanceId: runtime.snapshot.providerInstanceId }
+                  : {}),
+              threadId: run.parentThreadId,
+              createdAt,
+              type: "task.completed",
+              payload: {
+                taskId: RuntimeTaskId.make(run.agentRunId),
+                status,
+                summary,
+                toolUseId: run.launchToolUseId ?? run.agentRunId,
+              },
+            };
+            yield* worker.enqueue({ source: "runtime", event });
+          }),
+        { concurrency: 1, discard: true },
+      );
+      yield* worker.drain;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("attached-agent startup reconciliation did not run", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* Effect.forkScoped(
@@ -1817,6 +2606,21 @@ const make = Effect.gen(function* () {
           return worker.enqueue({ source: "domain", event });
         }),
       );
+      // Provider recovery begins while the server's layer graph is being
+      // built. Its initial session events can therefore precede this PubSub
+      // subscription. Reconcile the adapter's authoritative live sessions
+      // after both streams are attached so startup can never leave a durable
+      // turn stuck behind a missed ready transition.
+      yield* reconcileActiveProviderSessions();
+      // Attached-agent reconciliation must not be part of the synchronous
+      // server-startup barrier. Pi restores its Starcode tools through the
+      // local MCP HTTP endpoint, which cannot serve requests until startup has
+      // finished installing the router. Waiting here creates a self-deadlock:
+      // startup waits for recovery while recovery waits for startup's HTTP
+      // route. The reactor scope still owns this fiber, so reconciliation is
+      // durable for the lifetime of the server and still waits for the
+      // provider's authoritative recovery result before terminalizing runs.
+      yield* Effect.forkScoped(reconcileAttachedAgentRuns());
     });
 
   return {
@@ -1828,4 +2632,8 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionAgentRunRepositoryLive),
+  Layer.provide(UsageStoreLive),
+);

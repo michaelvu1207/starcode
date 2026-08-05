@@ -7,6 +7,22 @@ export {
   type EnvironmentConnectionLease,
 } from "./driver.ts";
 export * from "./errors.ts";
+export {
+  FleetConnectionCredentialStore,
+  FleetConnectionDiscovery,
+  FleetConnectionDiscoveryError,
+  type FleetConnectionDiscoveryService,
+  type FleetConnectionSnapshot,
+  type FleetNodeConnectionDescriptor,
+  fleetConnectionId,
+  makeFleetConnectionCredentialStore,
+} from "./fleet.ts";
+export { FleetConnectionCoordinator, startFleetConnectionCoordinator } from "./fleetCoordinator.ts";
+export {
+  fetchFleetConnectionSnapshot,
+  type FleetHttpConnectionDiscoveryOptions,
+  makeFleetHttpConnectionDiscovery,
+} from "./fleetHttpDiscovery.ts";
 export * as Connection from "./layer.ts";
 export * from "./model.ts";
 export {
@@ -26,6 +42,7 @@ export * as ProfileStore from "./profileStore.ts";
 export {
   EnvironmentNotRegisteredError,
   EnvironmentRegistry,
+  FleetEnvironmentRemovalError,
   PlatformEnvironmentRemovalError,
 } from "./registry.ts";
 export { ConnectionResolver } from "./resolver.ts";

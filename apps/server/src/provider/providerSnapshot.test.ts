@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ModelCapabilities } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import type { ModelCapabilities } from "@starcode/contracts";
+import { HostProcessPlatform } from "@starcode/shared/hostProcess";
+import { createModelCapabilities } from "@starcode/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -15,7 +15,7 @@ import {
   spawnAndCollect,
 } from "./providerSnapshot.ts";
 
-const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+const CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
     {
       id: "variant",
@@ -36,18 +36,14 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
 
 describe("providerModelsFromSettings", () => {
   it("applies the provided capabilities to custom models", () => {
-    const models = providerModelsFromSettings(
-      [],
-      ["openai/gpt-5"],
-      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
-    );
+    const models = providerModelsFromSettings([], ["openai/gpt-5"], CUSTOM_MODEL_CAPABILITIES);
 
     expect(models).toEqual([
       {
         slug: "openai/gpt-5",
         name: "openai/gpt-5",
         isCustom: true,
-        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+        capabilities: CUSTOM_MODEL_CAPABILITIES,
       },
     ]);
   });

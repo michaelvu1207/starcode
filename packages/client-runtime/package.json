@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/client-runtime",
+  "name": "@starcode/client-runtime",
   "private": true,
   "type": "module",
   "exports": {
@@ -67,6 +67,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/message-simplification": {
+      "types": "./src/state/messageSimplification.ts",
+      "default": "./src/state/messageSimplification.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
@@ -115,6 +119,22 @@
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
     },
+    "./state/usage": {
+      "types": "./src/state/usage.ts",
+      "default": "./src/state/usage.ts"
+    },
+    "./state/feature-flow": {
+      "types": "./src/state/featureFlow.ts",
+      "default": "./src/state/featureFlow.ts"
+    },
+    "./state/project-catalog": {
+      "types": "./src/state/projectCatalog.ts",
+      "default": "./src/state/projectCatalog.ts"
+    },
+    "./state/terminal-history": {
+      "types": "./src/state/terminalHistory.ts",
+      "default": "./src/state/terminalHistory.ts"
+    },
     "./state/terminal": {
       "types": "./src/state/terminal.ts",
       "default": "./src/state/terminal.ts"
@@ -127,13 +147,21 @@
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
     },
-    "./state/thread-settled": {
-      "types": "./src/state/threadSettled.ts",
-      "default": "./src/state/threadSettled.ts"
+    "./state/thread-activity": {
+      "types": "./src/state/threadActivity.ts",
+      "default": "./src/state/threadActivity.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./messages": {
+      "types": "./src/messages/index.ts",
+      "default": "./src/messages/index.ts"
+    },
+    "./onboarding": {
+      "types": "./src/onboarding/index.ts",
+      "default": "./src/onboarding/index.ts"
     }
   },
   "scripts": {
@@ -141,8 +169,8 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@starcode/contracts": "workspace:*",
+    "@starcode/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

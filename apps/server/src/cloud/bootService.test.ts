@@ -10,13 +10,16 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+  HostProcessUserId,
+} from "@starcode/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 
 const isUnsupportedError = Schema.is(BootService.BootServiceUnsupportedError);
 const isCommandError = Schema.is(BootService.BootServiceCommandError);
@@ -31,6 +34,7 @@ const makeRecordingRunnerLayer = (
   options?: {
     readonly failCommand?: string;
     readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+    readonly stdoutFor?: (command: string, args: ReadonlyArray<string>) => string | undefined;
   },
 ) =>
   Layer.succeed(
@@ -44,7 +48,7 @@ const makeRecordingRunnerLayer = (
             input.command === options?.failCommand ||
             options?.failWhen?.(input.command, input.args) === true;
           return {
-            stdout: "",
+            stdout: options?.stdoutFor?.(input.command, input.args) ?? "",
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -60,10 +64,16 @@ const makeHost = (entry: string): BootService.BootServiceHost => ({
   cliEntryPath: entry,
 });
 
-const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
+const provideHostRefs = (
+  home: string,
+  platform: NodeJS.Platform = "linux",
+  pathEnvironment = "/test/bin:/usr/bin:/bin",
+) =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
+      Layer.succeed(HostProcessEnvironment, { HOME: home, PATH: pathEnvironment }),
+      Layer.succeed(HostProcessUserId, 501),
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
@@ -71,7 +81,7 @@ const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
 const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-boot-service-test-" });
   // A real file for the stable-entry cases so status can confirm the entry
   // point exists.
   const stableEntry = path.join(root, "bin.mjs");
@@ -81,8 +91,8 @@ const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
     path,
     dirs: {
       home: root,
-      baseDir: path.join(root, ".t3"),
-      logsDir: path.join(root, ".t3", "userdata", "logs"),
+      baseDir: path.join(root, ".starcode"),
+      logsDir: path.join(root, ".starcode", "userdata", "logs"),
       stableEntry,
     },
   };
@@ -91,30 +101,30 @@ const makeTestContext = Effect.fn("test.makeTestContext")(function* () {
 it("renders a systemd unit with absolute paths and append-mode logging", () => {
   const unit = BootService.renderBootServiceUnit({
     nodePath: "/usr/local/bin/node",
-    t3EntryPath: "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
-    baseDir: "/home/theo/.t3",
-    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    starcodeEntryPath: "/home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
+    baseDir: "/home/theo/.starcode",
+    logPath: "/home/theo/.starcode/userdata/logs/boot-service.log",
+    unitPath: "/home/theo/.config/systemd/user/starcode.service",
   });
 
   assert.equal(
     unit,
     [
       "[Unit]",
-      "Description=T3 Code server",
+      "Description=starcode server",
       "StartLimitIntervalSec=300",
       "StartLimitBurst=5",
       "",
       "[Service]",
       "Type=simple",
       "WorkingDirectory=%h",
-      "Environment=T3CODE_HOME=/home/theo/.t3",
-      "Environment=T3_BOOT_SERVICE_UNIT=t3code.service",
-      "ExecStart=/usr/local/bin/node /home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
+      "Environment=STARCODE_HOME=/home/theo/.starcode",
+      "Environment=STARCODE_BOOT_SERVICE_UNIT=starcode.service",
+      "ExecStart=/usr/local/bin/node /home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
       "Restart=always",
       "RestartSec=5",
-      "StandardOutput=append:/home/theo/.t3/userdata/logs/boot-service.log",
-      "StandardError=append:/home/theo/.t3/userdata/logs/boot-service.log",
+      "StandardOutput=append:/home/theo/.starcode/userdata/logs/boot-service.log",
+      "StandardError=append:/home/theo/.starcode/userdata/logs/boot-service.log",
       "",
       "[Install]",
       "WantedBy=default.target",
@@ -125,22 +135,63 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
 
 it("quotes systemd values containing spaces and escapes percent specifiers", () => {
   assert.equal(BootService.quoteSystemdValue("/plain/path"), "/plain/path");
-  assert.equal(BootService.quoteSystemdValue("/home/me/T3 Data"), '"/home/me/T3 Data"');
+  assert.equal(BootService.quoteSystemdValue("/home/me/starcode Data"), '"/home/me/starcode Data"');
   assert.equal(BootService.quoteSystemdValue("/opt/100%cpu"), "/opt/100%%cpu");
 
   const unit = BootService.renderBootServiceUnit({
     nodePath: "/home/me/my tools/node",
-    t3EntryPath: "/home/me/T3 Data/bin.mjs",
-    baseDir: "/home/me/T3 Data",
+    starcodeEntryPath: "/home/me/starcode Data/bin.mjs",
+    baseDir: "/home/me/starcode Data",
     logPath: "/home/me/100%logs/boot.log",
-    unitPath: "/home/me/.config/systemd/user/t3code.service",
+    unitPath: "/home/me/.config/systemd/user/starcode.service",
   });
-  assert.include(unit, 'ExecStart="/home/me/my tools/node" "/home/me/T3 Data/bin.mjs" serve');
-  assert.include(unit, 'Environment=T3CODE_HOME="/home/me/T3 Data"');
+  assert.include(unit, 'ExecStart="/home/me/my tools/node" "/home/me/starcode Data/bin.mjs" serve');
+  assert.include(unit, 'Environment=STARCODE_HOME="/home/me/starcode Data"');
   // append: paths take the rest of the line literally (spaces are fine,
   // quoting is not), but % still goes through specifier expansion.
   assert.include(unit, "StandardOutput=append:/home/me/100%%logs/boot.log");
   assert.include(unit, "StandardError=append:/home/me/100%%logs/boot.log");
+});
+
+it("renders a restartable per-user macOS LaunchAgent", () => {
+  const launchAgent = BootService.renderBootServiceLaunchAgent({
+    nodePath: "/opt/homebrew/bin/node",
+    starcodeEntryPath: "/Users/theo/StarCode & Data/dist/bin.mjs",
+    baseDir: "/Users/theo/StarCode & Data",
+    logPath: "/Users/theo/StarCode & Data/userdata/logs/boot-service.log",
+    unitPath: "/Users/theo/Library/LaunchAgents/com.starcode.server.plist",
+    pathEnvironment: "/opt/homebrew/bin:/usr/bin:/bin",
+  });
+
+  assert.include(launchAgent, "<string>com.starcode.server</string>");
+  assert.include(launchAgent, "<key>RunAtLoad</key>\n  <true/>");
+  assert.include(launchAgent, "<key>KeepAlive</key>\n  <true/>");
+  assert.include(launchAgent, "<string>/Users/theo/StarCode &amp; Data</string>");
+  assert.include(launchAgent, "<string>/Users/theo/StarCode &amp; Data/dist/bin.mjs</string>");
+  assert.include(
+    launchAgent,
+    "<key>STARCODE_BOOT_SERVICE_UNIT</key>\n    <string>com.starcode.server</string>",
+  );
+  assert.include(
+    launchAgent,
+    "<key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin:/bin</string>",
+  );
+});
+
+it("uses typed supervisor context for launchd recovery guidance", () => {
+  assert.include(
+    new BootService.BootServiceCommandError({
+      step: "loading the background service",
+      supervisor: "launchd",
+    }).message,
+    "System Settings > General > Login Items & Extensions",
+  );
+  assert.notInclude(
+    new BootService.BootServiceCommandError({
+      step: "checking the LaunchAgent",
+    }).message,
+    "System Settings",
+  );
 });
 
 it("flags package-manager cache entry points as ephemeral", () => {
@@ -166,7 +217,7 @@ it("flags package-manager cache entry points as ephemeral", () => {
   );
   assert.isFalse(
     BootService.isEphemeralCacheEntry(
-      "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
+      "/home/theo/.starcode/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
     ),
   );
 });
@@ -213,23 +264,23 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const plan = yield* service.install;
 
       // A stable entry point is reused directly — no npm install.
-      assert.equal(plan.t3EntryPath, dirs.stableEntry);
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
       assert.deepEqual(
         commands.map((entry) => [entry.command, ...entry.args].join(" ")),
         [
           "systemctl --user daemon-reload",
-          "systemctl --user enable t3code.service",
+          "systemctl --user enable starcode.service",
           // restart (not enable --now) so repairing a stale unit replaces a
           // running process instead of leaving the old one until reboot.
-          "systemctl --user restart t3code.service",
+          "systemctl --user restart starcode.service",
           "loginctl enable-linger",
         ],
       );
 
-      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "t3code.service");
+      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "starcode.service");
       const unit = yield* fs.readFileString(unitPath);
       assert.include(unit, `ExecStart=/usr/local/bin/node ${dirs.stableEntry} serve`);
-      assert.include(unit, `Environment=T3CODE_HOME=${dirs.baseDir}`);
+      assert.include(unit, `Environment=STARCODE_HOME=${dirs.baseDir}`);
 
       const status = yield* service.status;
       assert.isTrue(status.supported);
@@ -246,54 +297,62 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("pins a runtime via npm install when running from the npx cache", () =>
-    Effect.gen(function* () {
-      const { dirs, fs, path } = yield* makeTestContext();
-      const commands: Array<RecordedCommand> = [];
-      const service = yield* BootService.make({
-        baseDir: dirs.baseDir,
-        logsDir: dirs.logsDir,
-        cliVersion: "0.0.27",
-        host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+  // FORK: the three tests below drive the npm-install path, which
+  // FORK_DISABLE_SELF_UPDATE refuses outright. Skipped rather than deleted so
+  // they come back with the switch. The refusal itself is covered by
+  // "refuses to reconcile from an ephemeral CLI" at the end of this suite.
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "pins a runtime via npm install when running from the npx cache",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
 
-      const plan = yield* service.install;
+        const plan = yield* service.install;
 
-      const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
-      assert.equal(
-        plan.t3EntryPath,
-        path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
-      );
-      assert.deepEqual(commands[0], {
-        command: "npm",
-        args: ["install", "--prefix", runtimeDir, "--no-fund", "--no-audit", "t3@0.0.27"],
-      });
-      // Success is recorded via a sentinel so interrupted installs re-run.
-      assert.isTrue(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
-    }),
+        const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
+        assert.equal(
+          plan.starcodeEntryPath,
+          path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
+        );
+        assert.deepEqual(commands[0], {
+          command: "npm",
+          args: ["install", "--prefix", runtimeDir, "--no-fund", "--no-audit", "t3@0.0.27"],
+        });
+        // Success is recorded via a sentinel so interrupted installs re-run.
+        assert.isTrue(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      }),
   );
 
-  it.effect("reinstalls a pinned runtime when its entry point is missing", () =>
-    Effect.gen(function* () {
-      const { dirs, fs, path } = yield* makeTestContext();
-      const commands: Array<RecordedCommand> = [];
-      const service = yield* BootService.make({
-        baseDir: dirs.baseDir,
-        logsDir: dirs.logsDir,
-        cliVersion: "0.0.27",
-        host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "reinstalls a pinned runtime when its entry point is missing",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
 
-      const plan = yield* service.install;
-      yield* fs.makeDirectory(path.dirname(plan.t3EntryPath), { recursive: true });
-      yield* fs.writeFileString(plan.t3EntryPath, "#!/usr/bin/env node\n");
-      yield* fs.remove(plan.t3EntryPath);
-      commands.length = 0;
+        const plan = yield* service.install;
+        yield* fs.makeDirectory(path.dirname(plan.starcodeEntryPath), { recursive: true });
+        yield* fs.writeFileString(plan.starcodeEntryPath, "#!/usr/bin/env node\n");
+        yield* fs.remove(plan.starcodeEntryPath);
+        commands.length = 0;
 
-      yield* service.install;
+        yield* service.install;
 
-      assert.isTrue(commands.some(({ command }) => command === "npm"));
-    }),
+        assert.isTrue(commands.some(({ command }) => command === "npm"));
+      }),
   );
 
   it.effect("reads executable metadata from host process references", () =>
@@ -313,11 +372,39 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
       const plan = yield* service.install;
       assert.equal(plan.nodePath, "/opt/node/bin/node");
-      assert.equal(plan.t3EntryPath, dirs.stableEntry);
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
     }),
   );
 
-  it.effect("cleans up and fails when the pinned runtime install fails", () =>
+  // Skipped for the reason above, and specifically because the fork's refusal
+  // also surfaces as a BootServiceCommandError with no runtime directory —
+  // this test would keep passing while no longer exercising npm cleanup.
+  it.effect.skipIf(FORK_DISABLE_SELF_UPDATE)(
+    "cleans up and fails when the pinned runtime install fails",
+    () =>
+      Effect.gen(function* () {
+        const { dirs, fs, path } = yield* makeTestContext();
+        const commands: Array<RecordedCommand> = [];
+        const service = yield* BootService.make({
+          baseDir: dirs.baseDir,
+          logsDir: dirs.logsDir,
+          cliVersion: "0.0.27",
+          host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+        }).pipe(
+          Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "npm" })),
+          provideHostRefs(dirs.home),
+        );
+
+        const error = yield* service.install.pipe(Effect.flip);
+        assert.isTrue(isCommandError(error));
+        const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
+        // The half-installed tree must not be reused by the next attempt.
+        assert.isFalse(yield* fs.exists(runtimeDir));
+        assert.isFalse(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      }),
+  );
+
+  it.effect("refuses to reconcile from an ephemeral CLI without running npm", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
@@ -325,18 +412,26 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
+        // What `npx starcode service update` looks like: the entry point lives in an
+        // ephemeral cache, so upstream would npm-install t3@0.0.27 and point
+        // the unit at that tree.
         host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
-      }).pipe(
-        Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "npm" })),
-        provideHostRefs(dirs.home),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+
+      const error = yield* reconcileService().pipe(
+        Effect.provideService(BootService.BootService, service),
+        Effect.flip,
       );
 
-      const error = yield* service.install.pipe(Effect.flip);
       assert.isTrue(isCommandError(error));
-      const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
-      // The half-installed tree must not be reused by the next attempt.
-      assert.isFalse(yield* fs.exists(runtimeDir));
-      assert.isFalse(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+      assert.include(error.message, "this fork disables");
+      assert.include(error.message, "npm install t3@0.0.27");
+      // Nothing ran and nothing was staged: no npm, no systemctl, no tree.
+      assert.deepEqual(commands, []);
+      assert.isFalse(yield* fs.exists(path.join(dirs.baseDir, "runtime", "versions", "0.0.27")));
+      assert.isFalse(
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
+      );
     }),
   );
 
@@ -354,8 +449,8 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const unitDir = path.join(dirs.home, ".config", "systemd", "user");
       yield* fs.makeDirectory(unitDir, { recursive: true });
       yield* fs.writeFileString(
-        path.join(unitDir, "t3code.service"),
-        "[Service]\nExecStart=/old/node /old/t3 serve\n",
+        path.join(unitDir, "starcode.service"),
+        "[Service]\nExecStart=/old/node /old/starcode serve\n",
       );
 
       const status = yield* service.status;
@@ -388,7 +483,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("fails on non-Linux platforms without touching the filesystem", () =>
+  it.effect("installs, reports, and removes a stable macOS LaunchAgent", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
@@ -396,17 +491,115 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
-        host: makeHost("/usr/local/lib/node_modules/t3/dist/bin.mjs"),
+        host: makeHost(dirs.stableEntry),
       }).pipe(
         Effect.provide(makeRecordingRunnerLayer(commands)),
         provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const plan = yield* service.install;
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.starcode.server.plist",
+      );
+      assert.equal(plan.starcodeEntryPath, dirs.stableEntry);
+      assert.deepEqual(
+        commands.map((entry) => [entry.command, ...entry.args].join(" ")),
+        [
+          "/bin/launchctl print-disabled gui/501",
+          "/bin/launchctl print gui/501/com.starcode.server",
+          "/bin/launchctl enable gui/501/com.starcode.server",
+          "/bin/launchctl bootout gui/501/com.starcode.server",
+          `/bin/launchctl bootstrap gui/501 ${launchAgentPath}`,
+          "/bin/launchctl print gui/501/com.starcode.server",
+        ],
+      );
+      assert.include(
+        yield* fs.readFileString(launchAgentPath),
+        `<string>${dirs.stableEntry}</string>`,
+      );
+
+      const status = yield* service.status;
+      assert.isTrue(status.supported);
+      assert.isTrue(status.installed);
+      assert.isTrue(status.current);
+
+      assert.isTrue(yield* service.uninstall);
+      assert.isFalse(yield* fs.exists(launchAgentPath));
+    }),
+  );
+
+  it.effect("restores the previous macOS LaunchAgent when a repair cannot activate", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const initialService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer([])), provideHostRefs(dirs.home, "darwin"));
+      yield* initialService.install;
+
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.starcode.server.plist",
+      );
+      const previousDefinition = yield* fs.readFileString(launchAgentPath);
+      const replacementEntry = path.join(dirs.home, "replacement-bin.mjs");
+      yield* fs.writeFileString(replacementEntry, "#!/usr/bin/env node\n");
+
+      const repairCommands: Array<RecordedCommand> = [];
+      const repairService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        host: makeHost(replacementEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(repairCommands, {
+            failWhen: (command, args) => command === "/bin/launchctl" && args.includes("bootstrap"),
+          }),
+        ),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const error = yield* repairService.install.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(launchAgentPath), previousDefinition);
+      assert.isTrue(
+        repairCommands.some(
+          ({ command, args }) =>
+            command === "/bin/launchctl" &&
+            args.join(" ") === `bootstrap gui/501 ${launchAgentPath}`,
+        ),
+      );
+    }),
+  );
+
+  it.effect("fails on unsupported platforms without touching the filesystem", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home, "win32"),
       );
 
       const error = yield* service.install.pipe(Effect.flip);
       assert.isTrue(isUnsupportedError(error));
       assert.lengthOf(commands, 0);
       assert.isFalse(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
 
       const status = yield* service.status;
@@ -434,14 +627,14 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       // A leftover unit would make status report "installed" even though
       // linger never happened.
       assert.isFalse(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
       const status = yield* service.status;
       assert.isFalse(status.installed);
       assert.isTrue(
         commands.some(
           ({ command, args }) =>
-            command === "systemctl" && args.join(" ") === "--user disable --now t3code.service",
+            command === "systemctl" && args.join(" ") === "--user disable --now starcode.service",
         ),
       );
     }),
@@ -462,7 +655,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       );
       yield* initialService.install;
 
-      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "t3code.service");
+      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "starcode.service");
       const previousUnit = yield* fs.readFileString(unitPath);
       const replacementEntry = path.join(dirs.home, "replacement-bin.mjs");
       yield* fs.writeFileString(replacementEntry, "#!/usr/bin/env node\n");
@@ -484,7 +677,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.isTrue(
         repairCommands.some(
           ({ command, args }) =>
-            command === "systemctl" && args.join(" ") === "--user restart t3code.service",
+            command === "systemctl" && args.join(" ") === "--user restart starcode.service",
         ),
       );
     }),
@@ -525,7 +718,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
       assert.isTrue(isCommandError(error));
       assert.isTrue(
-        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "starcode.service")),
       );
     }),
   );

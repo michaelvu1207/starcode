@@ -21,7 +21,7 @@ import {
   type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -349,6 +349,14 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  /** Connections owns account identity/configuration; hide model controls there. */
+  readonly showModels?: boolean | undefined;
+  readonly hideInstanceId?: boolean | undefined;
+  readonly presentationDriverKind?: ProviderDriverKind | undefined;
+  readonly showAccentColor?: boolean | undefined;
+  /** Dense account-rail presentation; full management remains in the expansion. */
+  readonly compact?: boolean | undefined;
+  readonly compactActions?: ReactNode | undefined;
 }
 
 /**
@@ -393,6 +401,12 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  showModels = true,
+  hideInstanceId = false,
+  presentationDriverKind,
+  showAccentColor = true,
+  compact = false,
+  compactActions,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -501,32 +515,33 @@ export function ProviderInstanceCard({
     );
   };
 
-  const titleIconNode = driverKind ? (
-    <ProviderInstanceIcon
-      driverKind={driverKind}
-      displayName={displayName}
-      accentColor={accentColor}
-      showBadge={Boolean(accentColor)}
-      statusDotClassName={statusStyle.dot}
-      indicatorBackground="var(--card)"
-      className="size-5"
-      iconClassName="size-4 text-foreground/80"
-      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]"
-    />
-  ) : FallbackIconComponent ? (
-    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-      <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-      <span
-        className={cn(
-          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
-          statusStyle.dot,
-        )}
-        aria-hidden
+  const titleIconNode =
+    (presentationDriverKind ?? driverKind) ? (
+      <ProviderInstanceIcon
+        driverKind={(presentationDriverKind ?? driverKind)!}
+        displayName={displayName}
+        accentColor={accentColor}
+        showBadge={Boolean(accentColor)}
+        statusDotClassName={statusStyle.dot}
+        indicatorBackground="var(--card)"
+        className="size-5"
+        iconClassName="size-4 text-foreground/80"
+        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]"
       />
-    </span>
-  ) : (
-    <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
-  );
+    ) : FallbackIconComponent ? (
+      <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+        <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
+        <span
+          className={cn(
+            "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
+            statusStyle.dot,
+          )}
+          aria-hidden
+        />
+      </span>
+    ) : (
+      <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
+    );
 
   const titleHeadNode = (
     <>
@@ -534,7 +549,7 @@ export function ProviderInstanceCard({
       <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
         {displayName}
       </h3>
-      {String(instanceId) !== String(instance.driver) ? (
+      {!hideInstanceId && String(instanceId) !== String(instance.driver) ? (
         <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
           {instanceId}
         </code>
@@ -595,13 +610,14 @@ export function ProviderInstanceCard({
     </p>
   );
 
-  const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
-  ) : null;
+  const versionCodeNode =
+    versionLabel && (!compact || isExpanded) ? (
+      <code className="text-xs text-muted-foreground">{versionLabel}</code>
+    ) : null;
 
   return (
     <div className="rounded-xl transition-colors hover:bg-muted/20">
-      <div className="px-3 py-3 sm:px-4">
+      <div className={cn(compact ? "px-2 py-2" : "px-3 py-3 sm:px-4")}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -704,20 +720,23 @@ export function ProviderInstanceCard({
               ) : null}
               {titleTailNode}
             </div>
-            {authRowNode}
+            {!compact || isExpanded ? authRowNode : null}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => onExpandedChange(!isExpanded)}
-              aria-label={`Toggle ${displayName} details`}
-            >
-              <ChevronDownIcon
-                className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-              />
-            </Button>
+            {!compact ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => onExpandedChange(!isExpanded)}
+                aria-label={`Toggle ${displayName} details`}
+              >
+                <ChevronDownIcon
+                  className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+                />
+              </Button>
+            ) : null}
+            {compact ? compactActions : null}
             <Switch
               checked={enabled}
               onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
@@ -727,7 +746,7 @@ export function ProviderInstanceCard({
         </div>
       </div>
 
-      <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
+      <Collapsible open={!compact && isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
             <div>
@@ -747,15 +766,17 @@ export function ProviderInstanceCard({
               </label>
             </div>
 
-            <div>
-              <ProviderAccentColorPicker
-                displayName={displayName}
-                value={accentColor}
-                onCommit={updateAccentColor}
-                commitDelayMs={120}
-                description="Used to distinguish this instance in picker rails and model lists."
-              />
-            </div>
+            {showAccentColor ? (
+              <div>
+                <ProviderAccentColorPicker
+                  displayName={displayName}
+                  value={accentColor}
+                  onCommit={updateAccentColor}
+                  commitDelayMs={120}
+                  description="Used to distinguish this instance in picker rails and model lists."
+                />
+              </div>
+            ) : null}
 
             <div>
               <ProviderEnvironmentSection
@@ -774,7 +795,7 @@ export function ProviderInstanceCard({
               />
             ) : null}
 
-            {driverOption !== undefined ? (
+            {driverOption !== undefined && showModels ? (
               <ProviderModelsSection
                 instanceId={instanceId}
                 driverKind={driverKind}
@@ -788,7 +809,7 @@ export function ProviderInstanceCard({
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}
               />
-            ) : (
+            ) : driverOption === undefined ? (
               <div>
                 <p className="text-xs text-muted-foreground">
                   This instance uses a driver (
@@ -797,7 +818,7 @@ export function ProviderInstanceCard({
                   edited from this surface.
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </CollapsibleContent>
       </Collapsible>

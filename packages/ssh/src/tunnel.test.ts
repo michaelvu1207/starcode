@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NetService from "@t3tools/shared/Net";
+import * as NetService from "@starcode/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,14 +13,16 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { remoteStateKey } from "./command.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
   buildRemoteStopScript,
-  buildRemoteT3RunnerScript,
+  buildRemoteStarcodeRunnerScript,
   describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
+  REMOTE_BOOTSTRAP_NODE_VERSION,
   REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
   waitForHttpReady,
@@ -89,16 +91,16 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 describe("ssh tunnel scripts", () => {
-  it("builds the remote t3 runner with npx and npm fallbacks", () => {
-    const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
+  it("builds the remote starcode runner with npx and npm fallbacks", () => {
+    const script = buildRemoteStarcodeRunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
-    assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(script, 'exec t3 "$@"');
+    assert.include(script, "STARCODE_NODE_SCRIPT_PATH=''");
+    assert.include(script, 'exec starcode "$@"');
     assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
     assert.include(script, "could not install 't3@latest'");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
-    assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
+    assert.include(script, `STARCODE_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
     assert.include(script, "function satisfiesSemverRange");
     assert.include(script, "satisfiesSemverRange(rawVersion, range)");
@@ -111,19 +113,109 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, 'prepend_path_if_dir "$HOME/.nodenv/shims"');
     assert.include(script, 'NVM_DIR="$HOME/.nvm"');
     assert.include(script, "nvm use --silent default");
-    assert.include(script, 'for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin');
+    assert.include(script, 'for STARCODE_NODE_BIN in "$NVM_DIR"/versions/node/*/bin');
     assert.notInclude(script, "ensure $NVM_DIR/nvm.sh is available");
   });
 
-  it("does not hard-code a remote node engine range", () => {
-    const script = buildRemoteT3RunnerScript();
+  it("builds and pins the StarCode fork checkout before any package fallback", () => {
+    const script = buildRemoteStarcodeRunnerScript({
+      nodeEngineRange: TEST_NODE_ENGINE_RANGE,
+      sourceCheckout: {
+        repositoryUrl: "https://github.com/michaelvu1207/starcode.git",
+        archiveBaseUrl: "https://codeload.github.com/michaelvu1207/starcode/tar.gz",
+        commitApiBaseUrl: "https://api.github.com/repos/michaelvu1207/starcode/commits",
+        archiveRootPrefix: "starcode-",
+        ref: "0123456789abcdef",
+      },
+    });
 
-    assert.include(script, "T3_NODE_ENGINE_RANGE=''");
+    assert.include(
+      script,
+      "STARCODE_SOURCE_ARCHIVE_BASE_URL='https://codeload.github.com/michaelvu1207/starcode/tar.gz'",
+    );
+    assert.include(
+      script,
+      "STARCODE_SOURCE_COMMIT_API_BASE_URL='https://api.github.com/repos/michaelvu1207/starcode/commits'",
+    );
+    assert.include(script, "STARCODE_SOURCE_ARCHIVE_ROOT_PREFIX='starcode-'");
+    assert.include(
+      script,
+      'download_starcode_source_file "$STARCODE_SOURCE_COMMIT_API_BASE_URL/$STARCODE_SOURCE_REF_ENCODED"',
+    );
+    assert.include(
+      script,
+      'download_starcode_source_file "$STARCODE_SOURCE_ARCHIVE_BASE_URL/$STARCODE_SOURCE_COMMIT"',
+    );
+    assert.include(
+      script,
+      'if [ "$STARCODE_SOURCE_ARCHIVE_ROOT" != "$STARCODE_SOURCE_EXPECTED_ROOT" ]',
+    );
+    assert.include(
+      script,
+      'tar -xzf "$STARCODE_SOURCE_ARCHIVE" -C "$STARCODE_SOURCE_STAGING" --strip-components=1',
+    );
+    assert.include(script, "npx --yes pnpm@11.10.0");
+    assert.include(script, "ensure_remote_build_tools");
+    assert.include(script, "apt-get install -y -qq build-essential");
+    assert.include(script, "apk add --no-cache build-base");
+    assert.include(script, "dnf install -y make gcc-c++");
+    assert.include(script, "yum install -y make gcc-c++");
+    assert.include(script, "pacman -Sy --noconfirm --needed base-devel");
+    assert.include(script, "Install build tools or allow passwordless sudo for onboarding.");
+    assert.include(script, "--filter @starcode/monorepo");
+    assert.include(script, "--filter @starcode/scripts...");
+    assert.include(script, "--filter starcode...");
+    assert.include(script, "install --frozen-lockfile");
+    assert.include(script, "--ignore-scripts");
+    assert.include(script, "rebuild esbuild msgpackr-extract node-pty sharp");
+    assert.include(
+      script,
+      [
+        "--filter @starcode/monorepo \\",
+        "      --filter @starcode/scripts... \\",
+        "      --filter starcode... \\",
+        "      rebuild esbuild msgpackr-extract node-pty sharp",
+      ].join("\n"),
+    );
+    assert.isBelow(
+      script.indexOf("install --frozen-lockfile --ignore-scripts"),
+      script.indexOf("rebuild esbuild msgpackr-extract node-pty sharp"),
+    );
+    assert.isBelow(
+      script.indexOf("rebuild esbuild msgpackr-extract node-pty sharp"),
+      script.indexOf('"$STARCODE_SOURCE_STAGING/node_modules/.bin/vp" run --filter starcode build'),
+    );
+    assert.include(
+      script,
+      '"$STARCODE_SOURCE_STAGING/node_modules/.bin/vp" run --filter starcode build',
+    );
+    assert.include(script, 'node "$STARCODE_SOURCE_STAGING/apps/server/dist/bin.mjs" --version');
+    assert.include(script, "STARCODE_SOURCE_REF='0123456789abcdef'");
+    assert.include(
+      script,
+      "STARCODE_SOURCE_REPOSITORY='https://github.com/michaelvu1207/starcode.git'",
+    );
+    assert.notInclude(script, "command -v git");
+    assert.notInclude(script, "git -C");
+    assert.isBelow(
+      script.indexOf('if [ -n "$STARCODE_SOURCE_ENTRY" ]'),
+      script.indexOf("if command -v starcode"),
+    );
+    assert.isBelow(
+      script.indexOf('exec node "$STARCODE_SOURCE_ENTRY" "$@"'),
+      script.indexOf("exec npx --yes 't3@latest'"),
+    );
+  });
+
+  it("does not hard-code a remote node engine range", () => {
+    const script = buildRemoteStarcodeRunnerScript();
+
+    assert.include(script, "STARCODE_NODE_ENGINE_RANGE=''");
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
-  it("shell-quotes package specs in the remote t3 runner", () => {
-    const script = buildRemoteT3RunnerScript({
+  it("shell-quotes package specs in the remote starcode runner", () => {
+    const script = buildRemoteStarcodeRunnerScript({
       packageSpec: "t3@nightly; touch /tmp/t3-owned",
     });
 
@@ -132,19 +224,19 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
 
-  it("builds the remote t3 runner with a node script override", () => {
-    const script = buildRemoteT3RunnerScript({
+  it("builds the remote starcode runner with a node script override", () => {
+    const script = buildRemoteStarcodeRunnerScript({
       nodeScriptPath: "/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs",
     });
 
     assert.include(
       script,
-      "T3_NODE_SCRIPT_PATH='/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs'",
+      "STARCODE_NODE_SCRIPT_PATH='/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs'",
     );
-    assert.include(script, 'exec node "$T3_NODE_SCRIPT_PATH" "$@"');
+    assert.include(script, 'exec node "$STARCODE_NODE_SCRIPT_PATH" "$@"');
   });
 
-  it("uses the remote t3 runner for launch and pairing scripts", () => {
+  it("uses the remote starcode runner for launch and pairing scripts", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -160,24 +252,42 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), "ensure_remote_node_path()");
     assert.include(buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
     assert.include(
+      buildRemoteLaunchScript(),
+      `STARCODE_NODE_VERSION=${REMOTE_BOOTSTRAP_NODE_VERSION}`,
+    );
+    assert.include(buildRemoteLaunchScript(), "bootstrap_remote_node_runtime()");
+    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" __starcode_prepare__');
+    assert.include(buildRemoteLaunchScript(), "https://nodejs.org/dist/v$STARCODE_NODE_VERSION");
+    assert.include(buildRemoteLaunchScript(), "SHASUMS256.txt");
+    assert.include(buildRemoteLaunchScript(), "Downloaded Node.js archive failed checksum");
+    assert.include(buildRemoteLaunchScript(), '"$HOME/.starcode/runtime/node-v24.13.1/bin"');
+    assert.include(
       buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
-      `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`,
+      `STARCODE_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`,
     );
     assert.include(
       buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       "does not satisfy required range ",
     );
     assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(buildRemoteLaunchScript(), 'STATE_DIR="$HOME/.starcode/ssh-launch/$STATE_KEY"');
+    assert.include(buildRemoteLaunchScript(), 'DEFAULT_SERVER_HOME="$HOME/.starcode"');
     assert.include(buildRemoteLaunchScript(), "wait_ready");
-    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
+    assert.include(buildRemoteLaunchScript(), 'BIND_HOST="${2:-127.0.0.1}"');
+    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host "$BIND_HOST"');
+    assert.include(
+      buildRemoteLaunchScript(),
+      'if [ "$BIND_HOST" = "0.0.0.0" ] && [ "$REMOTE_BIND_HOST" != "0.0.0.0" ]',
+    );
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
-    assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
+    assert.include(buildRemoteLaunchScript(), "Remote starcode server did not become ready");
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --fleet --json',
     );
+    assert.include(buildRemotePairingScript(target), 'STATE_DIR="$HOME/.starcode/ssh-launch/');
     assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemotePairingScript(target), "server-home");
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
@@ -186,7 +296,11 @@ describe("ssh tunnel scripts", () => {
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
+    assert.include(
+      buildRemoteStopScript(target),
+      'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BIND_FILE"',
+    );
+    assert.include(buildRemoteStopScript(target), 'STATE_DIR="$HOME/.starcode/ssh-launch/');
     assert.include(
       buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
@@ -215,7 +329,7 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
-  it.effect("accepts launch JSON after remote shell startup noise", () => {
+  it.effect("accepts the final launch JSON after noisy output containing earlier JSON", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -223,7 +337,9 @@ describe("ssh tunnel scripts", () => {
       port: 2222,
     } as const;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
+      Effect.succeed(
+        makeSuccessfulProcess('Selecting build tools\n{"pluginProgress":1}\n{"remotePort":3774}\n'),
+      ),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
@@ -231,6 +347,36 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* launchOrReuseRemoteServer(target);
       assert.equal(result.remotePort, 3774);
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("requests a tailnet-reachable bind for fleet onboarding", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    let spawnedArgs: readonly string[] = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedArgs = commandArgs(command);
+      return Effect.succeed(
+        makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed","bindHost":"0.0.0.0"}\n'),
+      );
+    });
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
+
+    return Effect.gen(function* () {
+      const result = yield* launchOrReuseRemoteServer(target, undefined, undefined, true);
+      assert.equal(result.bindHost, "0.0.0.0");
+      assert.deepEqual(spawnedArgs.slice(-5), [
+        "sh",
+        "-s",
+        "--",
+        remoteStateKey(target),
+        "0.0.0.0",
+      ]);
     }).pipe(Effect.provide(processLayer));
   });
 

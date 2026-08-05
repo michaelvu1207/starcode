@@ -1,4 +1,5 @@
 import type {
+  AgentRun,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
   OrchestrationMessage,
@@ -7,7 +8,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadActivity,
   ScopedThreadRef,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -19,6 +20,7 @@ import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 
 const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
 const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
+const EMPTY_AGENT_RUNS: ReadonlyArray<AgentRun> = Object.freeze([]);
 const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
 const EMPTY_CHECKPOINTS: ReadonlyArray<OrchestrationCheckpointSummary> = Object.freeze([]);
 
@@ -57,10 +59,6 @@ export function mergeEnvironmentThread(
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
     archivedAt: shell.archivedAt,
-    settledOverride: shell.settledOverride,
-    settledAt: shell.settledAt,
-    snoozedUntil: shell.snoozedUntil,
-    snoozedAt: shell.snoozedAt,
     session: shell.session,
   };
 }
@@ -136,6 +134,16 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ),
   );
 
+  const threadAgentRunsAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get): ReadonlyArray<AgentRun> =>
+        get(threadDetailAtomFamily(key))?.agentRuns ?? EMPTY_AGENT_RUNS,
+    ).pipe(
+      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+      Atom.withLabel(`environment-thread-agent-runs:${key}`),
+    ),
+  );
+
   const threadProposedPlansAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get): ReadonlyArray<OrchestrationProposedPlan> =>
@@ -181,6 +189,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     errorAtom: (ref: ScopedThreadRef) => threadErrorAtomFamily(threadKey(ref)),
     messagesAtom: (ref: ScopedThreadRef) => threadMessagesAtomFamily(threadKey(ref)),
     activitiesAtom: (ref: ScopedThreadRef) => threadActivitiesAtomFamily(threadKey(ref)),
+    agentRunsAtom: (ref: ScopedThreadRef) => threadAgentRunsAtomFamily(threadKey(ref)),
     proposedPlansAtom: (ref: ScopedThreadRef) => threadProposedPlansAtomFamily(threadKey(ref)),
     checkpointsAtom: (ref: ScopedThreadRef) => threadCheckpointsAtomFamily(threadKey(ref)),
     sessionAtom: (ref: ScopedThreadRef) => threadSessionAtomFamily(threadKey(ref)),

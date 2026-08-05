@@ -14,11 +14,12 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection } from "@t3tools/contracts";
+import { ModelSelection, ThreadGoal } from "@starcode/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -34,47 +35,45 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           thread_id,
           project_id,
           title,
+          title_source,
           model_selection_json,
           runtime_mode,
           interaction_mode,
           branch,
           worktree_path,
+          side_of_thread_id,
           latest_turn_id,
           created_at,
           updated_at,
           archived_at,
-          settled_override,
-          settled_at,
-          snoozed_until,
-          snoozed_at,
           latest_user_message_at,
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
-          deleted_at
+          deleted_at,
+          goal_json
         )
         VALUES (
           ${row.threadId},
           ${row.projectId},
           ${row.title},
+          ${row.titleSource ?? "generated"},
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
+          ${row.sideOfThreadId},
           ${row.latestTurnId},
           ${row.createdAt},
           ${row.updatedAt},
           ${row.archivedAt},
-          ${row.settledOverride},
-          ${row.settledAt},
-          ${row.snoozedUntil},
-          ${row.snoozedAt},
           ${row.latestUserMessageAt},
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.goal === null ? null : JSON.stringify(row.goal)}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -82,22 +81,21 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title = excluded.title,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
+          title_source = excluded.title_source,
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          side_of_thread_id = excluded.side_of_thread_id,
           latest_turn_id = excluded.latest_turn_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           archived_at = excluded.archived_at,
-          settled_override = excluded.settled_override,
-          settled_at = excluded.settled_at,
-          snoozed_until = excluded.snoozed_until,
-          snoozed_at = excluded.snoozed_at,
           latest_user_message_at = excluded.latest_user_message_at,
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          goal_json = excluded.goal_json
       `,
   });
 
@@ -112,22 +110,21 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
+          title_source AS "titleSource",
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          side_of_thread_id AS "sideOfThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
-          settled_override AS "settledOverride",
-          settled_at AS "settledAt",
-          snoozed_until AS "snoozedUntil",
-          snoozed_at AS "snoozedAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -144,22 +141,21 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
+          title_source AS "titleSource",
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          side_of_thread_id AS "sideOfThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
-          settled_override AS "settledOverride",
-          settled_at AS "settledAt",
-          snoozed_until AS "snoozedUntil",
-          snoozed_at AS "snoozedAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC

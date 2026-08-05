@@ -3,8 +3,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-} from "@t3tools/contracts";
-import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+} from "@starcode/contracts";
+import { decodeOtlpTraceRecords } from "@starcode/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,7 +40,19 @@ import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./ht
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
+/**
+ * Both brands, on purpose. The renderer now loads from `starcode://app`, but the
+ * old schemes stay registered so links already in the wild resolve — and a
+ * desktop build installed before the rename keeps talking to a server built
+ * after it. Dropping the legacy pair here would reject every request from those
+ * clients at CORS, which reads as a dead app rather than as a version skew.
+ */
+const DESKTOP_RENDERER_ORIGINS = [
+  "starcode://app",
+  "starcode-dev://app",
+  "t3code://app",
+  "t3code-dev://app",
+];
 
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {

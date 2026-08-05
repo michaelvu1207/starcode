@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -12,6 +13,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
 }: ExpandedImageDialogProps) {
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const [imageOffset, setImageOffset] = useState(0);
   const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
 
@@ -21,6 +23,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!paneOwnsKeyboard()) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -41,7 +44,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, onClose, preview.images.length]);
+  }, [navigateImage, onClose, paneOwnsKeyboard, preview.images.length]);
 
   const item = preview.images[index];
   if (!item) return null;

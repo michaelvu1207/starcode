@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type { EnvironmentId, ServerSelfUpdateCapability } from "@starcode/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment } from "~/state/server";

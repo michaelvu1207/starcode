@@ -3,8 +3,14 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
-import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { FeatureFlowTrunkConfig } from "./featureFlow.ts";
+import { ProviderOptionSelections } from "./model.ts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -20,6 +26,29 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+
+// Sidebar v2 keeps its own thread order because its list is one flat
+// cross-environment inbox, not a per-project tree: "activity" ranks the rows
+// that are blocked on a human first, "created_at" is v2's original static
+// order where a row never moves until its lifecycle changes.
+export const SidebarV2ThreadSortOrder = Schema.Literals(["activity", "created_at"]);
+export type SidebarV2ThreadSortOrder = typeof SidebarV2ThreadSortOrder.Type;
+export const DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER: SidebarV2ThreadSortOrder = "activity";
+
+// What the sidebar v2 list is a list OF: "inbox" is the flat cross-environment
+// stream, "connections" groups the same threads under the machine that runs
+// them, "projects" groups them under the category they were filed into — which
+// is cross-machine, so a project group mixes machines by design where a
+// connection group cannot.
+//
+// Defaults to "projects": the sidebar is the thing you navigate all day, and
+// the organisation you gave your own work is a better map of it than a single
+// undifferentiated stream. The inbox is still one menu away and is still where
+// triage happens — this is a default, not a removal. Anyone who has already
+// chosen a view has it persisted and is unaffected.
+export const SidebarV2ViewMode = Schema.Literals(["inbox", "connections", "projects"]);
+export type SidebarV2ViewMode = typeof SidebarV2ViewMode.Type;
+export const DEFAULT_SIDEBAR_V2_VIEW_MODE: SidebarV2ViewMode = "projects";
 
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
@@ -38,16 +67,6 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
-export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
-export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
-export const SidebarAutoSettleAfterDays = Schema.Number.check(
-  Schema.isBetween({
-    minimum: MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-    maximum: MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  }),
-);
-export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
-export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -95,9 +114,6 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
-  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -114,7 +130,12 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
-  sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarV2ThreadSortOrder: SidebarV2ThreadSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_SORT_ORDER)),
+  ),
+  sidebarV2ViewMode: SidebarV2ViewMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_VIEW_MODE)),
+  ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -199,7 +220,8 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "CODEX_HOME path",
-        description: "Custom Codex home and config directory.",
+        description:
+          "Custom Codex home and config directory. Give each Codex account its own instance and directory so usage and rate limits are attributed per account.",
         providerSettingsForm: {
           placeholder: "~/.codex",
           clearWhenEmpty: "omit",
@@ -254,8 +276,11 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "CLAUDE_CONFIG_DIR path",
         description:
-          "Custom Claude home and config directory. Keeps .claude.json and .claude separate.",
-        providerSettingsForm: { placeholder: "~/.claude", clearWhenEmpty: "omit" },
+          "Custom Claude home and config directory. Keeps .claude.json and .claude separate. To run a second Claude account, add another instance with its own directory (e.g. ~/.claude-homes/work) and sign in there — threads stay pinned to the account whose directory they started on.",
+        providerSettingsForm: {
+          placeholder: "~/.claude-homes/<account>",
+          clearWhenEmpty: "omit",
+        },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(
@@ -273,12 +298,91 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    // Stored as text so the schema-driven provider settings form (text /
+    // password / textarea / switch only) can edit it; parsed and clamped by
+    // `resolveClaudeContextLimitTokens` in @starcode/shared/claudeContextLimit.
+    // Fork: this seeds the composer's per-thread Context selector — it is the
+    // choice a new thread starts on, not a ceiling over the one it picks.
+    contextLimitTokens: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Default context for new threads",
+        description:
+          "Context each new thread starts on, before you change it in the composer. Leave blank to start each model on its usual size. Accepts 600000 or 600k, rounded down to the nearest size the chosen model offers (200k, 600k, 1M).",
+        providerSettingsForm: {
+          placeholder: "600k",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "contextLimitTokens", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
+
+/**
+ * Embedded Pi runtime settings. Credentials intentionally live in the provider
+ * instance environment/secret store or a host-local account vault rather than
+ * this plain JSON object.
+ */
+export const PiSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    agentDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Pi data directory",
+        description:
+          "Optional directory for Pi OAuth, model configuration, skills, trusted personal extensions, and durable sessions. Leave blank to keep it inside Starcode's data directory.",
+        providerSettingsForm: {
+          placeholder: "Managed by Starcode",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    /**
+     * Server-owned compatibility routing for a catalogued native Pi account.
+     * It is never rendered in settings or populated by normal UI edits; the
+     * provider hydration layer supplies it while older account catalogs are
+     * being bridged into provider instances.
+     */
+    catalogAccountId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    enabledModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    trustedExtensionPaths: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    allowProjectExtensions: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Trust project Pi extensions",
+        description:
+          "Allow executable .pi/extensions files from the selected project. AGENTS files and skills remain available when this is off.",
+      }),
+    ),
+    maxAttachedAgents: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })).pipe(
+      Schema.withDecodingDefault(Effect.succeed(8)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    maxAgentDepth: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })).pipe(
+      Schema.withDecodingDefault(Effect.succeed(3)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["agentDir", "allowProjectExtensions"] },
+);
+export type PiSettings = typeof PiSettings.Type;
 
 export const CursorSettings = makeProviderSettingsSchema(
   {
@@ -339,56 +443,6 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
-export const OpenCodeSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("opencode").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the OpenCode binary.",
-        providerSettingsForm: {
-          placeholder: "opencode",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverUrl: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
-        providerSettingsForm: {
-          placeholder: "http://127.0.0.1:4096",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverPassword: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server password",
-        description: "Stored in plain text on disk.",
-        providerSettingsForm: {
-          control: "password",
-          placeholder: "Optional",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
-  },
-);
-export type OpenCodeSettings = typeof OpenCodeSettings.Type;
-
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -396,6 +450,24 @@ export const ObservabilitySettings = Schema.Struct({
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+
+/**
+ * How a newly created master thread is configured. `plan` is the whole point:
+ * an orchestrator that plans and delegates should not be able to write code,
+ * and expressing that as configuration rather than as prompt text means it
+ * holds regardless of what the operator writes into the thread. Interaction
+ * mode is the lever that carries that intent, so the permission mode follows
+ * the app-wide default rather than adding a second prompt-shaped gate — a
+ * master dropped out of plan mode behaves like every other thread. It is a
+ * default, not a lock — an operator can change either per thread in the UI.
+ */
+export const WorkbenchMasterDefaults = Schema.Struct({
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("plan" as const)),
+  ),
+});
+export type WorkbenchMasterDefaults = typeof WorkbenchMasterDefaults.Type;
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -415,8 +487,8 @@ export const ServerSettings = Schema.Struct({
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
-        instanceId: ProviderInstanceId.make("codex"),
-        model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+        instanceId: ProviderInstanceId.make("pi"),
+        model: "openai/gpt-5.4-mini",
       }),
     ),
   ),
@@ -428,11 +500,11 @@ export const ServerSettings = Schema.Struct({
   // owns its config in its own package, this struct shrinks to nothing and
   // is removed entirely.
   providers: Schema.Struct({
+    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -443,6 +515,30 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+
+  // ---- FORK SETTINGS ----
+  /**
+   * The thread designated as this environment's orchestrator. Its sessions —
+   * and only its sessions — are issued the MCP capability that carries the
+   * peer write tools. Empty means no thread is designated, which is the state
+   * every server starts in and the state a server stays in unless an operator
+   * deliberately names one.
+   *
+   * A plain string rather than `ThreadId` because it is routinely unset, and
+   * the empty-string-means-unset idiom is what the rest of this struct uses.
+   */
+  workbenchMasterThreadId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  workbenchMasterDefaults: WorkbenchMasterDefaults.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Trunk overrides for the feature-flow computation. Empty means every
+   * project auto-detects its trunks, which is right for a fleet whose
+   * repositories share a branch convention.
+   */
+  featureFlowTrunks: Schema.Array(FeatureFlowTrunkConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -515,6 +611,16 @@ const ClaudeSettingsPatch = Schema.Struct({
   launchArgs: Schema.optionalKey(TrimmedString),
 });
 
+const PiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  agentDir: Schema.optionalKey(TrimmedString),
+  enabledModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  trustedExtensionPaths: Schema.optionalKey(Schema.Array(Schema.String)),
+  allowProjectExtensions: Schema.optionalKey(Schema.Boolean),
+  maxAttachedAgents: Schema.optionalKey(Schema.Int),
+  maxAgentDepth: Schema.optionalKey(Schema.Int),
+});
+
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -528,14 +634,6 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const OpenCodeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  serverUrl: Schema.optionalKey(TrimmedString),
-  serverPassword: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -544,6 +642,15 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  // ---- FORK SETTINGS ----
+  workbenchMasterThreadId: Schema.optionalKey(TrimmedString),
+  workbenchMasterDefaults: Schema.optionalKey(
+    Schema.Struct({
+      runtimeMode: Schema.optionalKey(RuntimeMode),
+      interactionMode: Schema.optionalKey(ProviderInteractionMode),
+    }),
+  ),
+  featureFlowTrunks: Schema.optionalKey(Schema.Array(FeatureFlowTrunkConfig)),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({
@@ -553,11 +660,11 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   providers: Schema.optionalKey(
     Schema.Struct({
+      pi: Schema.optionalKey(PiSettingsPatch),
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
-      opencode: Schema.optionalKey(OpenCodeSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -595,7 +702,6 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
-  sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
@@ -603,7 +709,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
-  sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV2ThreadSortOrder: Schema.optionalKey(SidebarV2ThreadSortOrder),
+  sidebarV2ViewMode: Schema.optionalKey(SidebarV2ViewMode),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

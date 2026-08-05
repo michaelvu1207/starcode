@@ -7,15 +7,23 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ThreadMailboxEntry,
+  type ThreadGoal,
   type TurnId,
-} from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+} from "@starcode/contracts";
+import {
+  isTemporaryWorktreeBranch,
+  stripWorktreeBranchPrefix,
+  WORKTREE_BRANCH_PREFIX,
+} from "@starcode/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -23,21 +31,26 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@starcode/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
+import { requireAttachedAgentHost } from "../../provider/AttachedAgentHost.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { applyMailboxToPrompt } from "../../mailbox/envelope.ts";
+import { ThreadMailbox } from "../../mailbox/ThreadMailbox.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
@@ -51,9 +64,14 @@ type ProviderIntentEvent = Extract<
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
+      | "thread.agent-turn-start-requested"
+      | "thread.agent-turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.goal-set-requested"
+      | "thread.goal-status-set-requested"
+      | "thread.goal-clear-requested";
   }
 >;
 
@@ -170,9 +188,9 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
-    : normalized;
+  // Either prefix, so re-deriving a name from a pre-rename branch yields
+  // `starcode/foo` rather than the double-prefixed `starcode/t3/foo`.
+  const withoutPrefix = stripWorktreeBranchPrefix(normalized);
 
   const branchFragment = withoutPrefix
     .replace(/[^a-z0-9/_-]+/g, "-")
@@ -190,12 +208,14 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const threadMailbox = yield* ThreadMailbox;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -219,14 +239,18 @@ const make = Effect.gen(function* () {
     readonly kind:
       | "provider.turn.start.failed"
       | "provider.turn.interrupt.failed"
+      | "provider.agent.turn.start.failed"
+      | "provider.agent.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.goal.update.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    readonly parentToolUseId?: string;
   }) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
@@ -245,6 +269,7 @@ const make = Effect.gen(function* () {
             payload: {
               detail: input.detail,
               ...(input.requestId ? { requestId: input.requestId } : {}),
+              ...(input.parentToolUseId ? { parentToolUseId: input.parentToolUseId } : {}),
             },
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -277,6 +302,25 @@ const make = Effect.gen(function* () {
           commandId,
           threadId: input.threadId,
           session: input.session,
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const syncThreadGoal = (input: {
+    readonly threadId: ThreadId;
+    readonly goal: ThreadGoal | null;
+    readonly observedAt: string;
+    readonly createdAt: string;
+  }) =>
+    serverCommandId("provider-goal-sync").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId,
+          threadId: input.threadId,
+          goal: input.goal,
+          observedAt: input.observedAt,
           createdAt: input.createdAt,
         }),
       ),
@@ -320,6 +364,73 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const goalControlModeForThread = Effect.fnUntraced(function* (thread: OrchestrationThread) {
+    const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+    // Capability snapshots from older servers and several test adapters omit
+    // this field. Preserve the pre-capability behavior there: ask the provider
+    // service, which returns its typed unsupported error when appropriate.
+    return (yield* providerService.getCapabilities(instanceId)).goalControl ?? "native";
+  });
+
+  const setThreadGoal = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly objective?: string;
+    readonly status?: ThreadGoal["status"];
+    readonly tokenBudget?: number | null;
+    readonly createdAt: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    if (!thread) return yield* Effect.die(new Error(`Thread '${input.threadId}' was not found`));
+    const mode = yield* goalControlModeForThread(thread);
+    if (mode === "native") {
+      return yield* providerService.setGoal({
+        threadId: input.threadId,
+        ...(input.objective !== undefined ? { objective: input.objective } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+      });
+    }
+    if (mode !== "managed") {
+      return yield* new ProviderAdapterRequestError({
+        provider: String(thread.session?.providerName ?? thread.modelSelection.instanceId),
+        method: "setGoal",
+        detail: "This provider does not support goals.",
+      });
+    }
+    const existing = thread.goal ?? null;
+    if (!existing && input.objective === undefined) {
+      return yield* new ProviderAdapterRequestError({
+        provider: String(thread.session?.providerName ?? thread.modelSelection.instanceId),
+        method: "setGoal",
+        detail: "No managed goal exists for this thread.",
+      });
+    }
+    return {
+      objective: input.objective ?? existing!.objective,
+      status: input.status ?? (input.objective !== undefined ? "active" : existing!.status),
+      tokenBudget:
+        input.tokenBudget !== undefined ? input.tokenBudget : (existing?.tokenBudget ?? null),
+      tokensUsed: existing?.tokensUsed ?? 0,
+      timeUsedSeconds: existing?.timeUsedSeconds ?? 0,
+      createdAt: existing?.createdAt ?? input.createdAt,
+      updatedAt: input.createdAt,
+    } satisfies ThreadGoal;
+  });
+
+  const clearThreadGoal = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const thread = yield* resolveThread(threadId);
+    if (!thread) return;
+    const mode = yield* goalControlModeForThread(thread);
+    if (mode === "native") yield* providerService.clearGoal(threadId);
+    else if (mode !== "managed") {
+      return yield* new ProviderAdapterRequestError({
+        provider: String(thread.session?.providerName ?? thread.modelSelection.instanceId),
+        method: "clearGoal",
+        detail: "This provider does not support goals.",
+      });
+    }
   });
 
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
@@ -755,6 +866,11 @@ const make = Effect.gen(function* () {
           commandId: yield* serverCommandId("thread-title-rename"),
           threadId: input.threadId,
           title: generated.title,
+          // Said explicitly so a later automatic rename — the plan title, once
+          // the thread proposes one — knows it may replace this guess. Without
+          // it the decider would record `manual` and this title would outlive
+          // every better description of the work.
+          titleSource: "generated",
         });
       }).pipe(
         Effect.catchCause((cause) =>
@@ -794,9 +910,24 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    /**
+     * A thread's title and branch are generated from its first user message, and
+     * an agent-delivered message wears the user role like any other. Without
+     * this, the first thing said to a thread nobody had typed into yet names it
+     * — so a thread would be titled from another agent's words, and the titler
+     * would be handed text it fetched from a stranger under the header "User
+     * message:".
+     *
+     * Read from the message rather than sniffed out of its text. Both wear the
+     * `user` role — to the provider they are the same kind of input — so
+     * `authoredBy` is the only thing that distinguishes them, and it is set by
+     * the writer that delivered the message rather than inferred downstream.
+     */
+    const isAgentDeliveredMessage = message.authoredBy === "agent";
+    const isSystemDeliveredMessage = message.authoredBy === "system";
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+    if (isFirstUserMessageTurn && !isAgentDeliveredMessage && !isSystemDeliveredMessage) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -825,16 +956,61 @@ const make = Effect.gen(function* () {
       }
     }
 
+    /**
+     * A turn that carried an agent's message and then failed has destroyed that
+     * message, and the sender was told it was delivered long before this — the
+     * provider call is forked, so `peer_thread_send` returned the moment the
+     * command was accepted.
+     *
+     * The window is small but real: a Codex thread cannot accept a same-turn
+     * steer while it is running `/review` or a manual `/compact` and rejects the
+     * turn outright. Putting the message back in the mailbox turns that from a
+     * lost instruction into a late one — it rides the thread's next turn, which
+     * is exactly where it would have gone had the sender asked to queue it.
+     *
+     * The text re-queued is the rendered envelope rather than the original body,
+     * because that is all this layer has. Delivering it later therefore nests one
+     * envelope inside another, which is ugly and harmless: the inner tags are
+     * escaped on the way out and the provenance line survives as prose.
+     */
+    const requeueAgentMessageOnFailure = () =>
+      isAgentDeliveredMessage
+        ? threadMailbox
+            .enqueue({
+              threadId: event.payload.threadId,
+              message: message.text,
+              origin: {
+                environmentId: null,
+                environmentLabel: null,
+                threadId: null,
+                threadTitle: null,
+              },
+              sentAt: event.payload.createdAt,
+            })
+            .pipe(
+              Effect.asVoid,
+              Effect.catchCause((cause) =>
+                Effect.logWarning("could not requeue an undelivered agent message", {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            )
+        : Effect.void;
+
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
-        threadId: event.payload.threadId,
-        detail,
-        createdAt: event.payload.createdAt,
-      }).pipe(
+      return requeueAgentMessageOnFailure().pipe(
+        Effect.andThen(
+          setThreadSessionErrorOnTurnStartFailure({
+            threadId: event.payload.threadId,
+            detail,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
         Effect.flatMap(() =>
           appendProviderFailureActivity({
             threadId: event.payload.threadId,
@@ -861,9 +1037,23 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // Mailbox delivery rides on a turn the thread was taking anyway. Claimed
+    // here, after every guard above has passed and immediately before the
+    // prompt is built, so a turn that never reaches the provider is also a
+    // turn that never claimed anything. A claim failure is logged and dropped:
+    // losing a notification must not cost the operator their turn.
+    const mailboxEntries = yield* threadMailbox.claimForTurn(event.payload.threadId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to claim mailbox entries for turn", {
+          threadId: event.payload.threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([] as ReadonlyArray<ThreadMailboxEntry>)),
+      ),
+    );
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: applyMailboxToPrompt(message.text, mailboxEntries),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
@@ -877,6 +1067,28 @@ const make = Effect.gen(function* () {
 
     if (Option.isNone(sendTurnRequest)) {
       return;
+    }
+
+    if (event.payload.goalObjective !== undefined) {
+      const goalPrepared = yield* setThreadGoal({
+        threadId: event.payload.threadId,
+        objective: event.payload.goalObjective,
+        createdAt: event.payload.createdAt,
+      }).pipe(
+        Effect.flatMap((goal) =>
+          syncThreadGoal({
+            threadId: event.payload.threadId,
+            goal,
+            observedAt: goal.updatedAt,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+        Effect.as(true),
+        Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(false))),
+      );
+      if (!goalPrepared) {
+        return;
+      }
     }
 
     yield* providerService
@@ -1026,6 +1238,92 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processGoalSetRequested = Effect.fn("processGoalSetRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-set-requested" }>,
+  ) {
+    yield* setThreadGoal({
+      threadId: event.payload.threadId,
+      objective: event.payload.objective,
+      createdAt: event.payload.createdAt,
+      ...(event.payload.tokenBudget !== undefined
+        ? { tokenBudget: event.payload.tokenBudget }
+        : {}),
+    }).pipe(
+      Effect.flatMap((goal) =>
+        syncThreadGoal({
+          threadId: event.payload.threadId,
+          goal,
+          observedAt: goal.updatedAt,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.update.failed",
+          summary: "Goal update failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
+  const processGoalStatusSetRequested = Effect.fn("processGoalStatusSetRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-status-set-requested" }>,
+  ) {
+    yield* setThreadGoal({
+      threadId: event.payload.threadId,
+      status: event.payload.status,
+      createdAt: event.payload.createdAt,
+    }).pipe(
+      Effect.flatMap((goal) =>
+        syncThreadGoal({
+          threadId: event.payload.threadId,
+          goal,
+          observedAt: goal.updatedAt,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.update.failed",
+          summary: "Goal status update failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
+  const processGoalClearRequested = Effect.fn("processGoalClearRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-clear-requested" }>,
+  ) {
+    yield* clearThreadGoal(event.payload.threadId).pipe(
+      Effect.andThen(
+        syncThreadGoal({
+          threadId: event.payload.threadId,
+          goal: null,
+          observedAt: event.payload.createdAt,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.update.failed",
+          summary: "Goal clear failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1057,6 +1355,47 @@ const make = Effect.gen(function* () {
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
+      case "thread.agent-turn-start-requested":
+        yield* Effect.tryPromise(() =>
+          requireAttachedAgentHost().sendMessage(
+            event.payload.threadId,
+            event.payload.agentRunId,
+            event.payload.text,
+          ),
+        ).pipe(
+          Effect.catch((cause) =>
+            appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.agent.turn.start.failed",
+              summary: "Pi agent turn start failed",
+              detail: cause instanceof Error ? cause.message : String(cause),
+              turnId: null,
+              createdAt: event.payload.createdAt,
+              parentToolUseId: event.payload.agentRunId,
+            }),
+          ),
+        );
+        return;
+      case "thread.agent-turn-interrupt-requested":
+        yield* Effect.tryPromise(() =>
+          requireAttachedAgentHost().interruptTurn(
+            event.payload.threadId,
+            event.payload.agentRunId,
+          ),
+        ).pipe(
+          Effect.catch((cause) =>
+            appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.agent.turn.interrupt.failed",
+              summary: "Pi agent turn interrupt failed",
+              detail: cause instanceof Error ? cause.message : String(cause),
+              turnId: null,
+              createdAt: event.payload.createdAt,
+              parentToolUseId: event.payload.agentRunId,
+            }),
+          ),
+        );
+        return;
       case "thread.approval-response-requested":
         yield* processApprovalResponseRequested(event);
         return;
@@ -1065,6 +1404,15 @@ const make = Effect.gen(function* () {
         return;
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
+        return;
+      case "thread.goal-set-requested":
+        yield* processGoalSetRequested(event);
+        return;
+      case "thread.goal-status-set-requested":
+        yield* processGoalStatusSetRequested(event);
+        return;
+      case "thread.goal-clear-requested":
+        yield* processGoalClearRequested(event);
         return;
     }
   });
@@ -1084,15 +1432,84 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
+  const reconcilePendingTurnStarts = Effect.fn("reconcilePendingTurnStarts")(function* () {
+    const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+    yield* Effect.forEach(
+      snapshot.threads,
+      (shell) => {
+        if (
+          shell.session === null ||
+          (shell.session.status !== "ready" && shell.session.status !== "stopped") ||
+          shell.session.activeTurnId !== null
+        ) {
+          return Effect.void;
+        }
+        return projectionTurnRepository.getPendingTurnStartByThreadId({ threadId: shell.id }).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (pending) =>
+                projectionSnapshotQuery.getThreadDetailById(shell.id).pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () => Effect.void,
+                      onSome: (thread) => {
+                        const message = thread.messages.find(
+                          (entry) => entry.id === pending.messageId && entry.role === "user",
+                        );
+                        if (!message || message.role !== "user") return Effect.void;
+                        return DateTime.now.pipe(
+                          Effect.map(DateTime.formatIso),
+                          Effect.flatMap((createdAt) =>
+                            orchestrationEngine.dispatch({
+                              type: "thread.turn.start",
+                              commandId: CommandId.make(
+                                `pending-turn-reconcile:${shell.id}:${pending.messageId}:${pending.requestedAt}`,
+                              ),
+                              threadId: shell.id,
+                              message: {
+                                messageId: message.id,
+                                role: "user",
+                                ...(message.authoredBy !== undefined
+                                  ? { authoredBy: message.authoredBy }
+                                  : {}),
+                                text: message.text,
+                                attachments: message.attachments ?? [],
+                              },
+                              modelSelection: thread.modelSelection,
+                              runtimeMode: thread.runtimeMode,
+                              interactionMode: thread.interactionMode,
+                              createdAt,
+                            }),
+                          ),
+                          Effect.asVoid,
+                        );
+                      },
+                    }),
+                  ),
+                ),
+            }),
+          ),
+        );
+      },
+      { concurrency: 1, discard: true },
+    );
+  });
+
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.agent-turn-start-requested" ||
+        event.type === "thread.agent-turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.goal-set-requested" ||
+        event.type === "thread.goal-status-set-requested" ||
+        event.type === "thread.goal-clear-requested"
       ) {
         return yield* worker.enqueue(event);
       }
@@ -1100,6 +1517,18 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+    );
+    // A turn-start intent is projected before the provider call. If the
+    // process exits in that gap, the event stream has already moved on but the
+    // pending row remains. Once the subscription is attached, replay exactly
+    // those idle pending intents with a deterministic command id.
+    yield* Effect.yieldNow;
+    yield* reconcilePendingTurnStarts().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to reconcile pending turns", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
     );
   });
 
@@ -1109,4 +1538,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

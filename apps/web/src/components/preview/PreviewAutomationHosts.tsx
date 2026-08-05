@@ -1,7 +1,7 @@
 "use client";
 
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@starcode/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
@@ -18,8 +18,8 @@ import {
   type PreviewRenderedViewportSize,
   type PreviewViewportSetting,
   type ScopedThreadRef,
-} from "@t3tools/contracts";
-import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
+} from "@starcode/contracts";
+import { resolvePreviewViewport } from "@starcode/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -285,6 +285,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const open = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  const navigate = useAtomCommand(previewEnvironment.navigate, {
+    reportFailure: false,
+  });
   const resize = useAtomCommand(previewEnvironment.resize, {
     reportFailure: false,
   });
@@ -345,12 +348,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
-            const resolvedInputUrl = input.url
+            const resolution = input.url
               ? resolveBrowserNavigationTarget(environmentId, {
                   kind: "url",
                   url: input.url,
-                }).resolvedUrl
+                })
               : undefined;
+            const resolvedInputUrl = resolution?.resolvedUrl;
             let activeTabId = resolvePreviewAutomationOpenTab(
               state,
               request.tabId,
@@ -366,7 +370,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 environmentId,
                 input: {
                   threadId: request.threadId,
-                  ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+                  ...(resolution?.target
+                    ? { target: resolution.target }
+                    : resolvedInputUrl
+                      ? { url: resolvedInputUrl }
+                      : {}),
                 },
               });
               if (result._tag === "Failure") {
@@ -389,8 +397,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 request.timeoutMs,
               );
             }
-            if (reusedExistingTab && resolvedInputUrl && previewBridge) {
-              await previewBridge.navigate(activeTabId, resolvedInputUrl);
+            if (reusedExistingTab && resolution) {
+              const result = await navigate({
+                environmentId,
+                input: {
+                  threadId: request.threadId,
+                  tabId: activeTabId,
+                  ...(resolution.target
+                    ? { target: resolution.target }
+                    : { url: resolution.resolvedUrl }),
+                },
+              });
+              if (result._tag === "Failure") return raiseAtomCommandFailure(result);
+              updatePreviewServerSnapshot(threadRef, result.value);
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,
@@ -411,7 +430,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 url: input.url!,
               },
             );
-            await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
+            const result = await navigate({
+              environmentId,
+              input: {
+                threadId: request.threadId,
+                tabId: ready.tabId,
+                ...(resolution.target
+                  ? { target: resolution.target }
+                  : { url: resolution.resolvedUrl }),
+              },
+            });
+            if (result._tag === "Failure") return raiseAtomCommandFailure(result);
+            updatePreviewServerSnapshot(threadRef, result.value);
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,
@@ -548,7 +578,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         });
       }
     },
-    [environmentId, listPreviews, open, registry, resize],
+    [environmentId, listPreviews, navigate, open, registry, resize],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);

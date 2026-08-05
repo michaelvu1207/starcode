@@ -2,6 +2,7 @@ import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  BrowserNavigationTarget,
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
   PreviewTabId,
@@ -111,35 +112,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
-export const BrowserNavigationTarget = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("url").annotate({
-      description: "Selects direct URL navigation.",
-    }),
-    url: BoundedUrl.annotate({
-      description: "Direct website URL.",
-    }),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("environment-port").annotate({
-      description: "Selects a dev-server port relative to the current execution environment.",
-    }),
-    port: Schema.Int.check(Schema.isGreaterThan(0))
-      .check(Schema.isLessThan(65_536))
-      .annotate({ description: "Dev-server TCP port inside the current environment." }),
-    protocol: Schema.optional(
-      Schema.Literals(["http", "https"]).annotate({
-        description: "Dev-server protocol. Defaults to http.",
-      }),
-    ),
-    path: Schema.optional(
-      Schema.String.annotate({
-        description: "Optional path, query, and fragment, for example /settings?tab=account.",
-      }),
-    ),
-  }),
-]);
-export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
+export { BrowserNavigationTarget } from "./preview.ts";
 
 export const PreviewAutomationNavigateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -875,7 +848,8 @@ export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 export const PreviewUrlResolution = Schema.Struct({
   requestedUrl: Schema.String,
   resolvedUrl: Schema.String,
-  resolutionKind: Schema.Literals(["direct", "direct-private-network"]),
+  resolutionKind: Schema.Literals(["direct", "direct-private-network", "client-bridge"]),
   environmentId: EnvironmentId,
+  target: Schema.optional(BrowserNavigationTarget),
 });
 export type PreviewUrlResolution = typeof PreviewUrlResolution.Type;

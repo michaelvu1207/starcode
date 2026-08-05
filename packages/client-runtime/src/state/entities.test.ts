@@ -5,7 +5,7 @@ import {
   ThreadId,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -96,8 +96,6 @@ const THREAD_SHELL = {
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
   archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
   session: null,
   latestUserMessageAt: null,
   hasPendingApprovals: false,
@@ -209,6 +207,7 @@ describe("environment entity projections", () => {
       messages,
       proposedPlans: [],
       activities: [],
+      agentRuns: [],
       checkpoints: [],
     } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
     const shell = {
@@ -315,6 +314,7 @@ describe("environment entity projections", () => {
     const threadDetailAtom = harness.threadDetails.detailAtom(threadRef);
     const messagesAtom = harness.threadDetails.messagesAtom(threadRef);
     const activitiesAtom = harness.threadDetails.activitiesAtom(threadRef);
+    const agentRunsAtom = harness.threadDetails.agentRunsAtom(threadRef);
     const statusAtom = harness.threadDetails.statusAtom(threadRef);
     const otherThreadDetailAtom = harness.threadDetails.detailAtom(otherThreadRef);
     const otherValue = harness.registry.get(otherThreadDetailAtom);
@@ -324,6 +324,23 @@ describe("environment entity projections", () => {
       messages: [],
       proposedPlans: [],
       activities: [],
+      agentRuns: [
+        {
+          parentThreadId: THREAD_ID,
+          provider: "codex",
+          agentRunId: "agent-1",
+          launchToolUseId: "tool-1",
+          taskType: "codex_cli",
+          agentType: "reviewer",
+          model: "gpt-5.6-sol",
+          description: "Review",
+          status: "completed",
+          startedAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:01:00.000Z",
+          historySessionId: "a".repeat(32) as never,
+          transcriptState: "linked",
+        },
+      ],
       checkpoints: [],
     } satisfies OrchestrationThread;
 
@@ -339,6 +356,7 @@ describe("environment entity projections", () => {
     const scopedDetail = harness.registry.get(threadDetailAtom);
     const messages = harness.registry.get(messagesAtom);
     const activities = harness.registry.get(activitiesAtom);
+    const agentRuns = harness.registry.get(agentRunsAtom);
 
     expect(scopedDetail).toEqual({ ...detail, environmentId: ENVIRONMENT_ID });
     expect(harness.registry.get(statusAtom)).toBe("live");
@@ -366,5 +384,6 @@ describe("environment entity projections", () => {
 
     expect(harness.registry.get(messagesAtom)).toBe(messages);
     expect(harness.registry.get(activitiesAtom)).toBe(activities);
+    expect(harness.registry.get(agentRunsAtom)).toBe(agentRuns);
   });
 });

@@ -14,6 +14,7 @@ build/
 .logs/
 release/
 release-mock/
+.starcode
 .t3
 .idea/
 apps/web/.playwright
@@ -35,3 +36,4 @@ node_modules/
 *.log
 .env*
 !.env.example
+.claude/worktrees/

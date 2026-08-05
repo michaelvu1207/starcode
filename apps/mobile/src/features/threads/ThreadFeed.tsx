@@ -1,9 +1,13 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
-import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@starcode/contracts";
+import { parseMailboxMessageSegments } from "@starcode/client-runtime/messages";
+import {
+  CHAT_LIST_ANCHOR_OFFSET,
+  resolveChatListAnchoredEndSpace,
+} from "@starcode/shared/chatList";
+import { formatElapsed } from "@starcode/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -83,8 +87,8 @@ import {
 } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
-import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
-import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
+import { markdownFileIconSource } from "@starcode/mobile-markdown-text/file-icons";
+import { resolveMarkdownLinkPresentation } from "@starcode/mobile-markdown-text/links";
 import {
   deriveThreadFeedPresentation,
   type ThreadFeedEntry,
@@ -558,7 +562,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         if (presentation.kind === "file") {
           return (
             <NativeText
-              className="font-t3-bold"
+              className="font-starcode-bold"
               onPress={() => onLinkPress(href)}
               style={{ color: inlineTextColor }}
             >
@@ -831,7 +835,7 @@ function renderFeedEntry(
         hitSlop={4}
         className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
       >
-        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+        <Text className="font-starcode-medium text-sm tabular-nums text-foreground-muted">
           {entry.label}
         </Text>
         <SymbolView
@@ -850,6 +854,7 @@ function renderFeedEntry(
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
+        label={entry.label}
         onlyToolActivities={entry.onlyToolActivities}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
       />
@@ -863,6 +868,25 @@ function renderFeedEntry(
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = message.text.includes("<review_comment");
+    /**
+     * An agent's message wears the `user` role and lands in the same bubble as
+     * everything the operator typed, because immediate delivery makes it the
+     * text of the turn it started. `authoredBy` is the server's own answer to
+     * "who wrote this", so the bubble can say so instead of showing the reader
+     * a wrapper full of tags and leaving them to work it out.
+     */
+    const mailboxSegments =
+      message.authoredBy === "agent" ? parseMailboxMessageSegments(message.text) : [];
+    const mailboxEntry = mailboxSegments.find((segment) => segment.kind === "mailbox");
+    const mailboxSender =
+      mailboxEntry?.kind === "mailbox"
+        ? [mailboxEntry.entry.fromThread, mailboxEntry.entry.fromMachine]
+            .filter(Boolean)
+            .join(" · ")
+        : null;
+    // Falls back to the raw text when the envelope does not parse, which is the
+    // safe direction: showing the wrapper beats showing nothing.
+    const messageText = mailboxEntry?.kind === "mailbox" ? mailboxEntry.entry.body : message.text;
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
@@ -888,9 +912,14 @@ function renderFeedEntry(
               ...(hasReviewCommentContext ? { width: props.reviewCommentBubbleWidth } : null),
             }}
           >
-            {message.text.trim().length > 0 ? (
+            {mailboxSender !== null ? (
+              <Text className="font-starcode-medium text-[11px] uppercase tracking-wide text-white/70">
+                {mailboxSender}
+              </Text>
+            ) : null}
+            {messageText.trim().length > 0 ? (
               <UserMessageContent
-                text={message.text}
+                text={messageText}
                 markdownStyles={styles}
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
@@ -910,13 +939,13 @@ function renderFeedEntry(
             })}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-starcode-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
-            {message.text.trim().length > 0 ? (
+            {messageText.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
-                text={message.text}
+                text={messageText}
                 tintColor={iconSubtleColor}
                 buttonSize={28}
                 iconSize={13}
@@ -978,12 +1007,39 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-starcode-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
           </View>
         ) : null}
       </Animated.View>
+    );
+  }
+
+  if (entry.type === "reasoning") {
+    // Prose at body weight, matching the assistant's own text — reasoning is
+    // narration, not a log line.
+    const styles = markdownStyles.assistant;
+    return (
+      <View className="mb-4 min-w-0">
+        {hasNativeSelectableMarkdownText() ? (
+          <SelectableMarkdownText
+            markdown={entry.text}
+            skills={props.skills}
+            textStyle={styles.nativeTextStyle}
+            onLinkPress={props.onMarkdownLinkPress}
+          />
+        ) : (
+          <Markdown
+            options={{ gfm: true }}
+            renderers={styles.renderers}
+            styles={styles.styles}
+            theme={styles.theme}
+          >
+            {entry.text}
+          </Markdown>
+        )}
+      </View>
     );
   }
 
@@ -1018,7 +1074,7 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
         <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
         <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
       </View>
-      <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+      <Text className="font-starcode-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
         Working for {durationLabel}
       </Text>
     </View>
@@ -1283,7 +1339,9 @@ function ThreadFeedPlaceholder(props: {
       }}
     >
       <View className="max-w-[320px] items-center gap-2">
-        <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
+        <Text className="text-center font-starcode-bold text-lg text-foreground">
+          {props.title}
+        </Text>
         <Text className="text-center text-sm leading-normal text-foreground-secondary">
           {props.detail}
         </Text>

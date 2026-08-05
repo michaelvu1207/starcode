@@ -23,6 +23,7 @@ import {
   issueSshWebSocketTicket,
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
+import { discoverFleetHosts, preflightFleetHost } from "./methods/fleetOnboarding.ts";
 import {
   checkForUpdate,
   downloadUpdate,
@@ -41,6 +42,11 @@ import {
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
+import {
+  getDiscordPresenceState,
+  setDiscordPresenceEnabled,
+  setDiscordPresenceSummary,
+} from "./methods/discordPresence.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
@@ -60,6 +66,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
+  yield* ipc.handle(discoverFleetHosts);
+  yield* ipc.handle(preflightFleetHost);
   yield* ipc.handle(ensureSshEnvironment);
   yield* ipc.handle(disconnectSshEnvironment);
   yield* ipc.handle(fetchSshEnvironmentDescriptor);
@@ -88,7 +96,15 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
+
+  yield* ipc.handle(getDiscordPresenceState);
+  yield* ipc.handle(setDiscordPresenceEnabled);
+  yield* ipc.handle(setDiscordPresenceSummary);
+
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
+  }
+  for (const bridgeMethod of PreviewIpc.bridgeMethods) {
+    yield* ipc.handle(bridgeMethod);
   }
 });

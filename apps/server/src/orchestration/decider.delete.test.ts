@@ -7,7 +7,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -68,6 +68,7 @@ const seedReadModel = Effect.gen(function* () {
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: null,
+      sideOfThreadId: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -96,6 +97,7 @@ const seedReadModel = Effect.gen(function* () {
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: null,
+      sideOfThreadId: null,
       createdAt: now,
       updatedAt: now,
     },

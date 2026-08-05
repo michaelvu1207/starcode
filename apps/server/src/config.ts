@@ -30,6 +30,18 @@ export interface ServerDerivedPaths {
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
+  /** Transitive environment roster. Supersedes peersPath for new writes. */
+  readonly fleetPath: string;
+  /** @deprecated One-release migration source for pre-fleet peer metadata. */
+  readonly peersPath: string;
+  /** Import provenance: which CLI session became which thread. See `history/importRegistry.ts`. */
+  readonly historyImportsPath: string;
+  /** Cached per-file aggregates of the CLIs' own session stores. See `usage/cli/CliUsageStore.ts`. */
+  readonly cliUsageCachePath: string;
+  readonly usageModelAliasesPath: string;
+  /** This machine's half of the cross-machine project categories. See `projectCatalog/ProjectCatalogRegistry.ts`. */
+  readonly projectCatalogPath: string;
+  readonly featureMapPath: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
@@ -80,7 +92,7 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
   }
->()("t3/config/ServerConfig") {
+>()("starcode/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (
     cwd: string,
@@ -112,6 +124,13 @@ export const deriveServerPaths = Effect.fn(function* (
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
+    fleetPath: join(stateDir, "fleet.json"),
+    peersPath: join(stateDir, "peers.json"),
+    historyImportsPath: join(stateDir, "history-imports.json"),
+    cliUsageCachePath: join(stateDir, "cli-usage-cache.json"),
+    usageModelAliasesPath: join(stateDir, "usage-model-aliases.json"),
+    projectCatalogPath: join(stateDir, "project-catalog.json"),
+    featureMapPath: join(stateDir, "feature-map.json"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
@@ -173,7 +192,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "t3-server",
+    otlpServiceName: "starcode-server",
     cwd,
     baseDir,
     ...derivedPaths,

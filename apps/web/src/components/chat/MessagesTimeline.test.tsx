@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@starcode/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -223,20 +223,18 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("uses the larger leading inset only when the top fade is enabled", () => {
-    const timelineEntries = [buildUserTimelineEntry("Hello")];
-
-    const compactMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+  it("never fades its own first rows out", () => {
+    // The mask existed to hide rows sliding under a thread header. The fork
+    // deleted that header — the transcript owns the pane edge to edge — so all
+    // the mask did was grey out the top two lines of whatever you scrolled to,
+    // and the taller leading inset reserved space for chrome that is not there.
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Hello")]} />,
     );
-    const fadedMarkup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} topFadeEnabled />,
-    );
 
-    expect(compactMarkup).toContain('class="h-3 sm:h-4"');
-    expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
-    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
-    expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+    expect(markup).toContain('class="h-3 sm:h-4"');
+    expect(markup).not.toContain("chat-timeline-scroll-fade");
+    expect(markup).not.toContain('class="h-10 sm:h-12"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
@@ -294,6 +292,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
+    expect(markup).toContain('aria-label="Simplify"');
+    expect(markup).toContain(">Simplify</button>");
+    expect(markup).toContain('aria-label="Edit Simplify prompt"');
   });
 
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
@@ -523,8 +524,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
+    // The row stands on its own — a "Work Log" heading above a single entry
+    // repeats what the entry already says.
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
+    expect(markup).not.toContain("Work Log");
   });
 
   it("formats changed file paths from the workspace root", () => {
@@ -541,16 +544,16 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+              changedFiles: ["C:/Users/mike/dev-stuff/starcode/apps/web/src/session-logic.ts"],
             },
           },
         ]}
-        workspaceRoot="C:/Users/mike/dev-stuff/t3code"
+        workspaceRoot="C:/Users/mike/dev-stuff/starcode"
       />,
     );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    expect(markup).toContain("starcode/apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("C:/Users/mike/dev-stuff/starcode/apps/web/src/session-logic.ts");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {
@@ -630,7 +633,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
-  it("renders a failure marker for failed tool lifecycle entries", () => {
+  it("reports command failure in the expanded footer, not as a per-row glyph", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -642,17 +645,132 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Glob",
+              label: "Bash",
               tone: "tool",
+              itemType: "command_execution",
+              command: "npm test",
               toolLifecycleStatus: "failed",
-              detail: "No files found",
+              output: "1 test failed",
+              exitCode: 1,
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
+    // The settled row is collapsed by default, so the status lives behind the
+    // disclosure rather than in a column of glyphs down the transcript.
+    expect(markup).toContain("Ran");
+    expect(markup).toContain("npm test");
+    expect(markup).not.toContain('aria-label="Tool call failed"');
+  });
+
+  it("expands a running command by default and shows its captured output", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Bash",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "npm test",
+              toolLifecycleStatus: "inProgress",
+              output: "running suite…",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running");
+    expect(markup).toContain("running suite…");
+    expect(markup).toContain("Shell");
+  });
+
+  it("renders Pi file reads with their path instead of a blank generic Ran card", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-read",
+            kind: "work",
+            createdAt: "2026-08-01T01:00:00.000Z",
+            entry: {
+              id: "work-read",
+              createdAt: "2026-08-01T01:00:00.000Z",
+              label: "read",
+              tone: "tool",
+              itemType: "file_read",
+              detail: "package.json",
+              toolTitle: "read",
+              toolLifecycleStatus: "completed",
+              output: '{"name":"@starcode/monorepo"}',
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Read");
+    expect(markup).toContain("package.json");
+    expect(markup).not.toContain('aria-label="Ran"');
+  });
+
+  it("renders a resolved Pi approval with its operation and terminal result", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-approval",
+            kind: "work",
+            createdAt: "2026-08-01T01:00:00.000Z",
+            entry: {
+              id: "work-approval",
+              createdAt: "2026-08-01T01:00:00.000Z",
+              label: "Approval resolved",
+              detail: "bash: printf pi-ok",
+              tone: "info",
+              requestKind: "command",
+              sourceActivityKind: "approval.resolved",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Approved");
+    expect(markup).toContain("bash: printf pi-ok");
+    expect(markup).not.toContain("Ran command");
+  });
+
+  it("renders a reasoning entry as prose", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "reasoning-1",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            turnId: null,
+            text: "I'll check the test suite first.",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("I&#x27;ll check the test suite first.");
+    expect(markup).toContain('data-timeline-row-kind="reasoning"');
   });
 });

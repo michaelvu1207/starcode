@@ -2,7 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -17,6 +17,8 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { permitsThreadOperation } from "../threads/ThreadCapability.ts";
+import { ThreadService } from "../threads/ThreadService.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -24,6 +26,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const threadService = yield* ThreadService;
 
     return handlers
       .handle(
@@ -58,8 +61,16 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         "threadSnapshot",
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* projectionSnapshotQuery
+          const principal = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          if (
+            !permitsThreadOperation(
+              { kind: "environment", scopes: principal.scopes },
+              { operation: "read" },
+            )
+          ) {
+            return yield* failEnvironmentInternal("orchestration_thread_snapshot_failed");
+          }
+          const snapshot = yield* threadService
             .getThreadDetailSnapshot(args.params.threadId)
             .pipe(
               Effect.catch((cause) =>
@@ -76,17 +87,48 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const principal = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
-            );
+          const threadOperation =
+            normalizedCommand.type === "thread.create"
+              ? "create"
+              : normalizedCommand.type === "thread.turn.start"
+                ? "turn"
+                : normalizedCommand.type === "thread.archive" ||
+                    normalizedCommand.type === "thread.unarchive"
+                  ? "archive"
+                  : null;
+          if (
+            threadOperation !== null &&
+            !permitsThreadOperation(
+              { kind: "environment", scopes: principal.scopes },
+              { operation: threadOperation },
+            )
+          ) {
+            return yield* failEnvironmentInternal("orchestration_dispatch_failed");
+          }
+          const dispatchEffect = Effect.gen(function* () {
+            if (normalizedCommand.type === "thread.create") {
+              return yield* threadService.dispatchCreate(normalizedCommand);
+            }
+            if (normalizedCommand.type === "thread.turn.start") {
+              return yield* threadService.startTurn(normalizedCommand);
+            }
+            if (
+              normalizedCommand.type === "thread.archive" ||
+              normalizedCommand.type === "thread.unarchive"
+            ) {
+              return yield* threadService.setArchived(normalizedCommand);
+            }
+            return yield* orchestrationEngine.dispatch(normalizedCommand);
+          });
+          return yield* dispatchEffect.pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            ),
+          );
         }),
       );
   }),

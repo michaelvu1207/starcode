@@ -1,9 +1,11 @@
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { type ProviderDriverKind, type ProviderInstanceId } from "@starcode/contracts";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
+  getModelPickerMetadata,
   getTriggerDisplayModelLabel,
+  getModelFamilyPresentation,
   type ModelEsque,
   PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
@@ -37,10 +39,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
-    : props.providerDisplayName;
+  const presentation = getModelFamilyPresentation(props.model, props.driverKind);
+  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[presentation.iconDriverKind] ?? null;
+  const modelMetadata = getModelPickerMetadata(props.model, props.providerDisplayName);
 
   const row = (
     <ComboboxItem
@@ -79,7 +80,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           <div className="mt-1 flex items-center gap-1.5">
             {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
+              {modelMetadata}
             </span>
           </div>
         )}

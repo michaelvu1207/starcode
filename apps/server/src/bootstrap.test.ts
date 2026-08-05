@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@starcode/shared/hostProcess";
 
 import {
   BootstrapEnvelopeDecodeError,
@@ -62,7 +62,10 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("reads a bootstrap envelope from a provided fd", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const filePath = yield* fs.makeTempFileScoped({
+        prefix: "starcode-bootstrap-",
+        suffix: ".ndjson",
+      });
 
       yield* fs.writeFileString(
         filePath,
@@ -84,7 +87,10 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("falls back to reading the inherited fd when path duplication fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const filePath = yield* fs.makeTempFileScoped({
+        prefix: "starcode-bootstrap-",
+        suffix: ".ndjson",
+      });
 
       yield* fs.writeFileString(
         filePath,
@@ -111,10 +117,44 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
+  it.effect("does not crash when a direct bootstrap stream reports a late teardown error", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const filePath = yield* fs.makeTempFileScoped({
+        prefix: "starcode-bootstrap-",
+        suffix: ".ndjson",
+      });
+      yield* fs.writeFileString(
+        filePath,
+        `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
+      );
+
+      const fd = NodeFS.openSync(filePath, "r");
+      openSyncInterceptor.failPath = `/proc/self/fd/${fd}`;
+      try {
+        const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+          timeoutMs: 100,
+        }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+        assertSome(payload, { mode: "desktop" });
+
+        // The direct stream owns the fd and may finish closing on a later tick.
+        // This regression test gives that teardown time to surface under the
+        // test runner's uncaught-error handling.
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+      } finally {
+        openSyncInterceptor.failPath = null;
+      }
+    }),
+  );
+
   it.effect("preserves fd path, platform, and cause when opening the input stream fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const filePath = yield* fs.makeTempFileScoped({
+        prefix: "starcode-bootstrap-",
+        suffix: ".ndjson",
+      });
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
         (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
@@ -180,7 +220,10 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("preserves fd and schema cause when decoding the envelope fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const filePath = yield* fs.makeTempFileScoped({
+        prefix: "starcode-bootstrap-",
+        suffix: ".ndjson",
+      });
       yield* fs.writeFileString(filePath, '{"mode":42}\n');
 
       const fd = yield* Effect.acquireRelease(
@@ -204,7 +247,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("returns none when the bootstrap read times out before any value arrives", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "starcode-bootstrap-" });
       const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
 
       yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));

@@ -71,4 +71,23 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
+
+  it("decodes runtime-managed catalog instances and hidden compatibility aliases", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "pi",
+      driver: "pi",
+      enabled: true,
+      installed: true,
+      version: "0.83.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-05T00:00:00.000Z",
+      instanceSource: "catalog",
+      selectable: false,
+      models: [],
+    });
+
+    expect(parsed.instanceSource).toBe("catalog");
+    expect(parsed.selectable).toBe(false);
+  });
 });

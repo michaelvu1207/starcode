@@ -7,13 +7,14 @@ import {
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
   type ServerSelfUpdateResult,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   HostProcessArguments,
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+  HostProcessUserId,
+} from "@starcode/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -24,14 +25,17 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically, writeSymbolicLinkAtomically } from "../atomicWrite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  BOOT_SERVICE_LAUNCH_AGENT_LABEL,
   BOOT_SERVICE_UNIT_ENV,
   BOOT_SERVICE_UNIT_FILE,
+  launchAgentPaths,
   quoteSystemdValue,
   renderBootServiceUnit,
 } from "./bootService.ts";
+import { FORK_DISABLE_SELF_UPDATE } from "./forkSwitches.ts";
 import { ensurePinnedRuntimeInstalled, removePinnedRuntimeInstallation } from "./pinnedRuntime.ts";
 
 /**
@@ -78,18 +82,35 @@ export function isPublishedCliEntry(entryPath: string): boolean {
   return normalizeEntryPath(entryPath).includes("/node_modules/t3/dist/");
 }
 
+export { FORK_DISABLE_SELF_UPDATE };
+
 /**
  * The update path this process can offer, or null when only a manual
- * relaunch works. "desktop-managed" — the T3 Code desktop app spawned this
- * backend and owns its version; only updating the app updates it.
- * "boot-service" — this is the systemd-supervised process from
- * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
- * foreground POSIX process running a published artifact: replace it with a
- * detached child. Windows foreground runs are unsupported for now (no
- * equivalent of the detach-and-exec handoff below).
+ * relaunch works. Always null in this fork — see FORK_DISABLE_SELF_UPDATE.
  */
 export const resolveServerSelfUpdateCapability = Effect.fn(
   "cloud.server_self_update.resolve_capability",
+)(function* (input: {
+  /** True when the desktop app supervises this backend (mode "desktop"). */
+  readonly desktopManaged: boolean;
+}) {
+  if (FORK_DISABLE_SELF_UPDATE) {
+    return null;
+  }
+  return yield* resolveHostServerSelfUpdateCapability(input);
+});
+
+/**
+ * The update path the host process shape would support, ignoring the fork
+ * switch. "desktop-managed" — the starcode desktop app spawned this
+ * backend and owns its version; only updating the app updates it.
+ * "boot-service" — this is the systemd- or launchd-supervised process from
+ * bootService.ts: switch the service to the verified runtime and restart it.
+ * "respawn" — a foreground POSIX process running a published artifact:
+ * replace it with a detached child. Windows foreground runs are unsupported.
+ */
+export const resolveHostServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_host_capability",
 )(function* (input: {
   /** True when the desktop app supervises this backend (mode "desktop"). */
   readonly desktopManaged: boolean;
@@ -101,6 +122,7 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
   const hostArguments = yield* HostProcessArguments;
+  const userId = yield* HostProcessUserId;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -110,6 +132,23 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
   }
 
   const homeDir = env.HOME ?? "";
+  if (platform === "darwin" && homeDir !== "" && userId !== null) {
+    const launchAgent = launchAgentPaths(path, homeDir, env.STARCODE_HOME ?? "", userId);
+    const unitExists = yield* fs
+      .exists(launchAgent.unitPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (
+      unitExists &&
+      entryPath === launchAgent.activeEntryPath &&
+      env[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_LAUNCH_AGENT_LABEL
+    ) {
+      return "boot-service" as const;
+    }
+    if (env[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_LAUNCH_AGENT_LABEL) {
+      return null;
+    }
+  }
+
   if (platform === "linux" && homeDir !== "") {
     const unitPath = path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
     const unitReferencesEntry = yield* fs.readFileString(unitPath).pipe(
@@ -117,7 +156,7 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
       Effect.orElseSucceed(() => false),
     );
     // INVOCATION_ID only proves that some systemd unit launched us. The
-    // explicit marker written into t3code.service identifies this unit as the
+    // explicit marker written into starcode.service identifies this unit as the
     // supervisor that will replace the current process when restarted.
     if (
       unitReferencesEntry &&
@@ -149,7 +188,7 @@ export class ServerSelfUpdate extends Context.Service<
       input: ServerSelfUpdateInput,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
   }
->()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
+>()("starcode/cloud/selfUpdate/ServerSelfUpdate") {}
 
 export const make = Effect.fn("cloud.server_self_update.make")(function* (options?: {
   readonly host?: Partial<ServerSelfUpdateHost>;
@@ -159,6 +198,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const env = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const userId = yield* HostProcessUserId;
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
   const capability: ServerSelfUpdateCapability | null = yield* resolveServerSelfUpdateCapability({
@@ -224,13 +265,18 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+  const writeRuntimeLinkAtomically = (linkPath: string, targetPath: string) =>
+    writeSymbolicLinkAtomically({ linkPath, targetPath }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input) {
     if (capability === "desktop-managed") {
       return yield* failWith(
-        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+        "This server is managed by the starcode desktop app on its machine; update the desktop app to update it.",
       );
     }
     if (capability === null) {
@@ -241,7 +287,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
     const activeMethod = capability;
     const targetVersion = input.targetVersion.trim();
     if (!EXACT_VERSION_PATTERN.test(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+      return yield* failWith(`'${targetVersion}' is not an exact starcode version.`);
     }
 
     const alreadyRunning = yield* Ref.getAndSet(inFlight, true);
@@ -257,7 +303,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         path,
         runner,
       }).pipe(
-        Effect.mapError((error) => failWith("Could not install the requested t3 version.", error)),
+        Effect.mapError((error) =>
+          failWith("Could not install the requested starcode version.", error),
+        ),
       );
 
       // A broken artifact (failed native build, incompatible node) must be
@@ -297,7 +345,57 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         );
       }
 
-      if (activeMethod === "boot-service") {
+      if (activeMethod === "boot-service" && platform === "darwin" && userId !== null) {
+        const homeDir = env.HOME ?? "";
+        const launchAgent = launchAgentPaths(path, homeDir, serverConfig.baseDir, userId);
+        const previousRuntime = yield* fs
+          .readLink(launchAgent.activeRuntimeLinkPath)
+          .pipe(
+            Effect.mapError((cause) =>
+              failWith("Could not read the active launchd runtime.", cause),
+            ),
+          );
+        yield* writeRuntimeLinkAtomically(
+          launchAgent.activeRuntimeLinkPath,
+          runtimePaths.versionDir,
+        ).pipe(
+          Effect.mapError((cause) =>
+            failWith("Could not activate the requested launchd runtime.", cause),
+          ),
+        );
+        yield* Effect.logInfo("Server self-update installed; restarting LaunchAgent.", {
+          targetVersion,
+        });
+        yield* Effect.gen(function* () {
+          const kickstart = yield* runner
+            .run({
+              command: "/bin/launchctl",
+              args: ["kickstart", "-k", launchAgent.serviceTarget],
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                failWith("Could not restart the StarCode LaunchAgent.", cause),
+              ),
+            );
+          if (kickstart.code !== 0) {
+            return yield* failWith(
+              `Restarting the StarCode LaunchAgent failed (exit code ${String(kickstart.code)}).`,
+            );
+          }
+        }).pipe(
+          Effect.catch((restartError) =>
+            writeRuntimeLinkAtomically(launchAgent.activeRuntimeLinkPath, previousRuntime).pipe(
+              Effect.mapError((rollbackCause) =>
+                failWith("Could not restore the previous launchd runtime.", {
+                  restartError,
+                  rollbackCause,
+                }),
+              ),
+              Effect.andThen(Effect.fail(restartError)),
+            ),
+          ),
+        );
+      } else if (activeMethod === "boot-service") {
         const homeDir = env.HOME ?? "";
         const unitPath = path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
         const previousUnit = yield* fs
@@ -309,7 +407,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         // still recognize the unit as current.
         const unit = renderBootServiceUnit({
           nodePath: host.execPath,
-          t3EntryPath: runtimePaths.entryPath,
+          starcodeEntryPath: runtimePaths.entryPath,
           baseDir: serverConfig.baseDir,
           logPath: path.join(serverConfig.logsDir, "boot-service.log"),
           unitPath,
@@ -392,21 +490,21 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           .spawnDetached("/bin/sh", [
             "-c",
             'sleep 3; exec "$@"',
-            "t3-self-update",
+            "starcode-self-update",
             host.execPath,
             runtimePaths.entryPath,
             ...host.cliArgs,
           ])
           .pipe(
             Effect.mapError((cause) =>
-              failWith("Could not start the replacement t3 process.", cause),
+              failWith("Could not start the replacement starcode process.", cause),
             ),
           );
         yield* Effect.logInfo("Server self-update installed; respawning.", { targetVersion });
         yield* scheduleRestart(
           Effect.try({
             try: () => host.exitProcess(),
-            catch: (cause) => failWith("Could not exit the replaced t3 process.", cause),
+            catch: (cause) => failWith("Could not exit the replaced starcode process.", cause),
           }).pipe(
             Effect.catch((error) =>
               Effect.logError("Server self-update could not exit the replaced process.").pipe(

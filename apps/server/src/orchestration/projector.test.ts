@@ -5,7 +5,8 @@ import {
   ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -89,19 +90,177 @@ describe("orchestration projector", () => {
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
+        sideOfThreadId: null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
         activities: [],
+        agentRuns: [],
         checkpoints: [],
         session: null,
+        goal: null,
       },
     ]);
   });
+
+  it("keeps heterogeneous agent runs whose provider task ids collide", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("pi"),
+              model: "openai-codex/gpt-5.6-sol",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const appendAgent = (input: {
+      readonly model: typeof created;
+      readonly sequence: number;
+      readonly providerDriver: "pi" | "codex";
+    }) =>
+      projectEvent(
+        input.model,
+        makeEvent({
+          sequence: input.sequence,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: `2026-01-01T00:00:0${input.sequence}.000Z`,
+          commandId: `cmd-agent-${input.sequence}`,
+          payload: {
+            threadId: "thread-1",
+            activity: {
+              id: `activity-${input.sequence}`,
+              tone: "tool",
+              kind: "task.started",
+              summary: `${input.providerDriver} child started`,
+              payload: {
+                taskId: "provider-local-task-1",
+                taskType: "attached_agent",
+                providerDriver: input.providerDriver,
+                providerInstanceId: input.providerDriver,
+                subagentType: `${input.providerDriver} agent`,
+              },
+              turnId: null,
+              createdAt: `2026-01-01T00:00:0${input.sequence}.000Z`,
+            },
+          },
+        }),
+      );
+
+    const withPi = await Effect.runPromise(
+      appendAgent({ model: created, sequence: 2, providerDriver: "pi" }),
+    );
+    const withBoth = await Effect.runPromise(
+      appendAgent({ model: withPi, sequence: 3, providerDriver: "codex" }),
+    );
+
+    expect(withBoth.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
+    expect(
+      withBoth.threads[0]?.agentRuns.map((run) => ({
+        provider: run.provider,
+        agentRunId: run.agentRunId,
+      })),
+    ).toEqual([
+      { provider: "pi", agentRunId: "provider-local-task-1" },
+      { provider: "codex", agentRunId: "provider-local-task-1" },
+    ]);
+  });
+
+  effectIt.effect("keeps the newest provider goal when events arrive out of order", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const newerAt = "2026-01-01T00:02:00.000Z";
+      const olderAt = "2026-01-01T00:01:00.000Z";
+      const created = yield* projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+      const withGoal = yield* projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.goal-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: newerAt,
+          commandId: null,
+          payload: {
+            threadId: "thread-1",
+            goal: {
+              objective: "Finish the release",
+              status: "active",
+              tokenBudget: 10_000,
+              tokensUsed: 2_000,
+              timeUsedSeconds: 120,
+              createdAt,
+              updatedAt: newerAt,
+            },
+          },
+        }),
+      );
+      const afterStaleClear = yield* projectEvent(
+        withGoal,
+        makeEvent({
+          sequence: 3,
+          type: "thread.goal-cleared",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: olderAt,
+          commandId: null,
+          payload: {
+            threadId: "thread-1",
+            observedAt: olderAt,
+          },
+        }),
+      );
+
+      expect(afterStaleClear.threads[0]?.goal?.objective).toBe("Finish the release");
+      expect(afterStaleClear.snapshotSequence).toBe(3);
+    }),
+  );
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = "2026-01-01T00:00:00.000Z";

@@ -1,0 +1,294 @@
+/**
+ * Forking a thread's conversation into a new thread.
+ *
+ * The mirror of `import.ts`, and built out of the same three moves: create an
+ * empty thread, write one binding row, fire no turn. Import points that row at
+ * a session a CLI left on disk; fork points it at the session a thread here is
+ * already using. Nothing is copied, no transcript is read, and the fork sits
+ * idle until someone types into it.
+ *
+ * What makes this safe rather than merely convenient is one field on the
+ * cursor. Two threads opening the same Pi session file would both append to
+ * one transcript. The fork marker (`forkFacts.forkResumeCursor`) makes the Pi
+ * adapter call `SessionManager.forkFrom`, which copies the conversation into a
+ * **new** session. The source is read and never written.
+ *
+ * A `side` fork is the same three moves with two fields set: the new thread
+ * carries `sideOfThreadId`, which keeps it out of every list a person reads.
+ * Pi has no ephemeral transcript mode, so the copied transcript remains
+ * durable even for a side thread.
+ *
+ * Every precondition is a refusal, never a fallback, for the reason import
+ * documents: a fork that quietly degraded to an empty thread would look
+ * identical to one that worked and would only be caught by asking the model
+ * something it should have remembered.
+ *
+ * What it does, after the fork is safely bound, is leave a provenance row —
+ * in the same registry file imports write to, in its own array. Without one a
+ * fork is the very trap the import prelude exists to defuse: a thread that
+ * opens empty and answers as though it remembers a conversation nobody can
+ * see. The row is written best-effort and after the binding, because a fork
+ * that works but is unlabelled is recoverable and a fork that was refused
+ * because a JSON file would not save is not.
+ *
+ * @module HistoryFork
+ */
+import {
+  type ClientOrchestrationCommand,
+  CommandId,
+  type HistoryForkRecord,
+  type HistoryForkRefusalReason,
+  type HistoryForkResult,
+  ThreadId,
+} from "@starcode/contracts";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { normalizeDispatchCommand } from "../orchestration/Normalizer.ts";
+import { ProviderSessionDirectory } from "../provider/Services/ProviderSessionDirectory.ts";
+import {
+  forkResumeCursor,
+  forkThreadTitle,
+  historyProviderForDriverKind,
+  isForkableDriverKind,
+  readBindingCwd,
+  readForkableSessionCursor,
+} from "./forkFacts.ts";
+import { HistoryImportRegistry } from "./importRegistry.ts";
+
+/** A precondition failed. Nothing was written. */
+export class HistoryForkRefusal extends Schema.TaggedErrorClass<HistoryForkRefusal>()(
+  "HistoryForkRefusal",
+  {
+    reason: Schema.String,
+    detail: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Fork refused: ${this.reason}.`;
+  }
+}
+
+const refuse = (reason: HistoryForkRefusalReason, detail?: string) =>
+  Effect.fail(new HistoryForkRefusal({ reason, ...(detail === undefined ? {} : { detail }) }));
+
+export interface HistoryForkInput {
+  readonly threadId: ThreadId;
+  readonly title?: string | undefined;
+  /**
+   * A side thread: a fork nobody filed.
+   *
+   * Retained for API compatibility with callers that distinguish ordinary and
+   * side forks. Pi ignores this flag because its fork primitive is durable;
+   * `sideOfThreadId` below is what hides the thread from normal lists.
+   */
+  readonly ephemeral?: boolean;
+  /**
+   * The thread this one is the side of. Always `threadId` when the caller is
+   * `/side`; passed explicitly rather than inferred so that a future
+   * "side thread of a side thread" is a decision rather than an accident.
+   */
+  readonly sideOfThreadId?: ThreadId;
+}
+
+export const makeHistoryForker = Effect.gen(function* () {
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const engine = yield* OrchestrationEngineService;
+  const directory = yield* ProviderSessionDirectory;
+  const registry = yield* HistoryImportRegistry;
+  const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  const dispatch = (command: ClientOrchestrationCommand) =>
+    normalizeDispatchCommand(command).pipe(
+      Effect.flatMap((normalized) => engine.dispatch(normalized)),
+    );
+
+  const forkThread = Effect.fn("history.fork")(function* (input: HistoryForkInput) {
+    const sourceSnapshot = yield* projectionSnapshotQuery
+      .getThreadDetailSnapshot(input.threadId)
+      .pipe(
+        Effect.catch((cause) =>
+          refuse("thread_not_found", `Could not read the source thread: ${String(cause)}`),
+        ),
+      );
+    if (Option.isNone(sourceSnapshot)) {
+      return yield* refuse("thread_not_found");
+    }
+    const source = sourceSnapshot.value.thread;
+
+    // The binding is the only place a thread's provider session id exists.
+    // Absent it, the thread has never started a session and there is nothing
+    // to fork — which is a refusal rather than "fork an empty conversation",
+    // because the caller can do that itself without a round trip.
+    const binding = Option.getOrUndefined(
+      yield* directory
+        .getBinding(input.threadId)
+        .pipe(
+          Effect.catch((cause) =>
+            refuse("no_resumable_session", `Could not read the session binding: ${String(cause)}`),
+          ),
+        ),
+    );
+    if (binding === undefined) {
+      return yield* refuse(
+        "no_resumable_session",
+        "This thread has not started a session yet, so there is no conversation to fork.",
+      );
+    }
+    // Provider before session id: "this driver cannot fork" is a permanent fact
+    // about the thread and a better sentence than "no session found", which
+    // reads as something waiting a turn would fix.
+    if (!isForkableDriverKind(binding.provider)) {
+      return yield* refuse(
+        "provider_unsupported",
+        `Forking a conversation needs a provider that can fork a session, and '${binding.provider}' cannot.`,
+      );
+    }
+    const provider = historyProviderForDriverKind(binding.provider);
+    if (provider === null) {
+      // Unreachable while this set and the one above agree; a refusal rather
+      // than a cast so that adding a driver to `FORKABLE_DRIVER_KINDS` without
+      // teaching this mapping fails as a refusal instead of writing a
+      // provenance row that names the wrong provider.
+      return yield* refuse(
+        "provider_unsupported",
+        `'${binding.provider}' can fork, but this machine cannot name its history provider.`,
+      );
+    }
+    const sourceSession = readForkableSessionCursor(binding.resumeCursor, binding.provider);
+    if (sourceSession === null) {
+      return yield* refuse(
+        "no_resumable_session",
+        "This thread has no complete Pi session recorded yet — send it a message first.",
+      );
+    }
+    const sourceSessionExists = yield* fileSystem
+      .exists(sourceSession.sessionFile)
+      .pipe(Effect.catch(() => Effect.succeed(false)));
+    if (!sourceSessionExists) {
+      return yield* refuse(
+        "no_resumable_session",
+        "The Pi transcript for this thread is no longer available, so it cannot be forked safely.",
+      );
+    }
+
+    const title =
+      input.title !== undefined && input.title.trim().length > 0
+        ? input.title.trim()
+        : forkThreadTitle(source.title);
+    const threadId = ThreadId.make(`thread-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
+
+    // The fork inherits where and how the source runs — project, branch,
+    // worktree, model, permission and interaction mode. It does not inherit a
+    // `titleSeed`: a seed invites the provider to rename the thread on its
+    // first turn, and this thread's name is provenance.
+    yield* dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`fork-thread-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`),
+      threadId,
+      projectId: source.projectId,
+      title,
+      modelSelection: source.modelSelection,
+      runtimeMode: source.runtimeMode,
+      interactionMode: source.interactionMode,
+      branch: source.branch,
+      worktreePath: source.worktreePath,
+      ...(input.sideOfThreadId === undefined ? {} : { sideOfThreadId: input.sideOfThreadId }),
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    } as unknown as ClientOrchestrationCommand).pipe(
+      Effect.catch((cause) => refuse("thread_create_failed", String(cause))),
+    );
+
+    // The seam, and the one write that makes this a fork rather than a new
+    // thread. `status: "stopped"` because no process exists yet; the row is
+    // here only to be read by the fork's first `startSession`. The cwd comes
+    // from the source binding rather than the project, because a thread on a
+    // worktree runs somewhere its project does not and Claude's session store
+    // is keyed by working directory.
+    const cwd = readBindingCwd(binding.runtimePayload);
+    yield* directory
+      .upsert({
+        threadId,
+        provider: binding.provider,
+        ...(binding.providerInstanceId === undefined
+          ? {}
+          : { providerInstanceId: binding.providerInstanceId }),
+        ...(binding.adapterKey === undefined ? {} : { adapterKey: binding.adapterKey }),
+        runtimeMode: source.runtimeMode,
+        status: "stopped",
+        resumeCursor: forkResumeCursor({
+          sourceSessionFile: sourceSession.sessionFile,
+          sourceSessionId: sourceSession.sessionId,
+          driverKind: binding.provider,
+        }),
+        ...(cwd === null ? {} : { runtimePayload: { cwd } }),
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          // Roll the thread back, exactly as import does. A fork that exists
+          // but is not bound is worse than no fork at all: it is named after a
+          // conversation it has never heard of.
+          Effect.gen(function* () {
+            yield* dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make(
+                `fork-rollback-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`,
+              ),
+              threadId,
+            } as unknown as ClientOrchestrationCommand).pipe(Effect.ignore);
+            return yield* new HistoryForkRefusal({
+              reason: "binding_write_failed" satisfies HistoryForkRefusalReason,
+              detail: String(cause),
+            });
+          }),
+        ),
+      );
+
+    // Provenance, after the write and best-effort — the same trade import
+    // makes. The fork resumes off its binding row whether or not this file was
+    // written, and failing a fork that has already succeeded because a JSON
+    // file would not save would be the wrong way round.
+    const record: HistoryForkRecord = {
+      threadId,
+      sourceThreadId: input.threadId,
+      sourceTitle: source.title.trim().length > 0 ? source.title.trim() : null,
+      sourceSessionId: sourceSession.sessionId,
+      provider,
+      projectId: source.projectId,
+      forkedAt: DateTime.formatIso(yield* DateTime.now),
+      // Pi transcripts are not part of the legacy Claude/Codex terminal-history
+      // index. The fork still has lossless model context through its Pi cursor;
+      // provenance names Pi honestly without pretending the file is a legacy
+      // history session.
+      historySessionId: null,
+      startedAt: null,
+    };
+    yield* registry.recordFork(record).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("history fork registry write failed", {
+          threadId,
+          sourceThreadId: input.threadId,
+          cause,
+        }),
+      ),
+    );
+
+    return {
+      threadId,
+      sourceThreadId: input.threadId,
+      projectId: source.projectId,
+      title,
+      provider,
+      sourceSessionId: sourceSession.sessionId,
+    } satisfies HistoryForkResult;
+  });
+
+  return { forkThread };
+});

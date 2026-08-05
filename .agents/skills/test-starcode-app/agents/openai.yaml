@@ -1,0 +1,4 @@
+interface:
+  display_name: "starcode App Testing"
+  short_description: "Launch and retain isolated starcode test environments"
+  default_prompt: "Use $test-starcode-app to launch an isolated starcode environment and iteratively test it in the browser while preserving state."

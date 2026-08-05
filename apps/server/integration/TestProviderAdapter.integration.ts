@@ -9,7 +9,7 @@ import {
   ThreadId,
   TurnId,
   ProviderDriverKind,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as Queue from "effect/Queue";
@@ -225,7 +225,7 @@ function missingSessionEffect(
 
 export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
   Effect.gen(function* () {
-    const provider = options?.provider ?? ProviderDriverKind.make("codex");
+    const provider = options?.provider ?? ProviderDriverKind.make("pi");
     const crypto = yield* Crypto.Crypto;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     let sessionCount = 0;

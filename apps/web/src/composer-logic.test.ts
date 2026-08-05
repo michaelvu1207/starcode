@@ -7,6 +7,8 @@ import {
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
+  parseComposerGoalCommand,
+  parseStandaloneComposerThreadCommand,
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
@@ -370,5 +372,46 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("does not answer for the thread commands", () => {
+    // The two parsers are deliberately separate: this one's return type is a
+    // ProviderInteractionMode and its caller feeds it straight into
+    // handleInteractionModeChange, so a `/side` answered here would silently
+    // switch the thread into plan mode instead of opening a panel.
+    expect(parseStandaloneComposerSlashCommand("/side")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/fork")).toBeNull();
+  });
+});
+
+describe("parseComposerGoalCommand", () => {
+  it("extracts and trims a goal objective", () => {
+    expect(parseComposerGoalCommand(" /goal   Finish the migration and verify it. ")).toBe(
+      "Finish the migration and verify it.",
+    );
+  });
+
+  it("does not treat a bare goal command or ordinary prose as a goal", () => {
+    expect(parseComposerGoalCommand("/goal")).toBeNull();
+    expect(parseComposerGoalCommand("please /goal this")).toBeNull();
+  });
+});
+
+describe("parseStandaloneComposerThreadCommand", () => {
+  it("parses /side and /fork, whatever the casing", () => {
+    expect(parseStandaloneComposerThreadCommand("/side")).toBe("side");
+    expect(parseStandaloneComposerThreadCommand("  /Fork  ")).toBe("fork");
+  });
+
+  it("ignores a message that merely starts with one", () => {
+    // "/side note: this is fine" is a sentence, not a command. Forking on it
+    // would spend a round trip and open a panel the user did not ask for.
+    expect(parseStandaloneComposerThreadCommand("/side note: this is fine")).toBeNull();
+    expect(parseStandaloneComposerThreadCommand("/forked")).toBeNull();
+  });
+
+  it("does not answer for the interaction modes", () => {
+    expect(parseStandaloneComposerThreadCommand("/plan")).toBeNull();
+    expect(parseStandaloneComposerThreadCommand("/default")).toBeNull();
   });
 });

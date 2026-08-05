@@ -4,7 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -123,6 +123,15 @@ describe("provider update launch notification logic", () => {
         provider({ driver: driver("cursor"), latestVersion: "0.3.0" }),
       ]),
     ).toHaveLength(2);
+  });
+
+  it("ignores stale OpenCode update advisories", () => {
+    expect(
+      collectProviderUpdateCandidates([
+        provider({ driver: driver("opencode"), latestVersion: "1.2.3" }),
+        provider({ driver: driver("codex"), latestVersion: "1.1.0" }),
+      ]).map((candidate) => candidate.driver),
+    ).toEqual(["codex"]);
   });
 
   it("disables one-click updates when provider instances disagree on the update command", () => {

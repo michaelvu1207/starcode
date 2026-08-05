@@ -3,7 +3,7 @@ import type {
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
   clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
   discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
+  discoverFleetHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_FLEET_HOSTS_CHANNEL),
+  preflightFleetHost: (host) => ipcRenderer.invoke(IpcChannels.PREFLIGHT_FLEET_HOST_CHANNEL, host),
   ensureSshEnvironment: async (target, options) =>
     unwrapEnsureSshEnvironmentResult(
       await ipcRenderer.invoke(IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL, {
@@ -146,6 +148,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  getDiscordPresenceState: () => ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_GET_STATE_CHANNEL),
+  setDiscordPresenceEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_SET_ENABLED_CHANNEL, enabled),
+  setDiscordPresenceSummary: (summary) =>
+    ipcRenderer.invoke(IpcChannels.DISCORD_PRESENCE_SET_SUMMARY_CHANNEL, summary),
+  onDiscordPresenceState: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (typeof state !== "object" || state === null) return;
+      listener(state as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(IpcChannels.DISCORD_PRESENCE_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.DISCORD_PRESENCE_STATE_CHANNEL, wrappedListener);
+    };
+  },
   preview: {
     createTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, { tabId }),
     closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
@@ -168,6 +186,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     clearCache: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL),
     getPreviewConfig: (environmentId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId }),
+    openPortBridge: (input) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_PORT_BRIDGE_CHANNEL, input),
+    closePortBridge: (bridgeId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_PORT_BRIDGE_CHANNEL, { bridgeId }),
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     pickElement: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId }),

@@ -9,18 +9,19 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@starcode/contracts";
+import { createModelSelection } from "@starcode/shared/model";
 import {
   ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -33,8 +34,9 @@ import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@starcode/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { setAttachedAgentHost } from "../../provider/AttachedAgentHost.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -58,6 +60,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import * as ThreadMailbox from "../../mailbox/ThreadMailbox.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
@@ -91,7 +94,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ThreadMailbox.ThreadMailbox,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -99,6 +105,7 @@ describe("ProviderCommandReactor", () => {
   const createdBaseDirs = new Set<string>();
 
   afterEach(async () => {
+    setAttachedAgentHost(undefined);
     if (scope) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
@@ -145,14 +152,16 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly goalControl?: "native" | "managed" | "unsupported";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly setGoalEffect?: ProviderServiceShape["setGoal"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
-      input?.baseDir ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-reactor-"));
+      input?.baseDir ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "starcode-reactor-"));
     createdBaseDirs.add(baseDir);
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
@@ -234,6 +243,20 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const setGoal = vi.fn<ProviderServiceShape["setGoal"]>(
+      (goalInput) =>
+        input?.setGoalEffect?.(goalInput) ??
+        Effect.succeed({
+          objective: goalInput.objective ?? "Existing goal",
+          status: goalInput.status ?? "active",
+          tokenBudget: goalInput.tokenBudget ?? null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: now,
+          updatedAt: now,
+        }),
+    );
+    const clearGoal = vi.fn<ProviderServiceShape["clearGoal"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -311,10 +334,14 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      getGoal: () => unsupported(),
+      setGoal,
+      clearGoal,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.goalControl ? { goalControl: input.goalControl } : {}),
         }),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
@@ -356,6 +383,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
@@ -378,6 +406,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
+      Layer.provideMerge(ThreadMailbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -387,6 +416,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const mailbox = await runtime.runPromise(Effect.service(ThreadMailbox.ThreadMailbox));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -420,12 +450,15 @@ describe("ProviderCommandReactor", () => {
 
     return {
       engine,
+      mailbox,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      clearGoal,
       stopSession,
       renameBranch,
       refreshStatus,
@@ -433,9 +466,230 @@ describe("ProviderCommandReactor", () => {
       generateThreadTitle,
       runtimeSessions,
       stateDir,
+      stopReactor: async () => {
+        if (!scope) return;
+        await Effect.runPromise(Scope.close(scope, Exit.void));
+        scope = null;
+      },
+      startReactor: async () => {
+        scope = await Effect.runPromise(Scope.make("sequential"));
+        await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+      },
       drain,
     };
   }
+
+  it("routes nested Pi start and interrupt intents to the exact AgentRun host", async () => {
+    const harness = await createHarness();
+    const sendMessage = vi.fn(async () => ({
+      agentRunId: "agent:interactive",
+      parentThreadId: ThreadId.make("thread-1"),
+      providerInstanceId: ProviderInstanceId.make("pi"),
+      description: "Interactive child",
+      status: "running" as const,
+      startedAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    }));
+    const interruptAttachedTurn = vi.fn(async () => ({
+      agentRunId: "agent:interactive",
+      parentThreadId: ThreadId.make("thread-1"),
+      providerInstanceId: ProviderInstanceId.make("pi"),
+      description: "Interactive child",
+      status: "running" as const,
+      startedAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    }));
+    setAttachedAgentHost({
+      spawn: async () => {
+        throw new Error("not used");
+      },
+      sendMessage,
+      interruptTurn: interruptAttachedTurn,
+      wait: async () => [],
+      status: () => [],
+      cancel: async () => {
+        throw new Error("not used");
+      },
+      cancelParent: async () => undefined,
+    });
+    const threadId = ThreadId.make("thread-1");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-agent-start-activity"),
+        threadId,
+        activity: {
+          id: EventId.make("evt-agent-start-activity"),
+          tone: "info",
+          kind: "task.started",
+          summary: "Interactive child",
+          payload: {
+            taskId: "agent:interactive",
+            taskType: "attached_agent",
+            subagentType: "pi agent · high effort",
+            toolUseId: "agent:interactive",
+            providerInstanceId: "pi",
+            providerDriver: "pi",
+          },
+          turnId: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await waitFor(async () =>
+      (await harness.readModel()).threads.some((thread) =>
+        thread.agentRuns.some((run) => run.agentRunId === "agent:interactive"),
+      ),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.agent.turn.start",
+        commandId: CommandId.make("cmd-agent-follow-up"),
+        threadId,
+        agentRunId: "agent:interactive",
+        message: {
+          messageId: MessageId.make("msg-agent-follow-up"),
+          role: "user",
+          text: "continue",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.agent.turn.interrupt",
+        commandId: CommandId.make("cmd-agent-interrupt"),
+        threadId,
+        agentRunId: "agent:interactive",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(sendMessage).toHaveBeenCalledWith(threadId, "agent:interactive", "continue");
+    expect(interruptAttachedTurn).toHaveBeenCalledWith(threadId, "agent:interactive");
+  });
+
+  it("replays a durable pending turn after the reactor restarts", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const requestedAt = "2026-01-01T00:00:01.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-pending-restart-ready"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: requestedAt,
+        },
+        createdAt: requestedAt,
+      }),
+    );
+    await harness.stopReactor();
+    harness.sendTurn.mockClear();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-pending-before-restart"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-pending-before-restart"),
+          role: "user",
+          authoredBy: "system",
+          text: "resume this durable intent",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: requestedAt,
+      }),
+    );
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    await harness.startReactor();
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const replayed = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; threadId?: string }
+      | undefined;
+    expect(replayed).toMatchObject({
+      threadId,
+      input: "resume this durable intent",
+    });
+  });
+
+  effectIt.effect("sets and projects a provider-owned thread goal", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-goal-set"),
+        threadId: ThreadId.make("thread-1"),
+        objective: "Finish the release",
+        tokenBudget: 25_000,
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.setGoal.mock.calls.length === 1));
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.setGoal.mock.calls[0]?.[0]).toEqual({
+        threadId: ThreadId.make("thread-1"),
+        objective: "Finish the release",
+        tokenBudget: 25_000,
+      });
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads[0]?.goal).toMatchObject({
+        objective: "Finish the release",
+        status: "active",
+        tokenBudget: 25_000,
+      });
+    }),
+  );
+
+  effectIt.effect("manages Claude goals without calling a provider-native goal API", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          threadModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-4-1",
+          },
+          goalControl: "managed",
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-claude-goal-set"),
+        threadId: ThreadId.make("thread-1"),
+        objective: "Ship the Claude-only goal lifecycle",
+        tokenBudget: 12_000,
+        createdAt: now,
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.setGoal).not.toHaveBeenCalled();
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads[0]?.goal).toMatchObject({
+        objective: "Ship the Claude-only goal lifecycle",
+        status: "active",
+        tokenBudget: 12_000,
+      });
+    }),
+  );
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
@@ -476,6 +730,94 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  effectIt.effect(
+    "activates a requested goal after session start and before sending the provider turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-plan-goal"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-plan-goal"),
+            role: "user",
+            text: "implement the approved plan",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          goalObjective: "Complete the approved plan and verify every item.",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(harness.startSession).toHaveBeenCalledTimes(1);
+        expect(harness.setGoal).toHaveBeenCalledWith({
+          threadId: ThreadId.make("thread-1"),
+          objective: "Complete the approved plan and verify every item.",
+        });
+        expect(harness.setGoal.mock.invocationCallOrder[0]).toBeLessThan(
+          harness.sendTurn.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        expect(readModel.threads[0]?.goal).toMatchObject({
+          objective: "Complete the approved plan and verify every item.",
+          status: "active",
+        });
+      }),
+  );
+
+  effectIt.effect("does not send the implementation turn when its goal cannot be activated", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          setGoalEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread/goal/set",
+                detail: "goal activation failed",
+              }),
+            ),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-plan-goal-failure"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-plan-goal-failure"),
+          role: "user",
+          text: "implement the approved plan",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        goalObjective: "Complete the approved plan and verify every item.",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads[0]?.activities.some(
+              (activity) => activity.kind === "provider.turn.start.failed",
+            ) ?? false
+          );
+        }),
+      );
+      expect(harness.setGoal).toHaveBeenCalledTimes(1);
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    }),
+  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
@@ -737,7 +1079,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
-        branch: "t3code/1234abcd",
+        branch: "starcode/1234abcd",
         worktreePath: "/tmp/provider-project-worktree",
       }),
     );
@@ -2215,4 +2557,78 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
   });
+
+  effectIt.effect("delivers waiting mailbox messages with the turn, and only once", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      const enqueue = (message: string) =>
+        harness.mailbox.enqueue({
+          threadId: ThreadId.make("thread-1"),
+          message,
+          origin: {
+            environmentId: EnvironmentId.make("env-laptop"),
+            environmentLabel: "laptop",
+            threadId: ThreadId.make("thread-master"),
+            threadTitle: "Master planner",
+          },
+          sentAt: "2026-01-01T00:00:00.000Z",
+        });
+      const startTurn = (commandId: string, messageId: string, text: string) =>
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          message: { messageId: asMessageId(messageId), role: "user", text, attachments: [] },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+      yield* enqueue("Branch pushed, please review.");
+      yield* enqueue("Tests are green.");
+
+      yield* startTurn("cmd-mailbox-turn-1", "user-mailbox-1", "what next?");
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+      const first = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+      // Both messages arrive, attributed, inside an untrusted-content envelope...
+      expect(first.input).toContain("Branch pushed, please review.");
+      expect(first.input).toContain("Tests are green.");
+      expect(first.input).toContain('from-thread="Master planner"');
+      expect(first.input).toContain("Untrusted input from another agent");
+      // ...and the operator's own message stays last.
+      expect(first.input).toMatch(/what next\?$/);
+
+      // A second turn must not replay them: the first turn claimed those rows.
+      yield* startTurn("cmd-mailbox-turn-2", "user-mailbox-2", "and now?");
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      const second = harness.sendTurn.mock.calls[1]?.[0] as { input?: string };
+      expect(second.input).toBe("and now?");
+    }),
+  );
+
+  effectIt.effect("leaves the prompt byte-identical when the mailbox is empty", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-no-mailbox"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-no-mailbox"),
+          role: "user",
+          text: "plain prompt",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect((harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input).toBe(
+        "plain prompt",
+      );
+    }),
+  );
 });

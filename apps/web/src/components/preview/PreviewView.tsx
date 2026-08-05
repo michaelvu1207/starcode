@@ -1,13 +1,14 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopedThreadKey } from "@starcode/client-runtime/environment";
+import { squashAtomCommandFailure } from "@starcode/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
+  type BrowserNavigationTarget,
   type PreviewViewportSetting,
   type ScopedThreadRef,
-} from "@t3tools/contracts";
-import { normalizePreviewUrl } from "@t3tools/shared/preview";
+} from "@starcode/contracts";
+import { normalizePreviewUrl } from "@starcode/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -18,11 +19,12 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { usePaneKeyboardGate } from "../split/SplitPaneContext";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
@@ -69,6 +71,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const pickActiveRef = useRef(false);
+  const paneOwnsKeyboard = usePaneKeyboardGate();
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
@@ -76,6 +79,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const environment = useEnvironment(threadRef.environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
+  const navigate = useAtomCommand(previewEnvironment.navigate);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
   usePreviewSession(threadRef);
@@ -91,7 +95,15 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
-  const url = navStatus._tag === "Idle" ? "" : navStatus.url;
+  const resolvedUrl = navStatus._tag === "Idle" ? "" : navStatus.url;
+  const url =
+    snapshot?.target?.kind === "environment-port"
+      ? `${snapshot.target.protocol ?? "http"}://localhost:${snapshot.target.port}${
+          snapshot.target.path?.startsWith("/")
+            ? snapshot.target.path
+            : `/${snapshot.target.path ?? ""}`
+        }`
+      : resolvedUrl;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
@@ -115,10 +127,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
-      if (tabId && previewBridge) {
-        // Drive the webview imperatively; `usePreviewBridge` mirrors the
-        // resolved URL back to the server so other clients stay in sync.
-        await previewBridge.navigate(tabId, resolvedUrl);
+      if (tabId) {
+        const result = await navigate({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, tabId, url: resolvedUrl },
+        });
+        if (result._tag === "Failure") throw result.cause;
+        updatePreviewServerSnapshot(threadRef, result.value);
         rememberPreviewUrl(threadRef, resolvedUrl);
       } else {
         await openPreviewSession({
@@ -128,29 +143,66 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         });
       }
     },
-    [open, tabId, threadRef],
+    [navigate, open, tabId, threadRef],
+  );
+
+  const navigateToTarget = useCallback(
+    async (target: BrowserNavigationTarget) => {
+      if (tabId) {
+        const result = await navigate({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, tabId, target },
+        });
+        if (result._tag === "Failure") throw result.cause;
+        updatePreviewServerSnapshot(threadRef, result.value);
+        if (result.value.navStatus._tag !== "Idle") {
+          rememberPreviewUrl(threadRef, result.value.navStatus.url);
+        }
+        return;
+      }
+      const result = await openPreviewSession({ openPreview: open, threadRef, target });
+      if (result._tag === "Failure") throw result.cause;
+    },
+    [navigate, open, tabId, threadRef],
   );
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       try {
-        await navigateToResolvedUrl(normalizePreviewUrl(next));
+        const normalized = normalizePreviewUrl(next);
+        const resolution = resolveBrowserNavigationTarget(threadRef.environmentId, {
+          kind: "url",
+          url: normalized,
+        });
+        if (resolution.target?.kind === "environment-port") {
+          await navigateToTarget(resolution.target);
+        } else {
+          await navigateToResolvedUrl(resolution.resolvedUrl);
+        }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [navigateToResolvedUrl],
+    [navigateToResolvedUrl, navigateToTarget, threadRef.environmentId],
   );
 
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        await navigateToResolvedUrl(resolveDiscoveredServerUrl(threadRef.environmentId, next));
+        const resolution = resolveBrowserNavigationTarget(threadRef.environmentId, {
+          kind: "url",
+          url: normalizePreviewUrl(next),
+        });
+        if (resolution.target?.kind === "environment-port") {
+          await navigateToTarget(resolution.target);
+        } else {
+          await navigateToResolvedUrl(resolution.resolvedUrl);
+        }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [navigateToResolvedUrl, threadRef.environmentId],
+    [navigateToResolvedUrl, navigateToTarget, threadRef.environmentId],
   );
 
   const handleRefresh = useCallback(() => {
@@ -223,9 +275,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   }, [tabId]);
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
-  }, [url]);
+    if (!localApi || !resolvedUrl) return;
+    void localApi.shell.openExternal(resolvedUrl).catch(() => undefined);
+  }, [resolvedUrl]);
 
   const handleCapture = useCallback(
     (record: boolean) => {
@@ -551,6 +603,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => {
+      // In split view both panes can have a visible preview; refresh, zoom
+      // and the URL-bar focus race belong to the focused one only.
+      if (!paneOwnsKeyboard()) return;
       switch (action) {
         case "refresh":
           handleRefresh();
@@ -571,7 +626,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           return;
       }
     });
-  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, visible]);
+  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, paneOwnsKeyboard, visible]);
 
   return (
     <div

@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { WS_METHODS } from "@starcode/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -88,6 +88,16 @@ export function createPreviewEnvironmentAtoms<R, E>(
         mode: "latest",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
+    createPortBridgeTicket: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:create-port-bridge-ticket",
+      tag: WS_METHODS.previewCreatePortBridgeTicket,
+      scheduler: lifecycleScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.port]),
       },
     }),
     respondToAutomation: createEnvironmentRpcCommand(runtime, {

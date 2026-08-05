@@ -9,7 +9,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -69,12 +69,11 @@ const BASE_THREAD: OrchestrationThread = {
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
   deletedAt: null,
   messages: [],
   proposedPlans: [],
   activities: [],
+  agentRuns: [],
   checkpoints: [],
   session: null,
 };
@@ -323,24 +322,36 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
+  it.effect("revalidates a warm cache with an authoritative socket snapshot", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      const authoritativeThread = { ...BASE_THREAD, title: "Authoritative thread" };
 
-      // The warm cache reaches live from the cached data, and a live event
-      // applies on top of it.
-      yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 1));
-      yield* awaitThreadState(
+      yield* Queue.offer(harness.inputs, snapshot(authoritativeThread));
+      yield* Queue.offer(harness.inputs, synchronized());
+      const state = yield* awaitThreadState(
         harness.observed,
         (value) =>
           value.status === "live" &&
           Option.isSome(value.data) &&
-          value.data.value.title === "Live title",
+          value.data.value.title === "Authoritative thread",
       );
 
-      // The subscription resumed from the cached sequence and never fetched the
-      // full snapshot over HTTP.
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(Option.getOrThrow(state.data).title).toBe("Authoritative thread");
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+    }),
+  );
+
+  it.effect("keeps a warm cache visible while the authoritative snapshot loads", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+
+      expect(Option.getOrThrow(state.data).title).toBe("Cached thread");
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
   );
@@ -372,6 +383,7 @@ describe("EnvironmentThreads", () => {
       const savedThreads = yield* Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeHarness({ cached: ACTIVE_THREAD });
+          yield* Queue.offer(harness.inputs, snapshot(ACTIVE_THREAD));
           yield* awaitThreadState(
             harness.observed,
             (value) =>
@@ -392,14 +404,11 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>
+  it.effect("seeds a cold thread from the authoritative socket snapshot", () =>
     Effect.gen(function* () {
-      const httpThread: OrchestrationThread = { ...BASE_THREAD, title: "HTTP title" };
-      const harness = yield* makeHarness({
-        httpSnapshot: Option.some({ snapshotSequence: 1, thread: httpThread }),
-      });
-      // No socket snapshot is pushed; only a live event arrives over the socket.
-      // It can only be applied if the HTTP snapshot already seeded the thread.
+      const socketThread: OrchestrationThread = { ...BASE_THREAD, title: "Socket title" };
+      const harness = yield* makeHarness();
+      yield* Queue.offer(harness.inputs, snapshot(socketThread));
       yield* Queue.offer(harness.inputs, titleUpdated("Live title", 2));
 
       const state = yield* awaitThreadState(
@@ -411,10 +420,8 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(Option.getOrThrow(state.data).title).toBe("Live title");
-      // Cold cache: the full snapshot was loaded over HTTP and the socket
-      // resumed from that snapshot's sequence.
-      expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
     }),
   );
 
@@ -606,6 +613,10 @@ describe("EnvironmentThreads", () => {
       );
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
 
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+      });
       yield* Queue.offer(
         harness.inputs,
         titleUpdated("Caught-up title", CACHED_SNAPSHOT_SEQUENCE + 1),
@@ -628,7 +639,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("resumes replacement sessions from the latest applied sequence", () =>
+  it.effect("revalidates replacement sessions with a fresh snapshot", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
       yield* Queue.offer(
@@ -651,12 +662,26 @@ describe("EnvironmentThreads", () => {
       }
 
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
       expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, title: "Replacement snapshot" }),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      const recovered = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Replacement snapshot",
+      );
+      expect(Option.getOrThrow(recovered.data).title).toBe("Replacement snapshot");
     }),
   );
 
-  it.effect("resubscribes on app foreground from the latest applied sequence", () =>
+  it.effect("revalidates with a fresh snapshot when the app returns to the foreground", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
       yield* Queue.offer(
@@ -684,16 +709,23 @@ describe("EnvironmentThreads", () => {
 
       expect(synchronizing.status).toBe("synchronizing");
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
 
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, title: "Foreground snapshot" }),
+      );
       yield* Queue.offer(harness.inputs, synchronized());
       const live = yield* awaitThreadState(
         harness.observed,
-        (value) => value.status === "live" && Option.isSome(value.data),
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Foreground snapshot",
       );
-      expect(Option.getOrThrow(live.data).title).toBe("Latest title");
+      expect(Option.getOrThrow(live.data).title).toBe("Foreground snapshot");
     }),
   );
 });

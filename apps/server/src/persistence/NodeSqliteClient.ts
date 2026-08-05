@@ -26,6 +26,15 @@ import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
+/**
+ * Starcode can legitimately have the installed app and a development app open
+ * against the same fleet database. SQLite's node binding otherwise fails
+ * immediately on the smallest overlapping write, which is unacceptable for
+ * provider events because one transient lock would leave a tool lifecycle
+ * permanently incomplete.
+ */
+export const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
+
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
@@ -287,6 +296,7 @@ const make = (
       new NodeSqlite.DatabaseSync(options.filename, {
         readOnly: options.readonly ?? false,
         allowExtension: options.allowExtension ?? false,
+        timeout: DEFAULT_BUSY_TIMEOUT_MS,
       }),
   );
 
@@ -302,6 +312,7 @@ const makeMemory = (
     () => {
       const database = new NodeSqlite.DatabaseSync(":memory:", {
         allowExtension: config.allowExtension ?? false,
+        timeout: DEFAULT_BUSY_TIMEOUT_MS,
       });
       return database;
     },

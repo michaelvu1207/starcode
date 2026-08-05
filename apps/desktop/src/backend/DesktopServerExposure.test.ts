@@ -81,7 +81,10 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir, ...env })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({ STARCODE_HOME: baseDir, ...env }),
+      ),
     ),
   );
 }
@@ -93,7 +96,7 @@ function makeLayer(input: {
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
-  const env = { T3CODE_HOME: input.baseDir, ...input.env };
+  const env = { STARCODE_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
   const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
@@ -128,7 +131,7 @@ const withHarness = <A, E, R>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-desktop-server-exposure-test-",
+      prefix: "starcode-desktop-server-exposure-test-",
     });
     return yield* effect.pipe(
       Effect.provide(
@@ -257,6 +260,7 @@ describe("DesktopServerExposure", () => {
       setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
       setWslDistro: () => Effect.die("unexpected WSL distro change"),
       setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      setDiscordPresenceEnabled: () => Effect.die("unexpected Discord presence toggle"),
       applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
       applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
     } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -363,8 +367,8 @@ describe("DesktopServerExposure", () => {
         );
       }),
       {
-        T3CODE_DESKTOP_LAN_HOST: "10.0.0.7",
-        T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
+        STARCODE_DESKTOP_LAN_HOST: "10.0.0.7",
+        STARCODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
       },
     ),
   );
@@ -463,7 +467,7 @@ describe("DesktopServerExposure", () => {
         ]);
       }),
       {
-        T3CODE_DESKTOP_HTTPS_ENDPOINTS:
+        STARCODE_DESKTOP_HTTPS_ENDPOINTS:
           "https://desktop.example.ts.net,http://desktop.example.test:3773,not-a-url",
       },
     ),

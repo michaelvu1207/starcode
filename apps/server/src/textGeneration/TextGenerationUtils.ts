@@ -1,4 +1,4 @@
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@starcode/contracts";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -17,6 +17,22 @@ export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const truncated = value.slice(0, maxChars);
   return `${truncated}\n\n[truncated]`;
+}
+
+/** Truncate long prose while retaining both its setup and its conclusion. */
+export function limitSectionKeepingEnds(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const marker = "\n\n[content truncated]\n\n";
+  const available = Math.max(0, maxChars - marker.length);
+  const leadingChars = Math.ceil(available * 0.6);
+  const trailingChars = available - leadingChars;
+  return `${value.slice(0, leadingChars)}${marker}${value.slice(-trailingChars)}`;
+}
+
+/** Keep generated summaries useful in the transcript and bounded for rendering/copying. */
+export function sanitizeMessageSummary(raw: string): string {
+  const summary = raw.trim();
+  return summary.length <= 4_000 ? summary : `${summary.slice(0, 3_997).trimEnd()}...`;
 }
 
 /** Normalise a raw commit subject to imperative-mood, ≤72 chars, no trailing period. */

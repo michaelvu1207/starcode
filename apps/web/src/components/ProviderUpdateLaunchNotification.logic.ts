@@ -6,11 +6,11 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 
 export type ProviderUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
@@ -146,7 +146,11 @@ export function isProviderUpdateActive(provider: Pick<ServerProvider, "updateSta
 export function collectProviderUpdateCandidates(
   providers: ReadonlyArray<ServerProvider>,
 ): ProviderUpdateCandidate[] {
-  return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate));
+  return dedupeProvidersByDriver(
+    providers
+      .filter((provider) => provider.driver !== "opencode")
+      .filter(isProviderUpdateCandidate),
+  );
 }
 
 export function hasOneClickUpdateProviderCandidate(

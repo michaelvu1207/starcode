@@ -18,6 +18,11 @@ import type {
   VcsStatusInput,
   VcsStatusResult,
 } from "./git.ts";
+import type {
+  DesktopFleetHostDiscovery,
+  DesktopFleetOnboardingHost,
+  DesktopFleetOnboardingPreflight,
+} from "./fleetOnboarding.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
@@ -97,6 +102,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
+import type { DiscordPresenceState, DiscordPresenceSummary } from "./discordPresence.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
@@ -367,6 +373,7 @@ export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
 
 export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
   issuePairingToken: Schema.optionalKey(Schema.Boolean),
+  networkAccessible: Schema.optionalKey(Schema.Boolean),
 });
 
 export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
@@ -595,7 +602,7 @@ export const DesktopPreviewPointerEventSchema: Schema.Codec<DesktopPreviewPointe
  * can attach.
  */
 export interface DesktopPreviewWebviewConfig {
-  /** `persist:t3code-preview` (or whatever the desktop chose). */
+  /** `persist:starcode-preview` (or whatever the desktop chose). */
   partition: string;
   /**
    * Canonical `<webview webpreferences="...">` string. Encodes the security
@@ -923,6 +930,27 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
 });
 
+export const DesktopPreviewPortBridgeOpenInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  httpBaseUrl: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  ticket: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  remotePort: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+  protocol: Schema.Literals(["http", "https"]),
+});
+export type DesktopPreviewPortBridgeOpenInput = typeof DesktopPreviewPortBridgeOpenInputSchema.Type;
+
+export const DesktopPreviewPortBridgeOpenResultSchema = Schema.Struct({
+  bridgeId: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  localPort: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+  baseUrl: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+});
+export type DesktopPreviewPortBridgeOpenResult =
+  typeof DesktopPreviewPortBridgeOpenResultSchema.Type;
+
+export const DesktopPreviewPortBridgeCloseInputSchema = Schema.Struct({
+  bridgeId: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+});
+
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
@@ -985,9 +1013,13 @@ export interface DesktopBridge {
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
+  discoverFleetHosts: () => Promise<DesktopFleetHostDiscovery>;
+  preflightFleetHost: (
+    host: DesktopFleetOnboardingHost,
+  ) => Promise<DesktopFleetOnboardingPreflight>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { issuePairingToken?: boolean },
+    options?: { issuePairingToken?: boolean; networkAccessible?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
@@ -1031,6 +1063,21 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /**
+   * Discord rich presence. Optional across the board because the hosted web app
+   * can be loaded by a desktop build older than this feature — the renderer
+   * ships separately from the shell, so a missing method is a real case, not a
+   * theoretical one.
+   */
+  getDiscordPresenceState?: () => Promise<DiscordPresenceState>;
+  setDiscordPresenceEnabled?: (enabled: boolean) => Promise<DiscordPresenceState>;
+  /**
+   * Push the latest counts. Only the renderer can compute these, and it is
+   * expected to call this on every change; the main process throttles and
+   * de-duplicates before anything reaches Discord.
+   */
+  setDiscordPresenceSummary?: (summary: DiscordPresenceSummary) => Promise<void>;
+  onDiscordPresenceState?: (listener: (state: DiscordPresenceState) => void) => () => void;
+  /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */
@@ -1068,6 +1115,10 @@ export interface DesktopPreviewBridge {
    * the contract + main, not the renderer's mount logic.
    */
   getPreviewConfig: (environmentId: EnvironmentId) => Promise<DesktopPreviewWebviewConfig>;
+  openPortBridge: (
+    input: DesktopPreviewPortBridgeOpenInput,
+  ) => Promise<DesktopPreviewPortBridgeOpenResult>;
+  closePortBridge: (bridgeId: string) => Promise<void>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with

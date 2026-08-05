@@ -1,5 +1,5 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@starcode/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@starcode/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
@@ -7,6 +7,7 @@ import {
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
 } from "./modelSelection";
+import { resolveSelectableProvider } from "./providerModels";
 
 function provider(input: {
   provider?: ProviderDriverKind;
@@ -55,6 +56,10 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("defaults unresolved provider routing to Pi", () => {
+    expect(resolveSelectableProvider([], null)).toBe("pi");
+  });
+
   it("keeps custom models on the provider instance that declared them", () => {
     const providers = [
       provider({
@@ -278,15 +283,16 @@ describe("instance-scoped model selection", () => {
     ).toBe("claude-sonnet-4-6");
   });
 
-  it("preserves custom provider instances in settings model selection", () => {
+  it("falls back from a stale legacy text-generation instance to Pi", () => {
     const providers = [
       provider({
         instanceId: "claudeAgent",
         models: ["claude-sonnet-4-6"],
       }),
       provider({
-        instanceId: "claude_openrouter",
-        models: ["claude-sonnet-4-6"],
+        provider: ProviderDriverKind.make("pi"),
+        instanceId: "pi",
+        models: ["openai/gpt-5.4-mini"],
       }),
     ];
     const settings: UnifiedSettings = {
@@ -298,8 +304,23 @@ describe("instance-scoped model selection", () => {
     };
 
     expect(resolveAppModelSelectionState(settings, providers)).toEqual({
-      instanceId: ProviderInstanceId.make("claude_openrouter"),
-      model: "openai/gpt-5.5",
+      instanceId: ProviderInstanceId.make("pi"),
+      model: "openai/gpt-5.4-mini",
+    });
+  });
+
+  it("never falls back to a ready legacy snapshot when Pi is unavailable", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        models: ["gpt-5.6-sol"],
+      }),
+    ];
+
+    expect(resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, providers)).toEqual({
+      instanceId: ProviderInstanceId.make("pi"),
+      model: "openai/gpt-5.4-mini",
     });
   });
 });

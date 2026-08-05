@@ -1,4 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDateInEffect:off - cross-process SQLite locking needs native process/filesystem fixtures and wall-clock elapsed time.
 import { assert, it } from "@effect/vitest";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -49,4 +54,50 @@ it.effect("returns a typed failure when the database cannot be opened", () =>
     assert.equal(error._tag, "SqlError");
     assert.equal(error.reason.operation, "open");
   }),
+);
+
+it.effect("waits through a transient write lock held by another Starcode process", () =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(join(tmpdir(), "starcode-sqlite-lock-"))),
+    (directory) =>
+      Effect.gen(function* () {
+        const filename = join(directory, "state.sqlite");
+        const holder = spawn(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(process.argv[1]);
+db.exec("CREATE TABLE entries(value TEXT); BEGIN IMMEDIATE; INSERT INTO entries VALUES ('holder')");
+process.stdout.write("locked\\n");
+setTimeout(() => { db.exec("COMMIT"); db.close(); }, 150);`,
+            filename,
+          ],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              holder.once("error", reject);
+              holder.stdout.once("data", () => resolve());
+            }),
+        );
+
+        const startedAt = Date.now();
+        const rows = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO entries(value) VALUES (${"starcode"})`;
+          return yield* sql<{ readonly value: string }>`SELECT value FROM entries ORDER BY rowid`;
+        }).pipe(Effect.provide(SqliteClient.layer({ filename })), Effect.scoped);
+
+        assert.isAtLeast(Date.now() - startedAt, 75);
+        assert.deepEqual(
+          rows.map((row) => row.value),
+          ["holder", "starcode"],
+        );
+      }),
+    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
+  ),
 );

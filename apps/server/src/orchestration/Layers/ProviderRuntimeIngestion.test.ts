@@ -9,7 +9,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -21,7 +21,7 @@ import {
   type ServerSettings,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -35,7 +35,10 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -50,6 +53,10 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  setAttachedAgentStartupRecovery,
+  type AttachedAgentRecoveryRuntime,
+} from "../../provider/AttachedAgentHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -105,6 +112,9 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    getGoal: () => unsupported(),
+    setGoal: () => unsupported(),
+    clearGoal: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) => {
@@ -192,7 +202,11 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | ProjectionTurnRepository
+    | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -213,13 +227,17 @@ describe("ProviderRuntimeIngestion", () => {
       await runtime.dispose();
     }
     runtime = null;
+    setAttachedAgentStartupRecovery(undefined);
     for (const dir of tempDirs.splice(0)) {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
-    const workspaceRoot = makeTempDir("t3-provider-project-");
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    startIngestion?: boolean;
+  }) {
+    const workspaceRoot = makeTempDir("starcode-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -237,6 +255,8 @@ describe("ProviderRuntimeIngestion", () => {
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(ProjectionTurnRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory))),
+      Layer.provideMerge(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -246,9 +266,15 @@ describe("ProviderRuntimeIngestion", () => {
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+    const turnRepository = await runtime.runPromise(Effect.service(ProjectionTurnRepository));
+    const runtimeRepository = await runtime.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
+    if (options?.startIngestion !== false) {
+      await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
+    }
     const drain = () => Effect.runPromise(ingestion.drain);
 
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -315,9 +341,226 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      startIngestion: () => Effect.runPromise(ingestion.start().pipe(Scope.provide(scope!))),
+      readTurns: () =>
+        runtime!.runPromise(turnRepository.listByThreadId({ threadId: ThreadId.make("thread-1") })),
+      runtimeRepository,
       drain,
     };
   }
+
+  it("terminalizes stopped or missing attached runtimes while preserving a restored nested run", async () => {
+    const recoveredNested: AttachedAgentRecoveryRuntime = {
+      driver: ProviderDriverKind.make("pi"),
+      live: true,
+      snapshot: {
+        agentRunId: "agent:nested-live",
+        parentThreadId: asThreadId("thread-1"),
+        parentAgentRunId: "agent:stopped-binding",
+        providerInstanceId: ProviderInstanceId.make("pi"),
+        description: "restored nested child",
+        status: "paused",
+        startedAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      },
+    };
+    const completedDuringRecovery: AttachedAgentRecoveryRuntime = {
+      driver: ProviderDriverKind.make("pi"),
+      live: false,
+      snapshot: {
+        agentRunId: "agent:completed-during-recovery",
+        parentThreadId: asThreadId("thread-1"),
+        providerInstanceId: ProviderInstanceId.make("pi"),
+        description: "fast recovered child",
+        status: "completed",
+        result: "result preserved across recovery",
+        startedAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    };
+    setAttachedAgentStartupRecovery({
+      awaitCompletion: async () => [recoveredNested, completedDuringRecovery],
+    });
+    const harness = await createHarness({ startIngestion: false });
+
+    await Effect.runPromise(
+      harness.runtimeRepository.upsert({
+        threadId: asThreadId("attached:stopped-binding"),
+        providerName: "pi",
+        providerInstanceId: ProviderInstanceId.make("pi"),
+        adapterKey: "pi",
+        runtimeMode: "full-access",
+        status: "stopped",
+        lastSeenAt: "2026-01-01T00:00:02.000Z",
+        resumeCursor: { session: "stopped" },
+        runtimePayload: {
+          attachedAgent: {
+            agentRunId: "agent:stopped-binding",
+            parentThreadId: "thread-1",
+            description: "stopped child",
+            startedAt: "2026-01-01T00:00:01.000Z",
+          },
+        },
+      }),
+    );
+
+    const appendTask = (input: {
+      id: string;
+      taskType: string;
+      parentAgentRunId?: string;
+      status?: "completed";
+    }) =>
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(`cmd-${input.id}-${input.status ?? "started"}`),
+        threadId: asThreadId("thread-1"),
+        activity: {
+          id: EventId.make(`event-${input.id}-${input.status ?? "started"}`),
+          tone: "info",
+          kind: input.status ? "task.completed" : "task.started",
+          summary: input.status ? "Task completed" : "Task started",
+          payload: {
+            taskId: input.id,
+            taskType: input.taskType,
+            providerDriver: "pi",
+            providerInstanceId: "pi",
+            ...(input.parentAgentRunId ? { parentAgentRunId: input.parentAgentRunId } : {}),
+            ...(input.status ? { status: input.status } : {}),
+          },
+          turnId: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+
+    await Effect.runPromise(
+      Effect.all(
+        [
+          appendTask({ id: "agent:stopped-binding", taskType: "attached_agent" }),
+          appendTask({ id: "agent:missing-binding", taskType: "attached_agent" }),
+          appendTask({ id: "agent:completed-during-recovery", taskType: "attached_agent" }),
+          appendTask({
+            id: "agent:nested-live",
+            taskType: "attached_agent",
+            parentAgentRunId: "agent:stopped-binding",
+          }),
+          appendTask({ id: "agent:already-terminal", taskType: "attached_agent" }),
+          appendTask({ id: "agent:native", taskType: "local_agent" }),
+        ],
+        { concurrency: 1, discard: true },
+      ),
+    );
+    await Effect.runPromise(
+      appendTask({
+        id: "agent:already-terminal",
+        taskType: "attached_agent",
+        status: "completed",
+      }),
+    );
+
+    await harness.startIngestion();
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.agentRuns.find((run) => run.agentRunId === "agent:stopped-binding")?.status ===
+          "stopped" &&
+        entry.agentRuns.find((run) => run.agentRunId === "agent:missing-binding")?.status ===
+          "stopped" &&
+        entry.agentRuns.find((run) => run.agentRunId === "agent:completed-during-recovery")
+          ?.status === "completed",
+    );
+    const statusById = new Map(thread?.agentRuns.map((run) => [run.agentRunId, run.status]));
+    expect(statusById.get("agent:stopped-binding")).toBe("stopped");
+    expect(statusById.get("agent:missing-binding")).toBe("stopped");
+    expect(statusById.get("agent:nested-live")).toBe("paused");
+    expect(statusById.get("agent:completed-during-recovery")).toBe("completed");
+    expect(statusById.get("agent:already-terminal")).toBe("completed");
+    expect(statusById.get("agent:native")).toBe("running");
+    expect(
+      thread?.activities.some(
+        (activity) =>
+          activity.kind === "task.updated" &&
+          (activity.payload as { taskId?: string; status?: string }).taskId ===
+            "agent:nested-live" &&
+          (activity.payload as { status?: string }).status === "paused",
+      ),
+    ).toBe(true);
+    expect(
+      thread?.activities.some(
+        (activity) =>
+          activity.kind === "task.completed" &&
+          (activity.payload as { taskId?: string; summary?: string }).taskId ===
+            "agent:stopped-binding" &&
+          (activity.payload as { summary?: string }).summary?.includes("could not be restored"),
+      ),
+    ).toBe(true);
+    expect(
+      thread?.activities.some(
+        (activity) =>
+          activity.kind === "task.completed" &&
+          (activity.payload as { taskId?: string; summary?: string }).taskId ===
+            "agent:completed-during-recovery" &&
+          (activity.payload as { summary?: string }).summary === "result preserved across recovery",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not make ingestion startup wait for attached-agent recovery", async () => {
+    let resolveRecovery!: (value: ReadonlyArray<AttachedAgentRecoveryRuntime>) => void;
+    const recovery = new Promise<ReadonlyArray<AttachedAgentRecoveryRuntime>>((resolve) => {
+      resolveRecovery = resolve;
+    });
+    setAttachedAgentStartupRecovery({
+      awaitCompletion: () => recovery,
+    });
+    const harness = await createHarness({ startIngestion: false });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-delayed-recovery-started"),
+        threadId: asThreadId("thread-1"),
+        activity: {
+          id: EventId.make("event-delayed-recovery-started"),
+          tone: "info",
+          kind: "task.started",
+          summary: "Task started",
+          payload: {
+            taskId: "agent:delayed-recovery",
+            taskType: "attached_agent",
+            providerDriver: "pi",
+            providerInstanceId: "pi",
+          },
+          turnId: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    const outcome = await Promise.race([
+      harness.startIngestion().then(() => "started" as const),
+      Effect.runPromise(Effect.sleep("250 millis").pipe(Effect.as("timed-out" as const))),
+    ]);
+
+    expect(outcome).toBe("started");
+    const beforeRecovery = (await harness.readModel()).threads.find(
+      (entry) => entry.id === "thread-1",
+    );
+    expect(
+      beforeRecovery?.agentRuns.find((run) => run.agentRunId === "agent:delayed-recovery")?.status,
+    ).toBe("running");
+
+    resolveRecovery([]);
+    const afterRecovery = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.agentRuns.find((run) => run.agentRunId === "agent:delayed-recovery")?.status ===
+        "stopped",
+    );
+    expect(
+      afterRecovery.agentRuns.find((run) => run.agentRunId === "agent:delayed-recovery")?.status,
+    ).toBe("stopped");
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
@@ -350,7 +593,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
+    let thread = await waitForThread(
       harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
@@ -359,6 +602,39 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-ready-after-failed-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: { state: "ready" },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.updatedAt === "2026-01-01T00:00:01.000Z",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toBe("turn failed");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-retry-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      turnId: asTurnId("turn-2"),
+      payload: {},
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === "turn-2",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.lastError).toBeNull();
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -447,6 +723,68 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("ready");
     expect(thread.session?.lastError).toBeNull();
+  });
+
+  it("reconciles a provider session that became ready before startup subscription", async () => {
+    const harness = await createHarness();
+    const startedAt = "2026-01-01T00:00:01.000Z";
+    const recoveredAt = "2026-01-01T00:00:02.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-startup-stale-turn"),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: MessageId.make("message-startup-stale-turn"),
+          role: "user",
+          text: "continue across restart",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: startedAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-startup-stale-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: startedAt,
+      turnId: asTurnId("turn-startup-stale"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId === "turn-startup-stale",
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      createdAt: startedAt,
+      updatedAt: recoveredAt,
+    });
+
+    // Starting ingestion after the provider has already reached ready models
+    // the real server boot race: no runtime event remains in PubSub, so the
+    // live-session reconciliation must settle the stale projected turn.
+    await harness.startIngestion();
+    await harness.drain();
+    const recovered = (await harness.readModel()).threads[0]!;
+    expect(recovered.session?.status).toBe("ready");
+    expect(recovered.session?.activeTurnId).toBeNull();
+    const recoveredTurn = (await harness.readTurns()).find(
+      (turn) => turn.turnId === "turn-startup-stale",
+    );
+    expect(recoveredTurn?.state).toBe("completed");
+    expect(recoveredTurn?.completedAt).toBe(recoveredAt);
   });
 
   it("clears active turn when provider session becomes ready", async () => {
@@ -944,6 +1282,87 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("hello world");
     expect(message?.streaming).toBe(false);
+  });
+
+  it("keeps attached-agent prose attributed to its activity stream instead of the parent transcript", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-attached-user-message"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-attached"),
+      itemId: asItemId("item-attached-user"),
+      payload: {
+        itemType: "user_message",
+        status: "completed",
+        output: "please continue",
+        parentToolUseId: "agent:child-1",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-attached-message-delta"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-attached"),
+      itemId: asItemId("item-attached"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "child result",
+        parentToolUseId: "agent:child-1",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-attached-message-completed"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-attached"),
+      itemId: asItemId("item-attached"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        output: "child result",
+        parentToolUseId: "agent:child-1",
+      },
+    });
+
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.messages.some((message) => message.text === "child result")).toBe(false);
+    expect(
+      thread?.activities.find((activity) => activity.id === "evt-attached-message-completed"),
+    ).toMatchObject({
+      kind: "agent.message",
+      payload: { parentToolUseId: "agent:child-1", output: "child result" },
+    });
+    expect(
+      thread?.activities.find(
+        (activity) => activity.id === "nested-text:thread-1:agent:child-1:item-attached",
+      ),
+    ).toMatchObject({
+      kind: "agent.message",
+      payload: {
+        itemId: "item-attached",
+        parentToolUseId: "agent:child-1",
+        status: "inProgress",
+        output: "child result",
+      },
+    });
+    expect(
+      thread?.activities.find((activity) => activity.id === "evt-attached-user-message"),
+    ).toMatchObject({
+      kind: "agent.user.message",
+      payload: { parentToolUseId: "agent:child-1", output: "please continue" },
+    });
   });
 
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
@@ -1489,7 +1908,7 @@ describe("ProviderRuntimeIngestion", () => {
 
   it("accepts a conflicting turn.started for a pending turn start when the provider expects that turn", async () => {
     // Steering a running turn: the server requests a new turn while the old
-    // one is still active, and providers like opencode open the new turn
+    // one is still active, and some providers open the new turn
     // without ever completing the superseded one. The new turn.started must
     // replace the active turn instead of being rejected as stale.
     const harness = await createHarness();
@@ -2660,6 +3079,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(activity?.kind).toBe("runtime.error");
     expect(activityPayload?.message).toBe("runtime activity exploded");
+    expect(activityPayload?.detail).toBe("runtime activity exploded");
   });
 
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
@@ -3085,6 +3505,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         taskId: "turn-task-1",
         taskType: "plan",
+        historySessionId: "a".repeat(32),
       },
     });
 
@@ -3160,6 +3581,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(started?.kind).toBe("task.started");
     expect(started?.summary).toBe("Plan task started");
+    expect(
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>).historySessionId
+        : null,
+    ).toBe("a".repeat(32));
     expect(progress?.kind).toBe("task.progress");
     expect(progressPayload?.detail).toBe("Code reviewer is validating the desktop rollout chunks.");
     expect(progressPayload?.summary).toBe(

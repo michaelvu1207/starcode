@@ -1,34 +1,28 @@
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
+  ProviderInstanceId,
   type ServerProvider,
-} from "@t3tools/contracts";
-import { it, assert, vi } from "@effect/vitest";
-
+} from "@starcode/contracts";
+import { assert, it, vi } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-import type * as ClaudeAdapter from "../Services/ClaudeAdapter.ts";
-import type * as CodexAdapter from "../Services/CodexAdapter.ts";
-import type * as CursorAdapter from "../Services/CursorAdapter.ts";
-import type * as OpenCodeAdapter from "../Services/OpenCodeAdapter.ts";
-import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
+import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistryLayer from "./ProviderAdapterRegistry.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 
-const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
-const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const PI_DRIVER = ProviderDriverKind.make("pi");
+const piInstanceId = defaultInstanceIdForDriver(PI_DRIVER);
 
-const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
-  provider: CODEX_DRIVER,
+const fakePiAdapter: ProviderInstance["adapter"] = {
+  provider: PI_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -44,152 +38,71 @@ const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
-const fakeClaudeAdapter: ClaudeAdapter.ClaudeAdapterShape = {
-  provider: CLAUDE_AGENT_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
-  startSession: vi.fn(),
-  sendTurn: vi.fn(),
-  interruptTurn: vi.fn(),
-  respondToRequest: vi.fn(),
-  respondToUserInput: vi.fn(),
-  stopSession: vi.fn(),
-  listSessions: vi.fn(),
-  hasSession: vi.fn(),
-  readThread: vi.fn(),
-  rollbackThread: vi.fn(),
-  stopAll: vi.fn(),
-  streamEvents: Stream.empty,
+const fakePiInstance: ProviderInstance = {
+  instanceId: piInstanceId,
+  driverKind: PI_DRIVER,
+  continuationIdentity: {
+    driverKind: PI_DRIVER,
+    continuationKey: "pi:instance:pi",
+  },
+  displayName: undefined,
+  enabled: true,
+  snapshot: {
+    maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+      provider: PI_DRIVER,
+      packageName: null,
+    }),
+    getSnapshot: Effect.succeed({} as ServerProvider),
+    refresh: Effect.succeed({} as ServerProvider),
+    streamChanges: Stream.empty,
+  },
+  adapter: fakePiAdapter,
+  textGeneration: {} as TextGeneration.TextGeneration["Service"],
 };
-
-const fakeOpenCodeAdapter: OpenCodeAdapter.OpenCodeAdapterShape = {
-  provider: OPENCODE_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
-  startSession: vi.fn(),
-  sendTurn: vi.fn(),
-  interruptTurn: vi.fn(),
-  respondToRequest: vi.fn(),
-  respondToUserInput: vi.fn(),
-  stopSession: vi.fn(),
-  listSessions: vi.fn(),
-  hasSession: vi.fn(),
-  readThread: vi.fn(),
-  rollbackThread: vi.fn(),
-  stopAll: vi.fn(),
-  streamEvents: Stream.empty,
-};
-
-const fakeCursorAdapter: CursorAdapter.CursorAdapterShape = {
-  provider: CURSOR_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
-  startSession: vi.fn(),
-  sendTurn: vi.fn(),
-  interruptTurn: vi.fn(),
-  respondToRequest: vi.fn(),
-  respondToUserInput: vi.fn(),
-  stopSession: vi.fn(),
-  listSessions: vi.fn(),
-  hasSession: vi.fn(),
-  readThread: vi.fn(),
-  rollbackThread: vi.fn(),
-  stopAll: vi.fn(),
-  streamEvents: Stream.empty,
-};
-
-// ProviderAdapterRegistryLive is now a facade over ProviderInstanceRegistry —
-// it walks `listInstances` once at boot and surfaces the default-instance
-// adapter keyed by its driver kind. To test the facade we supply four fake
-// instances whose `instanceId === defaultInstanceIdForDriver(driverKind)` so
-// they pass the default-instance filter.
-const makeFakeInstance = (
-  driverKindString: "codex" | "claudeAgent" | "cursor" | "opencode",
-  adapter: ProviderInstance["adapter"],
-): ProviderInstance => {
-  const driverKind = ProviderDriverKind.make(driverKindString);
-  return {
-    instanceId: defaultInstanceIdForDriver(driverKind),
-    driverKind,
-    continuationIdentity: {
-      driverKind,
-      continuationKey: `${driverKind}:instance:${defaultInstanceIdForDriver(driverKind)}`,
-    },
-    displayName: undefined,
-    enabled: true,
-    snapshot: {
-      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-        provider: driverKind,
-        packageName: null,
-      }),
-      getSnapshot: Effect.succeed({} as unknown as ServerProvider),
-      refresh: Effect.succeed({} as unknown as ServerProvider),
-      streamChanges: Stream.empty,
-    },
-    adapter,
-    textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],
-  };
-};
-
-const fakeInstances: ReadonlyArray<ProviderInstance> = [
-  makeFakeInstance("codex", fakeCodexAdapter),
-  makeFakeInstance("claudeAgent", fakeClaudeAdapter),
-  makeFakeInstance("opencode", fakeOpenCodeAdapter),
-  makeFakeInstance("cursor", fakeCursorAdapter),
-];
 
 const fakeInstanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
   getInstance: (instanceId) =>
-    Effect.succeed(fakeInstances.find((instance) => instance.instanceId === instanceId)),
-  listInstances: Effect.succeed(fakeInstances),
+    Effect.succeed(instanceId === piInstanceId ? fakePiInstance : undefined),
+  listInstances: Effect.succeed([fakePiInstance]),
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
-  // Tests never drive changes through this fake; acquire a throwaway
-  // subscription on an unused PubSub so the shape is satisfied.
-  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) => PubSub.subscribe(pubsub)),
+  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
 });
 
-const layer = Layer.mergeAll(
-  Layer.provide(
-    ProviderAdapterRegistryLayer.ProviderAdapterRegistryLive,
-    fakeInstanceRegistryLayer,
-  ),
-  NodeServices.layer,
+const layer = ProviderAdapterRegistryLayer.ProviderAdapterRegistryLive.pipe(
+  Layer.provide(fakeInstanceRegistryLayer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
-  it("resolves adapters and routing metadata from provider instances", () =>
+  it("resolves the sole Pi adapter and routing metadata", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
-      const claudeInstanceId = defaultInstanceIdForDriver(CLAUDE_AGENT_DRIVER);
 
-      const adapter = yield* registry.getByInstance(claudeInstanceId);
-      assert.strictEqual(adapter, fakeClaudeAdapter);
-
-      const info = yield* registry.getInstanceInfo(claudeInstanceId);
-      assert.deepStrictEqual(info, {
-        instanceId: claudeInstanceId,
-        driverKind: CLAUDE_AGENT_DRIVER,
+      assert.strictEqual(yield* registry.getByInstance(piInstanceId), fakePiAdapter);
+      assert.deepStrictEqual(yield* registry.getInstanceInfo(piInstanceId), {
+        instanceId: piInstanceId,
+        driverKind: PI_DRIVER,
         displayName: undefined,
         accentColor: undefined,
         enabled: true,
         continuationIdentity: {
-          driverKind: CLAUDE_AGENT_DRIVER,
-          continuationKey: "claudeAgent:instance:claudeAgent",
+          driverKind: PI_DRIVER,
+          continuationKey: "pi:instance:pi",
         },
       });
+      assert.deepStrictEqual(yield* registry.listInstances(), [piInstanceId]);
+      assert.deepStrictEqual(yield* registry.listProviders(), [PI_DRIVER]);
+    }));
 
-      const instances = yield* registry.listInstances();
-      assert.deepStrictEqual(instances, [
-        defaultInstanceIdForDriver(CODEX_DRIVER),
-        claudeInstanceId,
-        defaultInstanceIdForDriver(OPENCODE_DRIVER),
-        defaultInstanceIdForDriver(CURSOR_DRIVER),
-      ]);
+  it("does not remap a removed harness instance to Pi", () =>
+    Effect.gen(function* () {
+      const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
+      const result = yield* Effect.result(registry.getByInstance(ProviderInstanceId.make("codex")));
 
-      const providers = yield* registry.listProviders();
-      assert.deepStrictEqual(providers, [
-        CODEX_DRIVER,
-        CLAUDE_AGENT_DRIVER,
-        OPENCODE_DRIVER,
-        CURSOR_DRIVER,
-      ]);
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(String(result.failure), /Provider 'codex' is not implemented/);
+      }
     }));
 });

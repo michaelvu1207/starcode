@@ -1,6 +1,15 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import type { ContextMenuItem, PreviewSessionSnapshot } from "@starcode/contracts";
+import { getTerminalLabel } from "@starcode/shared/terminalLabels";
+import {
+  ClipboardList,
+  FileDiff,
+  Files,
+  Globe2,
+  MessagesSquare,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -51,8 +60,8 @@ interface RightPanelTabsProps {
 }
 
 const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the T3 Code desktop app.",
-  files: "Files are only available when a project is open.",
+  browser: "Browser previews are only available in the starcode desktop app.",
+  files: "Files are only available when a folder is open.",
   diff: "Diff is only available for server threads in Git repositories.",
 } as const;
 
@@ -205,6 +214,12 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "side":
+      // Not the side thread's own title. It is a fork, so it inherits the
+      // parent's name, and a tab reading "Reworking the picker (fork)" next to
+      // the thread it forked from says nothing about which one you are looking
+      // at. The tab's job here is only to say "this is the scratch one".
+      return "Side";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -266,6 +281,8 @@ function SurfaceIcon({
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
+    case "side":
+      return <MessagesSquare className="size-3.5 shrink-0" />;
   }
 }
 

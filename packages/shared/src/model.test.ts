@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL_BY_PROVIDER,
+  MODEL_SLUG_ALIASES_BY_PROVIDER,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@starcode/contracts";
 
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -152,6 +160,22 @@ describe("model slug normalization", () => {
     const claude = ProviderDriverKind.make("claudeAgent");
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
+    expect(normalizeModelSlug("fable", claude)).toBe("claude-fable-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+
+  it("starts Pi on GPT-5.6 Sol when that authenticated model is available", () => {
+    expect(DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make("pi")]).toBe(
+      "openai-codex/gpt-5.6-sol",
+    );
+  });
+
+  it("does not advertise defaults, aliases, or labels for the retired OpenCode provider", () => {
+    const retired = ProviderDriverKind.make("opencode");
+    expect(DEFAULT_MODEL_BY_PROVIDER[retired]).toBeUndefined();
+    expect(DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[retired]).toBeUndefined();
+    expect(MODEL_SLUG_ALIASES_BY_PROVIDER[retired]).toBeUndefined();
+    expect(PROVIDER_DISPLAY_NAMES[retired]).toBeUndefined();
+    expect(normalizeModelSlug("openai/gpt-5", retired)).toBe("openai/gpt-5");
   });
 });

@@ -7,11 +7,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@starcode/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@starcode/client-runtime/state/runtime";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -25,6 +25,8 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
+import { modelOptionDetailLabel } from "../../lib/modelOptions";
+import { AppText as Text } from "../../components/AppText";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -552,6 +554,7 @@ export function NewTaskDraftScreen(props: {
         subactions: group.models.map((option) => ({
           id: `model:${option.key}`,
           title: option.label,
+          subtitle: modelOptionDetailLabel(option),
           state:
             flow.selectedModel &&
             option.selection.instanceId === flow.selectedModel.instanceId &&
@@ -684,7 +687,7 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentLabel =
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+    )?.environmentLabel ?? "Machine";
   const currentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
@@ -991,7 +994,12 @@ export function NewTaskDraftScreen(props: {
         <ComposerToolbarTrigger
           accessibilityLabel="Model"
           disabled={isIncomingShareTransferPending}
-          iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
+          icon={flow.selectedModelOption ? undefined : "sparkles"}
+          iconNode={
+            flow.selectedModelOption ? (
+              <ProviderIcon provider={flow.selectedModelOption.providerDriver} size={16} />
+            ) : undefined
+          }
           label={flow.selectedModelOption?.label ?? "Model"}
         />
       </ControlPillMenu>
@@ -1011,7 +1019,7 @@ export function NewTaskDraftScreen(props: {
         onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
       >
         <ComposerToolbarTrigger
-          accessibilityLabel="Environment"
+          accessibilityLabel="Choose task machine"
           disabled={isIncomingShareTransferPending}
           icon="desktopcomputer"
           label={selectedEnvironmentLabel}
@@ -1107,6 +1115,12 @@ export function NewTaskDraftScreen(props: {
               ) : null}
             </ComposerSurface>
 
+            {!flow.selectedModel ? (
+              <Text className="px-2 pt-2 text-xs text-danger">
+                This draft uses an unavailable model. Choose a Pi model to start this task.
+              </Text>
+            ) : null}
+
             {isExpanded ? (
               <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
                 <ComposerToolbarScroller
@@ -1132,6 +1146,11 @@ export function NewTaskDraftScreen(props: {
         <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
 
         <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
+          {!flow.selectedModel ? (
+            <Text className="px-5 pt-3 text-xs text-danger">
+              This draft uses an unavailable model. Choose a Pi model to start this task.
+            </Text>
+          ) : null}
           {flow.attachments.length > 0 ? (
             <View className="px-4 pt-3">
               <ComposerAttachmentStrip

@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -12,16 +12,28 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveSubagentTasks,
+  mainThreadActivities,
+  agentActivities,
+  activityParentToolUseId,
   deriveTimelineEntries,
+  deriveAgentTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   findSidebarProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  PROVIDER_OPTIONS,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
+
+describe("provider options", () => {
+  it("exposes Pi as the sole launchable runtime", () => {
+    expect(PROVIDER_OPTIONS).toEqual([{ value: "pi", label: "Pi", available: true }]);
+  });
+});
 
 let nextActivityId = 0;
 
@@ -177,7 +189,163 @@ describe("derivePendingApprovals", () => {
   });
 });
 
+describe("deriveAgentTimelineEntries", () => {
+  it("renders one AgentRun as ordinary messages, reasoning, and tools without sibling leakage", () => {
+    const own = "agent:own";
+    const activities = [
+      makeActivity({
+        id: "agent-user",
+        kind: "agent.user.message",
+        createdAt: "2026-08-01T00:00:01.000Z",
+        payload: {
+          itemId: "user-1",
+          parentToolUseId: own,
+          output: "Please inspect this",
+          status: "completed",
+        },
+      }),
+      makeActivity({
+        id: "agent-reasoning",
+        kind: "agent.reasoning",
+        createdAt: "2026-08-01T00:00:02.000Z",
+        payload: {
+          itemId: "reasoning-1",
+          parentToolUseId: own,
+          output: "I should inspect the implementation.",
+        },
+      }),
+      makeActivity({
+        id: "agent-tool",
+        kind: "tool.completed",
+        createdAt: "2026-08-01T00:00:03.000Z",
+        payload: {
+          itemId: "tool-1",
+          itemType: "command_execution",
+          parentToolUseId: own,
+          title: "bash",
+          output: "ok",
+          status: "completed",
+        },
+      }),
+      makeActivity({
+        id: "agent-response",
+        kind: "agent.message",
+        createdAt: "2026-08-01T00:00:04.000Z",
+        payload: {
+          itemId: "assistant-1",
+          parentToolUseId: own,
+          output: "Inspection complete",
+          status: "completed",
+        },
+      }),
+      makeActivity({
+        id: "sibling-response",
+        kind: "agent.message",
+        payload: {
+          itemId: "assistant-secret",
+          parentToolUseId: "agent:sibling",
+          output: "sibling secret",
+        },
+      }),
+    ];
+
+    const timeline = deriveAgentTimelineEntries(activities, own);
+    expect(timeline.map((entry) => entry.kind)).toEqual([
+      "message",
+      "reasoning",
+      "work",
+      "message",
+    ]);
+    expect(
+      timeline.flatMap((entry) => (entry.kind === "message" ? [entry.message.text] : [])),
+    ).toEqual(["Please inspect this", "Inspection complete"]);
+    expect(JSON.stringify(timeline)).not.toContain("sibling secret");
+  });
+
+  it("keeps attributed child lifecycle rows visible without parent or sibling leakage", () => {
+    const own = "agent:own";
+    const activities = [
+      makeActivity({ id: "parent", kind: "tool.completed", payload: { detail: "parent work" } }),
+      makeActivity({
+        id: "progress",
+        kind: "task.progress",
+        payload: {
+          taskId: own,
+          parentToolUseId: own,
+          summary: "Inspecting files",
+        },
+      }),
+      makeActivity({
+        id: "paused",
+        kind: "task.updated",
+        payload: { taskId: own, parentToolUseId: own, status: "paused" },
+      }),
+      makeActivity({
+        id: "sibling",
+        kind: "task.progress",
+        payload: {
+          taskId: "agent:sibling",
+          parentToolUseId: "agent:sibling",
+          summary: "Sibling secret",
+        },
+      }),
+    ];
+
+    expect(mainThreadActivities(activities).map((activity) => activity.id)).toEqual(["parent"]);
+    const child = deriveAgentTimelineEntries(activities, own);
+    expect(child.map((entry) => entry.id).toSorted()).toEqual(["paused", "progress"]);
+    expect(JSON.stringify(child)).toContain("Inspecting files");
+    expect(JSON.stringify(child)).not.toContain("Sibling secret");
+  });
+
+  it("renders the exact attributed runtime failure text", () => {
+    const timeline = deriveAgentTimelineEntries(
+      [
+        makeActivity({
+          id: "failure",
+          kind: "runtime.error",
+          tone: "error",
+          summary: "Runtime error",
+          payload: {
+            parentToolUseId: "agent:own",
+            message: "credential minting failed",
+            detail: "credential minting failed",
+          },
+        }),
+      ],
+      "agent:own",
+    );
+    expect(JSON.stringify(timeline)).toContain("credential minting failed");
+  });
+});
+
 describe("derivePendingUserInputs", () => {
+  it("retains AgentRun attribution so sibling prompts can be isolated", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "agent-user-input",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        kind: "user-input.requested",
+        summary: "Agent needs input",
+        tone: "info",
+        payload: {
+          requestId: "req-agent-input",
+          parentToolUseId: "agent:child",
+          questions: [
+            {
+              id: "choice",
+              header: "Choice",
+              question: "Continue?",
+              options: [{ label: "yes", description: "Continue" }],
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)[0]?.parentToolUseId).toBe("agent:child");
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -660,6 +828,8 @@ describe("workEntryIndicatesToolFailure", () => {
       }),
     ).toBe(false);
     expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+    // Not neutral: neutral rows get filtered out of the timeline, and a tool
+    // that is still running is precisely the row worth showing.
     expect(
       workEntryIndicatesToolNeutralStatus({
         ...base,
@@ -667,13 +837,23 @@ describe("workEntryIndicatesToolFailure", () => {
         toolLifecycleStatus: "inProgress",
         detail: "…",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       workEntryIndicatesToolNeutralStatus({
         ...base,
         tone: "tool",
         toolLifecycleStatus: "completed",
         detail: "ok",
+      }),
+    ).toBe(false);
+    // Stopped rows are terminal but intentionally neither success nor failure.
+    // They still carry the cancellation result and must remain visible.
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "stopped",
+        detail: "Command aborted",
       }),
     ).toBe(false);
   });
@@ -691,24 +871,155 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
+  it("folds approval request and resolution into one attributed terminal row", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "approval-open",
+        createdAt: "2026-08-01T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "approval-1",
+          requestKind: "command",
+          status: "inProgress",
+          detail: "bash: printf pi-ok",
+        },
+      }),
+      makeActivity({
+        id: "approval-resolved",
+        createdAt: "2026-08-01T00:00:02.000Z",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        tone: "approval",
+        payload: {
+          requestId: "approval-1",
+          requestKind: "command",
+          status: "completed",
+          detail: "bash: printf pi-ok",
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "approval-open",
+      detail: "bash: printf pi-ok",
+      requestKind: "command",
+      sourceActivityKind: "approval.resolved",
+      toolLifecycleStatus: "completed",
+    });
+  });
+
+  it("folds a tool's start into its completion and keeps the start's position", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
         summary: "Tool call complete",
         kind: "tool.completed",
+        payload: { itemId: "item-1", itemType: "command_execution" },
       }),
       makeActivity({
         id: "tool-start",
         createdAt: "2026-02-23T00:00:02.000Z",
         summary: "Tool call",
         kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
       }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    // One row, anchored where the work started rather than where it finished —
+    // the row exists for the whole time the tool is running.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("tool-start");
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:02.000Z");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("keeps a still-running tool as its own in-progress entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Tool call",
+        kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolLifecycleStatus).toBe("inProgress");
+  });
+
+  it("does not merge concurrent tool calls that interleave", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "start-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-a", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "start-b",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-b", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "complete-a",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: { itemId: "item-a", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "complete-b",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: { itemId: "item-b", itemType: "command_execution" },
+      }),
+    ];
+
+    // Two calls, not four rows and not one: the completions are not adjacent to
+    // their starts, so an adjacency-only merge would get this wrong.
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["start-a", "start-b"]);
+  });
+
+  it("carries captured output and exit code onto the merged entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Bash",
+        kind: "tool.started",
+        payload: { itemId: "item-1", itemType: "command_execution" },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Bash",
+        kind: "tool.completed",
+        payload: {
+          itemId: "item-1",
+          itemType: "command_execution",
+          output: "boom\n",
+          outputTruncated: true,
+          exitCode: 1,
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.output).toBe("boom");
+    expect(entry?.outputTruncated).toBe(true);
+    expect(entry?.exitCode).toBe(1);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -937,7 +1248,7 @@ describe("deriveWorkLogEntries", () => {
   it("preserves MCP server, tool, arguments, and results for expanded display", () => {
     const item = {
       type: "mcpToolCall",
-      server: "t3-code",
+      server: "starcode",
       tool: "preview_status",
       arguments: {},
       status: "completed",
@@ -947,24 +1258,24 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-done",
         kind: "tool.completed",
-        summary: "t3-code · preview_status",
+        summary: "starcode · preview_status",
         payload: {
           itemType: "mcp_tool_call",
-          title: "t3-code · preview_status",
+          title: "starcode · preview_status",
           data: { item },
         },
       }),
     ];
 
     const [entry] = deriveWorkLogEntries(activities);
-    expect(entry?.toolTitle).toBe("t3-code · preview_status");
+    expect(entry?.toolTitle).toBe("starcode · preview_status");
     expect(entry?.toolData).toEqual(item);
   });
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
       type: "mcpToolCall",
-      server: "t3-code",
+      server: "starcode",
       tool: "preview_snapshot",
       arguments: { interactiveOnly: true },
       status: "completed",
@@ -973,7 +1284,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-progress",
         kind: "tool.updated",
-        summary: "t3-code · preview_snapshot",
+        summary: "starcode · preview_snapshot",
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
@@ -983,7 +1294,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-complete",
         kind: "tool.completed",
-        summary: "t3-code · preview_snapshot",
+        summary: "starcode · preview_snapshot",
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
@@ -1207,7 +1518,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "grep-complete",
+      id: "grep-update",
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",
@@ -1256,7 +1567,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "read-complete",
+      id: "read-update",
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",
@@ -1332,7 +1643,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "legacy-read-complete",
+      id: "legacy-read-update",
       toolTitle: "Read File",
       itemType: "dynamic_tool_call",
     });
@@ -1384,9 +1695,11 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
 
     expect(entries).toHaveLength(1);
+    // Identity and position come from the first event so the row holds still
+    // while the tool runs; the later events contribute their content.
     expect(entries[0]).toMatchObject({
-      id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      id: "tool-update-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
@@ -1445,7 +1758,7 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
 
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-update", "tool-2-update"]);
   });
 
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
@@ -1488,11 +1801,32 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
 
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+    expect(entries[0]?.id).toBe("z-update-earlier");
   });
 });
 
 describe("deriveTimelineEntries", () => {
+  it("hides system-authored managed-goal continuation messages", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("managed-goal-message"),
+          role: "user",
+          authoredBy: "system",
+          text: "Continue working toward the active goal",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(entries).toEqual([]);
+  });
+
   it("includes proposed plans alongside messages and work entries in chronological order", () => {
     const entries = deriveTimelineEntries(
       [
@@ -1684,5 +2018,704 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+/**
+ * The tasks panel's reducer.
+ *
+ * The token rule is the one that matters: `total_tokens` is a running total per
+ * task, so a reducer that accumulates reports roughly the square of the truth —
+ * and it does so plausibly, climbing smoothly, which is exactly the kind of
+ * wrong nobody notices. Two of these exist to make that regression loud.
+ */
+describe("deriveSubagentTasks", () => {
+  const started = (taskId: string, overrides: Record<string, unknown> = {}) =>
+    makeActivity({
+      kind: "task.started",
+      createdAt: "2026-07-27T00:00:00.000Z",
+      payload: {
+        taskId,
+        detail: "Find the thing",
+        taskType: "local_agent",
+        subagentType: "Explore",
+        toolUseId: `toolu_${taskId}`,
+        ...overrides,
+      },
+    });
+
+  const progress = (taskId: string, totalTokens: number, overrides: Record<string, unknown> = {}) =>
+    makeActivity({
+      kind: "task.progress",
+      createdAt: "2026-07-27T00:00:01.000Z",
+      payload: {
+        taskId,
+        title: "Running Search",
+        lastToolName: "Bash",
+        usage: { total_tokens: totalTokens, tool_uses: 2, duration_ms: 4000 },
+        ...overrides,
+      },
+    });
+
+  it("folds the four task events into one row per subagent", () => {
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 18945),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "a1", status: "completed", summary: "Search complete." },
+      }),
+    ]);
+
+    expect(task?.taskId).toBe("a1");
+    expect(task?.taskType).toBe("local_agent");
+    expect(task?.subagentType).toBe("Explore");
+    expect(task?.toolUseId).toBe("toolu_a1");
+    expect(task?.status).toBe("completed");
+    expect(task?.summary).toBe("Search complete.");
+    // Nothing is running, so the live subtitle must not linger.
+    expect(task?.lastToolName).toBeNull();
+  });
+
+  it("replaces token totals instead of accumulating them", () => {
+    // Real numbers from a logged run: one subagent climbed 18,945 -> 81,724
+    // across 117 progress events. Summed, that would read as millions.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 18945),
+      progress("a1", 22490),
+      progress("a1", 81724),
+    ]);
+
+    expect(task?.totalTokens).toBe(81724);
+  });
+
+  it("keeps the last token figure when the terminal event carries no usage", () => {
+    // Only a minority of completions carry usage; treating the omission as zero
+    // would blank the number exactly when it becomes final.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 81724),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "a1", status: "completed" },
+      }),
+    ]);
+
+    expect(task?.totalTokens).toBe(81724);
+    expect(task?.status).toBe("completed");
+  });
+
+  it("surfaces a killed subagent instead of leaving it running forever", () => {
+    // A killed task never reaches a terminal notification, so without the patch
+    // it reads as still working — the bug this event was wired up to fix.
+    const [task] = deriveSubagentTasks([
+      started("a1"),
+      progress("a1", 500),
+      makeActivity({
+        kind: "task.updated",
+        createdAt: "2026-07-27T00:00:03.000Z",
+        payload: { taskId: "a1", status: "killed", detail: "user interrupted" },
+      }),
+    ]);
+
+    expect(task?.status).toBe("stopped");
+    expect(task?.error).toBe("user interrupted");
+  });
+
+  it("still builds a row for a task first seen mid-flight", () => {
+    // After a reconnect the first event a client sees may be progress, not
+    // start. Dropping those would make the panel decay over a long session.
+    const [task] = deriveSubagentTasks([progress("a1", 4200, { subagentType: "code-reviewer" })]);
+
+    expect(task?.taskId).toBe("a1");
+    expect(task?.subagentType).toBe("code-reviewer");
+    expect(task?.totalTokens).toBe(4200);
+    expect(task?.status).toBe("running");
+  });
+
+  it("sorts live subagents first and finished subagents newest-first", () => {
+    const tasks = deriveSubagentTasks([
+      started("older-done"),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: { taskId: "older-done", status: "completed" },
+      }),
+      started("live"),
+      progress("live", 100),
+      makeActivity({
+        kind: "task.started",
+        createdAt: "2026-07-27T00:00:03.000Z",
+        payload: { taskId: "newer-done" },
+      }),
+      makeActivity({
+        kind: "task.completed",
+        createdAt: "2026-07-27T00:00:04.000Z",
+        payload: { taskId: "newer-done", status: "completed" },
+      }),
+    ]);
+
+    expect(tasks.map((task) => task.taskId)).toEqual(["live", "newer-done", "older-done"]);
+  });
+
+  it("discovers a historical nested Codex CLI launch from its exact Bash item", () => {
+    const tool = makeActivity({
+      id: "codex-tool-updated",
+      kind: "tool.updated",
+      payload: {
+        providerItemId: "toolu_codex_1",
+        status: "inProgress",
+        data: {
+          toolName: "Bash",
+          input: {
+            command:
+              'nohup codex exec -C phase2-router -m gpt-5.6-sol "Consolidate the route representation." > /tmp/worker.log 2>&1 &',
+          },
+        },
+      },
+    });
+
+    const [task] = deriveSubagentTasks([tool]);
+    expect(task).toMatchObject({
+      taskId: "codex-cli:toolu_codex_1",
+      description: "Consolidate the route representation.",
+      subagentType: "Codex CLI",
+      model: "gpt-5.6-sol",
+      status: "running",
+      isBackgrounded: true,
+      toolUseId: "toolu_codex_1",
+      lastToolName: "codex exec",
+    });
+  });
+
+  it("keeps an exact linked rollout id on the Codex CLI task", () => {
+    const historySessionId = "a".repeat(32);
+    const [task] = deriveSubagentTasks([
+      started("codex-cli:toolu_codex_2", {
+        subagentType: "Codex CLI",
+        toolUseId: "toolu_codex_2",
+        historySessionId,
+      }),
+    ]);
+    expect(task?.historySessionId).toBe(historySessionId);
+  });
+
+  it("opens a uniquely recovered historical Codex rollout", () => {
+    const historySessionId = "c".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        kind: "tool.updated",
+        payload: {
+          providerItemId: "toolu_historical_codex",
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          data: {
+            toolName: "Bash",
+            input: {
+              command:
+                'cd /work/router && nohup codex exec -C . "Review the route graph." > /tmp/codex.log 2>&1 &',
+            },
+          },
+        },
+      }),
+    ]);
+    expect(task).toMatchObject({
+      status: "completed",
+      historySessionId,
+      subagentType: "Codex CLI",
+    });
+  });
+
+  it("opens a recovered historical Codex rollout joined through legacy itemId rows", () => {
+    const historySessionId = "d".repeat(32);
+    const itemId = "toolu_legacy_historical_codex";
+    const command =
+      'cd /work/router && nohup codex exec -C . "Review the route graph." ' +
+      "> /tmp/codex.log 2>&1 &";
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "legacy-codex-updated",
+        kind: "tool.updated",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          data: { toolName: "Bash", input: { command } },
+        },
+      }),
+      makeActivity({
+        id: "legacy-codex-completed",
+        kind: "tool.completed",
+        payload: {
+          itemId,
+          status: "completed",
+          data: { toolName: "Bash", input: { command } },
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      taskId: `codex-cli:${itemId}`,
+      toolUseId: itemId,
+      status: "completed",
+      historySessionId,
+      subagentType: "Codex CLI",
+    });
+  });
+
+  it("uses a recovered stopped rollout to close an older stale lifecycle row", () => {
+    const itemId = "toolu_stale_codex";
+    const historySessionId = "e".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "stale-codex-wrapper",
+        kind: "tool.updated",
+        createdAt: "2026-07-27T00:00:01.000Z",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "stopped",
+          codexCliRolloutStatusAt: "2026-07-28T00:00:01.000Z",
+          data: {
+            toolName: "Bash",
+            input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "stale-codex-started",
+        kind: "task.started",
+        // A replayed task.started after service restart is not proof that the
+        // already-terminal rollout became live again.
+        createdAt: "2026-07-29T00:00:02.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          toolUseId: itemId,
+          subagentType: "Codex CLI",
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      taskId: `codex-cli:${itemId}`,
+      status: "stopped",
+      historySessionId,
+      updatedAt: "2026-07-28T00:00:01.000Z",
+    });
+  });
+
+  it("does not let an older recovered terminal state override newer live progress", () => {
+    const itemId = "toolu_resumed_codex";
+    const historySessionId = "f".repeat(32);
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: "resumed-codex-wrapper",
+        kind: "tool.updated",
+        createdAt: "2026-07-27T00:00:01.000Z",
+        payload: {
+          itemId,
+          codexCliHistorySessionId: historySessionId,
+          codexCliRolloutStatus: "completed",
+          codexCliRolloutStatusAt: "2026-07-27T00:00:03.000Z",
+          data: {
+            toolName: "Bash",
+            input: { command: 'codex exec "Review the graph."' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "resumed-codex-started",
+        kind: "task.started",
+        createdAt: "2026-07-27T00:00:02.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          toolUseId: itemId,
+          subagentType: "Codex CLI",
+        },
+      }),
+      makeActivity({
+        id: "resumed-codex-progress",
+        kind: "task.progress",
+        createdAt: "2026-07-27T00:00:04.000Z",
+        payload: {
+          taskId: `codex-cli:${itemId}`,
+          status: "running",
+          lastToolName: "exec",
+        },
+      }),
+    ]);
+
+    expect(task).toMatchObject({
+      status: "running",
+      historySessionId,
+      updatedAt: "2026-07-27T00:00:04.000Z",
+    });
+  });
+
+  it("closes unmatched live rows once their owning provider session is fully stopped", () => {
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "unmatched-codex-started",
+          kind: "task.started",
+          createdAt: "2026-07-27T00:00:02.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_unmatched",
+            toolUseId: "toolu_unmatched",
+            subagentType: "Codex CLI",
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "stopped",
+      summary: "Owning provider session stopped.",
+      updatedAt: "2026-07-27T00:00:05.000Z",
+    });
+  });
+
+  it("keeps task activity observed after the owning session stop live", () => {
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "newer-codex-started",
+          kind: "task.started",
+          createdAt: "2026-07-27T00:00:02.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_newer",
+            toolUseId: "toolu_newer",
+            subagentType: "Codex CLI",
+          },
+        }),
+        makeActivity({
+          id: "newer-codex-progress",
+          kind: "task.progress",
+          createdAt: "2026-07-27T00:00:06.000Z",
+          payload: {
+            taskId: "codex-cli:toolu_newer",
+            status: "running",
+            lastToolName: "exec",
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "running",
+      updatedAt: "2026-07-27T00:00:06.000Z",
+    });
+  });
+
+  it("keeps an exactly linked detached rollout live when historical observation says running", () => {
+    const itemId = "toolu_observed_detached";
+    const historySessionId = "1".repeat(32);
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "observed-detached-wrapper",
+          kind: "tool.updated",
+          createdAt: "2026-07-27T00:00:01.000Z",
+          payload: {
+            itemId,
+            codexCliHistorySessionId: historySessionId,
+            codexCliRolloutStatus: "running",
+            codexCliRolloutStatusAt: "2026-07-27T00:00:04.000Z",
+            codexCliRolloutLiveness: "live",
+            data: {
+              toolName: "Bash",
+              input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+            },
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "running",
+      historySessionId,
+      isBackgrounded: true,
+    });
+  });
+
+  it("does not protect an unprobed recent rollout after its provider runtime stopped", () => {
+    const itemId = "toolu_unprobed_detached";
+    const historySessionId = "2".repeat(32);
+    const [task] = deriveSubagentTasks(
+      [
+        makeActivity({
+          id: "unprobed-detached-wrapper",
+          kind: "tool.updated",
+          createdAt: "2026-07-27T00:00:01.000Z",
+          payload: {
+            itemId,
+            codexCliHistorySessionId: historySessionId,
+            codexCliRolloutStatus: "running",
+            codexCliRolloutStatusAt: "2026-07-27T00:00:04.000Z",
+            codexCliRolloutLiveness: "unknown",
+            data: {
+              toolName: "Bash",
+              input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+            },
+          },
+        }),
+      ],
+      {
+        owningSession: {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-27T00:00:05.000Z",
+        },
+      },
+    );
+
+    expect(task).toMatchObject({
+      status: "stopped",
+      historySessionId,
+      updatedAt: "2026-07-27T00:00:05.000Z",
+    });
+  });
+
+  it("does not let a detached Bash wrapper overwrite the linked rollout terminal state", () => {
+    const toolUseId = "toolu_codex_linked";
+    const [task] = deriveSubagentTasks([
+      started(`codex-cli:${toolUseId}`, {
+        subagentType: "Codex CLI",
+        toolUseId,
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        payload: {
+          providerItemId: toolUseId,
+          status: "completed",
+          data: {
+            toolName: "Bash",
+            input: { command: 'nohup codex exec "Review the graph." > /tmp/log 2>&1 &' },
+          },
+        },
+      }),
+      makeActivity({
+        kind: "task.completed",
+        payload: {
+          taskId: `codex-cli:${toolUseId}`,
+          status: "completed",
+          historySessionId: "b".repeat(32),
+        },
+      }),
+    ]);
+    expect(task?.status).toBe("completed");
+    expect(task?.historySessionId).toBe("b".repeat(32));
+  });
+
+  it("ignores activities that are not tasks", () => {
+    expect(
+      deriveSubagentTasks([
+        makeActivity({ kind: "tool.started", payload: { toolCallId: "t-1" } }),
+        makeActivity({ kind: "turn.plan.updated", payload: { plan: [] } }),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("subagent activity partitioning", () => {
+  it("leaves a thread that never spawned an agent completely alone", () => {
+    // The fast path, and the guarantee that turning subagent forwarding on
+    // changes nothing for threads that use no agents. Identity, not a copy.
+    const activities = [
+      makeActivity({ kind: "tool.started", sequence: 1 }),
+      makeActivity({ kind: "tool.completed", sequence: 2 }),
+    ];
+
+    expect(mainThreadActivities(activities)).toBe(activities);
+  });
+
+  it("keeps subagent rows out of the thread's own transcript", () => {
+    const own = makeActivity({ id: "own", kind: "tool.started", sequence: 1 });
+    const borrowed = makeActivity({
+      id: "borrowed",
+      kind: "tool.started",
+      sequence: 2,
+      payload: { parentToolUseId: "toolu_01" },
+    });
+
+    expect(mainThreadActivities([own, borrowed]).map((a) => a.id)).toEqual(["own"]);
+  });
+
+  it("keeps an attached-agent approval actionable while excluding it from parent prose", () => {
+    const approval = makeActivity({
+      id: "child-approval",
+      kind: "approval.requested",
+      payload: {
+        parentToolUseId: "agent:pi-child",
+        requestId: "req-child",
+        requestType: "command_execution_approval",
+        detail: "bash: sleep 8",
+      },
+    });
+
+    expect(mainThreadActivities([approval])).toEqual([]);
+    expect(derivePendingApprovals([approval])).toMatchObject([
+      {
+        requestId: "req-child",
+        requestKind: "command",
+        detail: "bash: sleep 8",
+      },
+    ]);
+  });
+
+  it("gives each agent only its own rows", () => {
+    const first = makeActivity({
+      id: "a1",
+      kind: "agent.message",
+      payload: { parentToolUseId: "toolu_01", detail: "one" },
+    });
+    const second = makeActivity({
+      id: "b1",
+      kind: "agent.message",
+      payload: { parentToolUseId: "toolu_02", detail: "two" },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.started" });
+
+    expect(agentActivities([first, second, own], "toolu_01").map((a) => a.id)).toEqual(["a1"]);
+    expect(agentActivities([first, second, own], "toolu_02").map((a) => a.id)).toEqual(["b1"]);
+  });
+
+  it("folds an attached agent message from running to its terminal output", () => {
+    const startedMessage = makeActivity({
+      id: "message-started",
+      kind: "agent.message",
+      sequence: 1,
+      payload: {
+        itemId: "pi-message-1",
+        parentToolUseId: "toolu_01",
+        status: "inProgress",
+        title: "Pi response",
+      },
+    });
+    const completedMessage = makeActivity({
+      id: "message-completed",
+      kind: "agent.message",
+      sequence: 2,
+      payload: {
+        itemId: "pi-message-1",
+        parentToolUseId: "toolu_01",
+        status: "completed",
+        title: "Pi response",
+        detail: "Child result",
+        output: "Child result",
+      },
+    });
+
+    expect(deriveWorkLogEntries([startedMessage, completedMessage])).toMatchObject([
+      {
+        id: "message-started",
+        providerItemId: "pi-message-1",
+        toolLifecycleStatus: "completed",
+        output: "Child result",
+      },
+    ]);
+  });
+
+  it("moves all lifecycle rows for a detected Codex Bash item into its agent view", () => {
+    const startedTool = makeActivity({
+      id: "codex-started",
+      kind: "tool.started",
+      payload: { providerItemId: "toolu_codex" },
+    });
+    const updatedTool = makeActivity({
+      id: "codex-updated",
+      kind: "tool.updated",
+      payload: {
+        providerItemId: "toolu_codex",
+        data: {
+          toolName: "Bash",
+          input: { command: 'codex exec "Review the graph."' },
+        },
+      },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.updated" });
+
+    expect(mainThreadActivities([startedTool, updatedTool, own]).map((row) => row.id)).toEqual([
+      "own",
+    ]);
+    expect(
+      agentActivities([startedTool, updatedTool, own], "toolu_codex").map((row) => row.id),
+    ).toEqual(["codex-started", "codex-updated"]);
+  });
+
+  it("moves legacy itemId lifecycle rows into the Codex agent view", () => {
+    const itemId = "toolu_legacy_codex";
+    const startedTool = makeActivity({
+      id: "legacy-codex-started",
+      kind: "tool.started",
+      payload: { itemId },
+    });
+    const updatedTool = makeActivity({
+      id: "legacy-codex-updated",
+      kind: "tool.updated",
+      payload: {
+        itemId,
+        data: {
+          toolName: "Bash",
+          input: { command: 'codex exec "Review the graph."' },
+        },
+      },
+    });
+    const completedTool = makeActivity({
+      id: "legacy-codex-completed",
+      kind: "tool.completed",
+      payload: { itemId },
+    });
+    const own = makeActivity({ id: "own", kind: "tool.updated" });
+
+    expect(
+      mainThreadActivities([startedTool, updatedTool, completedTool, own]).map((row) => row.id),
+    ).toEqual(["own"]);
+    expect(
+      agentActivities([startedTool, updatedTool, completedTool, own], itemId).map((row) => row.id),
+    ).toEqual(["legacy-codex-started", "legacy-codex-updated", "legacy-codex-completed"]);
+  });
+
+  it("returns nothing for an agent whose tool-use id was never reported", () => {
+    // An honest empty view beats showing someone else's rows under this
+    // agent's name — which is what a null key matching null payloads would do.
+    const orphan = makeActivity({ id: "own", kind: "tool.started" });
+
+    expect(agentActivities([orphan], null)).toEqual([]);
+  });
+
+  it("treats a blank parentToolUseId as main-thread work", () => {
+    const blank = makeActivity({
+      id: "blank",
+      kind: "tool.started",
+      payload: { parentToolUseId: "   " },
+    });
+
+    expect(mainThreadActivities([blank]).map((a) => a.id)).toEqual(["blank"]);
+    expect(activityParentToolUseId(blank)).toBeNull();
   });
 });

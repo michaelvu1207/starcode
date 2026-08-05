@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DiscoveredLocalServer,
   PreviewEvent,
+  PreviewOpenInput,
   PreviewNavStatus,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
@@ -18,12 +19,13 @@ import {
 } from "./previewAutomation.ts";
 
 const decodePreviewEvent = Schema.decodeUnknownSync(PreviewEvent);
+const decodePreviewOpenInput = Schema.decodeUnknownSync(PreviewOpenInput);
 const decodeSnapshot = Schema.decodeUnknownSync(PreviewSessionSnapshot);
 const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
 const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
 const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
 const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
-const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
+const decodeAutomationOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
@@ -82,6 +84,44 @@ describe("PreviewSessionSnapshot", () => {
     expect(snapshot.tabId).toBe("preview-thread-1");
     expect(snapshot.navStatus._tag).toBe("Success");
   });
+
+  it("round-trips a logical environment-port target", () => {
+    const snapshot = decodeSnapshot({
+      threadId: "thread-1",
+      tabId: "preview-thread-1",
+      target: { kind: "environment-port", port: 5173, path: "/app" },
+      navStatus: {
+        _tag: "Loading",
+        url: "http://localhost:5173/app",
+        title: "http://localhost:5173/app",
+      },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(snapshot.target).toEqual({ kind: "environment-port", port: 5173, path: "/app" });
+  });
+});
+
+describe("PreviewOpenInput", () => {
+  it("accepts either a URL or an environment-port target, but not both", () => {
+    expect(
+      decodePreviewOpenInput({ threadId: "thread-1", url: "http://localhost:5173" }),
+    ).toBeDefined();
+    expect(
+      decodePreviewOpenInput({
+        threadId: "thread-1",
+        target: { kind: "environment-port", port: 5173 },
+      }),
+    ).toBeDefined();
+    expect(() =>
+      decodePreviewOpenInput({
+        threadId: "thread-1",
+        url: "http://localhost:5173",
+        target: { kind: "environment-port", port: 5173 },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("PreviewViewportSetting", () => {
@@ -136,11 +176,13 @@ describe("preview automation tab targeting", () => {
       tabId: "tab-app",
       mode: "fill",
     });
-    expect(decodeOpenInput({ tabId: "tab-app", reuseExistingTab: true })).toMatchObject({
+    expect(decodeAutomationOpenInput({ tabId: "tab-app", reuseExistingTab: true })).toMatchObject({
       tabId: "tab-app",
       reuseExistingTab: true,
     });
-    expect(() => decodeOpenInput({ tabId: "tab-app", reuseExistingTab: false })).toThrow();
+    expect(() =>
+      decodeAutomationOpenInput({ tabId: "tab-app", reuseExistingTab: false }),
+    ).toThrow();
   });
 });
 

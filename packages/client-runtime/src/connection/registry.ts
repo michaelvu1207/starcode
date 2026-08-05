@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -14,6 +14,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  BearerConnectionRegistration,
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
   type PlatformConnectionRegistration,
@@ -30,10 +33,12 @@ import type {
   NetworkStatus,
   SupervisorConnectionState,
 } from "./model.ts";
+import { BearerConnectionTarget } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import * as Fleet from "./fleet.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
@@ -59,12 +64,24 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedErrorClass<Pla
   }
 }
 
+export class FleetEnvironmentRemovalError extends Schema.TaggedErrorClass<FleetEnvironmentRemovalError>()(
+  "FleetEnvironmentRemovalError",
+  {
+    environmentId: EnvironmentId,
+  },
+) {
+  override get message(): string {
+    return `Fleet-managed environment ${this.environmentId} cannot be removed directly.`;
+  }
+}
+
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
     readonly entries: SubscriptionRef.SubscriptionRef<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
+    readonly fleetEnvironmentIds: SubscriptionRef.SubscriptionRef<ReadonlySet<EnvironmentId>>;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
     readonly register: (
@@ -74,6 +91,13 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
+    readonly reconcileFleet: (
+      anchorEnvironmentId: EnvironmentId,
+      snapshot: Fleet.FleetConnectionSnapshot,
+    ) => Effect.Effect<void>;
+    readonly reconcileFleetAnchors: (
+      anchorEnvironmentIds: ReadonlySet<EnvironmentId>,
+    ) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<
@@ -82,12 +106,14 @@ export class EnvironmentRegistry extends Context.Service<
       | ConnectionAttemptError
       | EnvironmentNotRegisteredError
       | PlatformEnvironmentRemovalError
+      | FleetEnvironmentRemovalError
     >;
     readonly removeRelayEnvironments: () => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
       | ConnectionAttemptError
       | PlatformEnvironmentRemovalError
+      | FleetEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly state: (
@@ -117,7 +143,7 @@ export class EnvironmentRegistry extends Context.Service<
       stream: Stream.Stream<A, E, R>,
     ) => Stream.Stream<A, E, Exclude<R, EnvironmentSupervisor.EnvironmentSupervisor>>;
   }
->()("@t3tools/client-runtime/connection/registry/EnvironmentRegistry") {}
+>()("@starcode/client-runtime/connection/registry/EnvironmentRegistry") {}
 
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
@@ -136,6 +162,7 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const fleetCredentials = yield* Fleet.FleetConnectionCredentialStore;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
@@ -160,6 +187,11 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  const fleetEnvironmentIds = yield* SubscriptionRef.make<ReadonlySet<EnvironmentId>>(new Set());
+  const fleetSnapshotsByAnchor = yield* Ref.make<
+    ReadonlyMap<EnvironmentId, Fleet.FleetConnectionSnapshot>
+  >(new Map());
+  const fleetReconcileGuard = yield* Semaphore.make(1);
   const persistedTargetsByEnvironment = yield* Ref.make<
     ReadonlyMap<EnvironmentId, ConnectionTarget>
   >(new Map(persistedTargets.map((target) => [target.environmentId, target])));
@@ -386,6 +418,169 @@ export const make = Effect.gen(function* () {
     yield* createServiceScope(entry);
   });
 
+  const fleetDesiredNodes = Effect.fn("EnvironmentRegistry.fleetDesiredNodes")(function* () {
+    const snapshots = yield* Ref.get(fleetSnapshotsByAnchor);
+    const desired = new Map<EnvironmentId, Fleet.FleetNodeConnectionDescriptor>();
+    const orderedSnapshots = [...snapshots.entries()].sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    for (const [anchorEnvironmentId, snapshot] of orderedSnapshots) {
+      const nodes = [...snapshot.nodes].sort((left, right) =>
+        left.environmentId.localeCompare(right.environmentId),
+      );
+      for (const node of nodes) {
+        if (node.environmentId !== anchorEnvironmentId && !desired.has(node.environmentId)) {
+          desired.set(node.environmentId, node);
+        }
+      }
+    }
+    return desired;
+  });
+
+  const removeFleetEnvironmentLocked = Effect.fn(
+    "EnvironmentRegistry.removeFleetEnvironmentLocked",
+  )(function* (environmentId: EnvironmentId) {
+    const current = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    yield* closeServiceScope(environmentId);
+    yield* SubscriptionRef.update(entries, (catalog) => {
+      const next = new Map(catalog);
+      next.delete(environmentId);
+      return next;
+    });
+    yield* SubscriptionRef.update(fleetEnvironmentIds, (currentIds) => {
+      const next = new Set(currentIds);
+      next.delete(environmentId);
+      return next;
+    });
+    if (current?.target._tag === "BearerConnectionTarget") {
+      yield* fleetCredentials.remove(current.target.connectionId);
+    }
+    yield* Effect.all(
+      [
+        cache.clear(environmentId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not clear cached fleet environment data after removal.", {
+              environmentId,
+              error,
+            }),
+          ),
+        ),
+        ownedDataCleanup.clear(environmentId),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+
+  const installFleetEnvironmentLocked = Effect.fn(
+    "EnvironmentRegistry.installFleetEnvironmentLocked",
+  )(function* (node: Fleet.FleetNodeConnectionDescriptor) {
+    const connectionId = Fleet.fleetConnectionId(node.environmentId);
+    const previousCredential = yield* fleetCredentials.get(connectionId);
+    const registration = new BearerConnectionRegistration({
+      target: new BearerConnectionTarget({
+        environmentId: node.environmentId,
+        label: node.label,
+        connectionId,
+      }),
+      profile: new BearerConnectionProfile({
+        connectionId,
+        environmentId: node.environmentId,
+        label: node.label,
+        httpBaseUrl: node.endpoint.httpBaseUrl,
+        wsBaseUrl: node.endpoint.wsBaseUrl,
+      }),
+      credential: new BearerConnectionCredential({
+        token: node.credential.bearerToken,
+      }),
+    });
+    yield* fleetCredentials.put(connectionId, registration.credential);
+    const credentialChanged =
+      Option.isNone(previousCredential) ||
+      previousCredential.value.token !== registration.credential.token;
+    yield* SubscriptionRef.update(fleetEnvironmentIds, (currentIds) => {
+      const next = new Set(currentIds);
+      next.add(node.environmentId);
+      return next;
+    });
+    yield* installEntryLocked(connectionRegistrationCatalogEntry(registration), {
+      retainEquivalentRuntime: !credentialChanged,
+    });
+  });
+
+  const applyFleetDesired = fleetReconcileGuard.withPermits(1)(
+    Effect.gen(function* () {
+      const desired = yield* fleetDesiredNodes();
+      const platformIds = yield* Ref.get(platformEnvironmentIds);
+      const persistedIds = new Set((yield* Ref.get(persistedTargetsByEnvironment)).keys());
+      const currentFleetIds = yield* SubscriptionRef.get(fleetEnvironmentIds);
+
+      for (const environmentId of currentFleetIds) {
+        if (
+          !desired.has(environmentId) ||
+          platformIds.has(environmentId) ||
+          persistedIds.has(environmentId)
+        ) {
+          yield* withLeaseLock(environmentId, removeFleetEnvironmentLocked(environmentId));
+        }
+      }
+
+      for (const [environmentId, node] of desired) {
+        if (platformIds.has(environmentId) || persistedIds.has(environmentId)) {
+          continue;
+        }
+        yield* withLeaseLock(environmentId, installFleetEnvironmentLocked(node));
+      }
+    }).pipe(Effect.withSpan("EnvironmentRegistry.applyFleetDesired")),
+  );
+
+  const relinquishFleetEnvironmentLocked = Effect.fn(
+    "EnvironmentRegistry.relinquishFleetEnvironmentLocked",
+  )(function* (environmentId: EnvironmentId) {
+    if (!(yield* SubscriptionRef.get(fleetEnvironmentIds)).has(environmentId)) {
+      return;
+    }
+    const current = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    yield* SubscriptionRef.update(fleetEnvironmentIds, (currentIds) => {
+      const next = new Set(currentIds);
+      next.delete(environmentId);
+      return next;
+    });
+    if (current?.target._tag === "BearerConnectionTarget") {
+      yield* fleetCredentials.remove(current.target.connectionId);
+    }
+  });
+
+  const reconcileFleet = Effect.fn("EnvironmentRegistry.reconcileFleet")(function* (
+    anchorEnvironmentId: EnvironmentId,
+    snapshot: Fleet.FleetConnectionSnapshot,
+  ) {
+    yield* Ref.update(fleetSnapshotsByAnchor, (current) => {
+      const next = new Map(current);
+      next.set(anchorEnvironmentId, snapshot);
+      return next;
+    });
+    yield* applyFleetDesired;
+  });
+
+  const reconcileFleetAnchors = Effect.fn("EnvironmentRegistry.reconcileFleetAnchors")(function* (
+    anchorEnvironmentIds: ReadonlySet<EnvironmentId>,
+  ) {
+    const changed = yield* Ref.modify(fleetSnapshotsByAnchor, (current) => {
+      const next = new Map(current);
+      let didChange = false;
+      for (const environmentId of current.keys()) {
+        if (!anchorEnvironmentIds.has(environmentId)) {
+          next.delete(environmentId);
+          didChange = true;
+        }
+      }
+      return [didChange, didChange ? next : current] as const;
+    });
+    if (changed) {
+      yield* applyFleetDesired;
+    }
+  });
+
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
   ) {
@@ -397,6 +592,7 @@ export const make = Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return;
         }
+        yield* relinquishFleetEnvironmentLocked(environmentId);
         yield* registrations.register(registration);
         yield* Ref.update(persistedTargetsByEnvironment, (current) => {
           const next = new Map(current);
@@ -420,6 +616,7 @@ export const make = Effect.gen(function* () {
             next.add(target.environmentId);
             return next;
           });
+          yield* relinquishFleetEnvironmentLocked(target.environmentId);
 
           // Secondary desktop-local backends (e.g. a parallel WSL backend) live
           // on their own loopback origin, so they authenticate with a bearer
@@ -539,14 +736,20 @@ export const make = Effect.gen(function* () {
       { discard: true },
     );
     yield* Effect.forEach(platformRegistrations, installPlatformRegistration, { discard: true });
+    yield* applyFleetDesired;
   });
 
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
-    return yield* withLeaseLock(
+    yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return yield* new PlatformEnvironmentRemovalError({
+            environmentId,
+          });
+        }
+        if ((yield* SubscriptionRef.get(fleetEnvironmentIds)).has(environmentId)) {
+          return yield* new FleetEnvironmentRemovalError({
             environmentId,
           });
         }
@@ -600,6 +803,7 @@ export const make = Effect.gen(function* () {
         }
       }),
     );
+    yield* applyFleetDesired;
   });
 
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
@@ -643,13 +847,27 @@ export const make = Effect.gen(function* () {
     );
 
   yield* Effect.addFinalizer(() =>
-    SubscriptionRef.get(serviceScopes).pipe(
-      Effect.flatMap((current) =>
-        Effect.forEach(current.values(), (lease) => Scope.close(lease.scope, Exit.void), {
-          concurrency: "unbounded",
-          discard: true,
-        }),
-      ),
+    Effect.all(
+      [
+        SubscriptionRef.get(serviceScopes).pipe(
+          Effect.flatMap((current) =>
+            Effect.forEach(current.values(), (lease) => Scope.close(lease.scope, Exit.void), {
+              concurrency: "unbounded",
+              discard: true,
+            }),
+          ),
+        ),
+        SubscriptionRef.get(fleetEnvironmentIds).pipe(
+          Effect.flatMap((environmentIds) =>
+            Effect.forEach(
+              environmentIds,
+              (environmentId) => fleetCredentials.remove(Fleet.fleetConnectionId(environmentId)),
+              { concurrency: "unbounded", discard: true },
+            ),
+          ),
+        ),
+      ],
+      { concurrency: "unbounded", discard: true },
     ),
   );
   yield* connectivity.changes.pipe(
@@ -659,11 +877,14 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentRegistry.of({
     entries,
+    fleetEnvironmentIds,
     networkStatus,
     start,
     register,
     registerPlatform,
     reconcilePlatform,
+    reconcileFleet,
+    reconcileFleetAnchors,
     remove,
     removeRelayEnvironments,
     retryNow,

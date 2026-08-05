@@ -9,11 +9,12 @@
 import {
   ChatAttachment,
   MessageId,
+  OrchestrationMessageAuthor,
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
   IsoDateTime,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -25,6 +26,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   messageId: MessageId,
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
+  authoredBy: Schema.optional(OrchestrationMessageAuthor),
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -92,4 +94,4 @@ export interface ProjectionThreadMessageRepositoryShape {
 export class ProjectionThreadMessageRepository extends Context.Service<
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRepositoryShape
->()("t3/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}
+>()("starcode/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}

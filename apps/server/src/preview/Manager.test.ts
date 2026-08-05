@@ -1,6 +1,6 @@
 import { it } from "@effect/vitest";
-import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
-import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
+import { type PreviewEvent, ThreadId } from "@starcode/contracts";
+import { PreviewUrlNormalizationError } from "@starcode/shared/preview";
 import { Effect, PubSub } from "effect";
 import { expect } from "vite-plus/test";
 
@@ -64,6 +64,25 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const manager = yield* PreviewManager.PreviewManager;
       const snapshot = yield* manager.open({ threadId });
       expect(snapshot.navStatus._tag).toBe("Idle");
+    }),
+  );
+
+  it.effect("preserves an environment-port target as a logical localhost session", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const target = {
+        kind: "environment-port" as const,
+        port: 5173,
+        protocol: "http" as const,
+        path: "/dashboard?mode=test",
+      };
+      const snapshot = yield* manager.open({ threadId, target });
+      expect(snapshot.target).toEqual(target);
+      expect(snapshot.navStatus).toMatchObject({
+        _tag: "Loading",
+        url: "http://localhost:5173/dashboard?mode=test",
+      });
     }),
   );
 

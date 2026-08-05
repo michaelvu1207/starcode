@@ -31,7 +31,7 @@ export function SettingsSection({
   return (
     <section {...sectionProps} className={cn("space-y-3", className)}>
       <div className="flex min-h-8 items-center justify-between gap-4 px-3 sm:px-4">
-        <h2 className="flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
+        <h2 className="starcode-section-head flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
           {icon}
           {title}
         </h2>
@@ -115,10 +115,16 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
 export function SettingsPageContainer({
   children,
   className,
+  embedded = false,
 }: {
   children: ReactNode;
   className?: string;
+  embedded?: boolean;
 }) {
+  if (embedded) {
+    return <div className={cn("flex w-full flex-col gap-4", className)}>{children}</div>;
+  }
+
   return (
     <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
       <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>

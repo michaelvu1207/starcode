@@ -1,7 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import ChatView from "../components/ChatView";
+import { SplitContainer } from "../components/split/SplitContainer";
+import { ArchivedThreadPrompt } from "../components/chat/ArchivedThreadPrompt";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
@@ -14,6 +16,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
@@ -26,6 +29,22 @@ function ChatThreadRouteView() {
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
+  const archivedThreads = useArchivedThreadSnapshots(
+    threadRef === null ? [] : [threadRef.environmentId],
+  );
+  const archivedThread =
+    threadRef === null
+      ? null
+      : (archivedThreads.snapshots
+          .find((entry) => entry.environmentId === threadRef.environmentId)
+          ?.snapshot.threads.find((thread) => thread.id === threadRef.threadId) ?? null);
+  const retainedArchivedThreadRef = useRef(archivedThread);
+  if (archivedThread !== null) {
+    retainedArchivedThreadRef.current = archivedThread;
+  } else if (serverThreadShell?.archivedAt === null) {
+    retainedArchivedThreadRef.current = null;
+  }
+  const retainedArchivedThread = retainedArchivedThreadRef.current;
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
@@ -56,10 +75,23 @@ function ChatThreadRouteView() {
       return;
     }
 
-    if (renderState === "missing" && environmentHasAnyThreads) {
+    if (
+      renderState === "missing" &&
+      retainedArchivedThread === null &&
+      !archivedThreads.isLoading &&
+      environmentHasAnyThreads
+    ) {
       void navigate({ to: "/", replace: true });
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, threadRef]);
+  }, [
+    archivedThreads.isLoading,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    renderState,
+    retainedArchivedThread,
+    threadRef,
+  ]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread) {
@@ -68,17 +100,29 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || renderState !== "ready") {
+  if (!threadRef) {
     return null;
   }
 
+  if (retainedArchivedThread !== null && serverThreadShell?.archivedAt !== null) {
+    return (
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <ArchivedThreadPrompt threadRef={threadRef} title={retainedArchivedThread.title} />
+      </SidebarInset>
+    );
+  }
+
+  if (renderState !== "ready") return null;
+
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        environmentId={threadRef.environmentId}
-        threadId={threadRef.threadId}
-        routeKind="server"
-      />
+      <SplitContainer>
+        <ChatView
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          routeKind="server"
+        />
+      </SplitContainer>
     </SidebarInset>
   );
 }

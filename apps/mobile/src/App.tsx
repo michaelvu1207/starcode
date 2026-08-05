@@ -34,7 +34,17 @@ void SplashScreen.preventAutoHideAsync().catch(() => {
 });
 
 const appLinking = {
-  prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
+  // Both brands: every scheme registered in app.config.ts, so a link minted
+  // before the rename still navigates instead of hitting the NotFound route.
+  prefixes: [
+    Linking.createURL("/"),
+    "starcode://",
+    "starcode-dev://",
+    "starcode-preview://",
+    "t3code://",
+    "t3code-dev://",
+    "t3code-preview://",
+  ],
   // The Expo dev client launches the app via
   // <scheme>://expo-development-client/?url=<packager> — that URL addresses
   // the launcher, not app navigation. Without this filter it falls through

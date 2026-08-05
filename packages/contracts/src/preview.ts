@@ -14,6 +14,36 @@ import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
 const Title = Schema.String.check(Schema.isMaxLength(512));
 
+export const BrowserNavigationTarget = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("url").annotate({
+      description: "Selects direct URL navigation.",
+    }),
+    url: Url.annotate({
+      description: "Direct website URL.",
+    }),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("environment-port").annotate({
+      description: "Selects a dev-server port relative to the current execution environment.",
+    }),
+    port: Schema.Int.check(Schema.isGreaterThan(0))
+      .check(Schema.isLessThan(65_536))
+      .annotate({ description: "Dev-server TCP port inside the current environment." }),
+    protocol: Schema.optional(
+      Schema.Literals(["http", "https"]).annotate({
+        description: "Dev-server protocol. Defaults to http.",
+      }),
+    ),
+    path: Schema.optional(
+      Schema.String.annotate({
+        description: "Optional path, query, and fragment, for example /settings?tab=account.",
+      }),
+    ),
+  }),
+]);
+export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
+
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewTabId = typeof PreviewTabId.Type;
 
@@ -138,6 +168,11 @@ export const PreviewSessionSnapshot = Schema.Struct({
   canGoForward: Schema.Boolean,
   /** Missing snapshots from older servers are treated as fill-panel mode. */
   viewport: Schema.optional(PreviewViewportSetting),
+  /**
+   * Canonical environment-relative navigation target. Concrete localhost
+   * bridge URLs are client-specific and must never become the shared target.
+   */
+  target: Schema.optional(BrowserNavigationTarget),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -146,15 +181,29 @@ export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
   /** Omit to create an empty (Idle) tab the user can type into. */
   url: Schema.optional(Url),
-});
+  target: Schema.optional(BrowserNavigationTarget),
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      Number(input.url !== undefined) + Number(input.target !== undefined) <= 1 ||
+      "Provide at most one of url or target.",
+  ),
+);
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
 export const PreviewNavigateInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
-  url: Url,
+  url: Schema.optional(Url),
+  target: Schema.optional(BrowserNavigationTarget),
   resolvedTitle: Schema.optional(Title),
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      Number(input.url !== undefined) + Number(input.target !== undefined) === 1 ||
+      "Provide exactly one of url or target.",
+  ),
+);
 export type PreviewNavigateInput = typeof PreviewNavigateInput.Type;
 
 export const PreviewReportStatusInput = Schema.Struct({
@@ -267,6 +316,30 @@ export const DiscoveredLocalServerList = Schema.Struct({
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
 
+export const PreviewPortBridgeTicketInput = Schema.Struct({
+  threadId: ThreadId,
+  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+});
+export type PreviewPortBridgeTicketInput = typeof PreviewPortBridgeTicketInput.Type;
+
+export const PreviewPortBridgeTicket = Schema.Struct({
+  ticket: TrimmedNonEmptyString,
+  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+  expiresAt: Schema.String,
+});
+export type PreviewPortBridgeTicket = typeof PreviewPortBridgeTicket.Type;
+
+export class PreviewPortUnavailableError extends Schema.TaggedErrorClass<PreviewPortUnavailableError>()(
+  "PreviewPortUnavailableError",
+  {
+    port: Schema.Int,
+  },
+) {
+  override get message() {
+    return `Preview port ${this.port} is not currently listening.`;
+  }
+}
+
 export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",
   {
@@ -294,5 +367,9 @@ export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInval
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewPortUnavailableError,
+]);
 export type PreviewError = typeof PreviewError.Type;

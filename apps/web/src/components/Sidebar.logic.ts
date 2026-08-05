@@ -1,6 +1,11 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import {
+  type AgentRun,
+  type ContextMenuItem,
+  type ThreadId,
+  isListableThread,
+} from "@starcode/contracts";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@starcode/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -15,9 +20,6 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-// Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 type SidebarProject = {
   id: string;
   title: string;
@@ -33,6 +35,7 @@ type ScopedSidebarThread = ThreadSortInput & {
   environmentId: string;
   projectId: string;
   archivedAt: string | null;
+  sideOfThreadId?: string | null | undefined;
 };
 
 type LogicalSidebarProject = SidebarProject & {
@@ -82,9 +85,8 @@ export async function archiveSelectedThreadEntries<
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
-}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+}): readonly ContextMenuItem<"archive" | "delete">[] {
   return [
-    { id: "mark-unread", label: `Mark unread (${input.count})` },
     {
       id: "archive",
       label: `Archive (${input.count})`,
@@ -124,6 +126,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "session"
+  | "goalSummary"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -221,6 +224,7 @@ export function useThreadJumpHintVisibility(): {
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+  if (thread.goalSummary?.status === "active") return false;
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
@@ -293,13 +297,6 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   return renderedProjects.flatMap((renderedProject) =>
     renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
   );
-}
-
-export function getSidebarThreadIdsToPrewarm<TThreadId>(
-  visibleThreadIds: readonly TThreadId[],
-  limit = SIDEBAR_THREAD_PREWARM_LIMIT,
-): TThreadId[] {
-  return visibleThreadIds.slice(0, Math.max(0, limit));
 }
 
 export function resolveAdjacentThreadId<T>(input: {
@@ -401,11 +398,11 @@ export function resolveThreadRowClassName(input: {
 // whether it finished, asked a question, or proposed a plan.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
-export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type SidebarV2Status = "approval" | "input" | "working" | "agents" | "failed" | "ready";
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "subagents" | "goalSummary"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -420,6 +417,24 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  if (
+    thread.goalSummary?.status === "active" &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
+    return "working";
+  }
+  // The main agent has stopped but work is still happening: a backgrounded
+  // subagent outlives the turn that spawned it, so the session goes ready
+  // while the agent keeps running. Without this the row reads "done" — the
+  // single most misleading thing the sidebar can say, because it is idle-
+  // looking and busy at the same time.
+  //
+  // Ranked below `working` rather than above it: when the main agent is also
+  // running, "working" already says the thread is busy, and the child rows say
+  // who. It only wins over `ready`.
+  if ((thread.subagents?.length ?? 0) > 0) {
+    return "agents";
   }
   return "ready";
 }
@@ -458,7 +473,7 @@ export function firstValidTimestamp(
 }
 
 // v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
+// reorders the list — a row holds its position for its whole life, so
 // the screen only moves at lifecycle transitions. Status (including pending
 // approval) is carried by each card's edge strip, not by position.
 export function sortThreadsForSidebarV2<
@@ -468,51 +483,6 @@ export function sortThreadsForSidebarV2<
     (left, right) =>
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
-  );
-}
-
-type SettledTimestampInput = Pick<
-  SidebarThreadSummary,
-  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
->;
-
-/** The timestamp a settled row sorts and labels by: settledAt when stamped
-    (explicit settles), otherwise last activity — the same candidates
-    threadLastActivityAt feeds the auto-settle window (user message plus all
-    latestTurn stamps), so a thread whose last activity was a turn completion
-    doesn't sort by an older message time. updatedAt is the final net. */
-export function resolveSettledTimestamp(thread: SettledTimestampInput): string | null {
-  const settledAt = firstValidTimestamp(thread.settledAt);
-  if (settledAt !== null) return settledAt;
-  let latest: string | null = null;
-  let latestMs = Number.NEGATIVE_INFINITY;
-  for (const candidate of [
-    thread.latestUserMessageAt,
-    thread.latestTurn?.requestedAt,
-    thread.latestTurn?.startedAt,
-    thread.latestTurn?.completedAt,
-  ]) {
-    if (candidate == null) continue;
-    const parsed = Date.parse(candidate);
-    if (!Number.isNaN(parsed) && parsed > latestMs) {
-      latest = candidate;
-      latestMs = parsed;
-    }
-  }
-  return latest ?? firstValidTimestamp(thread.updatedAt);
-}
-
-// Settled rows are history, so they order by when the work ENDED, not when
-// the thread was created or last touched.
-export function sortSettledThreadsForSidebarV2<
-  T extends SettledTimestampInput & { readonly id: string },
->(threads: readonly T[]): T[] {
-  const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledTimestamp(thread);
-    return timestamp === null ? 0 : Date.parse(timestamp);
-  };
-  return [...threads].toSorted(
-    (left, right) => timestampMs(right) - timestampMs(left) || left.id.localeCompare(right.id),
   );
 }
 
@@ -573,6 +543,18 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "starting") {
     return {
       label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (
+    thread.goalSummary?.status === "active" &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
+    return {
+      label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
@@ -775,7 +757,7 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (!isListableThread(thread)) continue;
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -812,7 +794,7 @@ export function sortScopedProjectsForSidebar<
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
+    if (!isListableThread(thread)) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);
@@ -829,5 +811,65 @@ export function sortScopedProjectsForSidebar<
       left.title.localeCompare(right.title) ||
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
+  );
+}
+
+/**
+ * Child agent rows are context for the task currently shown in the main pane.
+ * Keeping them collapsed for every other task prevents the sidebar from
+ * becoming a persistent tree of background work.
+ */
+export function shouldShowSidebarSubagentRows(
+  isThreadActive: boolean,
+  liveSubagentCount: number,
+  finishedSubagentCount = 0,
+): boolean {
+  return isThreadActive && liveSubagentCount + finishedSubagentCount > 0;
+}
+
+/** Agent runs are already classified by the server; React only scopes them. */
+export function selectOwnedSidebarAgentRuns(
+  agentRuns: ReadonlyArray<AgentRun>,
+  parentThreadId: ThreadId,
+): ReadonlyArray<AgentRun> {
+  return agentRuns.filter((run) => run.parentThreadId === parentThreadId);
+}
+
+export function selectFinishedSidebarAgentRuns(
+  agentRuns: ReadonlyArray<AgentRun>,
+): ReadonlyArray<AgentRun> {
+  return agentRuns.filter(
+    (run) => run.status === "completed" || run.status === "failed" || run.status === "stopped",
+  );
+}
+
+export function shouldShowFinishedSubagentDisclosure(
+  isThreadActive: boolean,
+  finishedSubagentCount: number,
+): boolean {
+  return isThreadActive && finishedSubagentCount > 0;
+}
+
+export function shouldShowFinishedSubagentRows(
+  isThreadActive: boolean,
+  finishedSubagentCount: number,
+  isExpanded: boolean,
+): boolean {
+  return shouldShowFinishedSubagentDisclosure(isThreadActive, finishedSubagentCount) && isExpanded;
+}
+
+/**
+ * An already-selected agent row is a route back to its parent transcript.
+ * Every other click selects that agent in the normal thread viewer.
+ */
+export function shouldClearSelectedSidebarAgent(
+  isThreadActive: boolean,
+  selected: Pick<AgentRun, "provider" | "agentRunId"> | null,
+  clicked: Pick<AgentRun, "provider" | "agentRunId">,
+): boolean {
+  return (
+    isThreadActive &&
+    selected?.provider === clicked.provider &&
+    selected.agentRunId === clicked.agentRunId
   );
 }

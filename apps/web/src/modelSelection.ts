@@ -6,14 +6,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   createModelSelection,
   normalizeCustomModelSlug,
   resolveSelectableModel,
-} from "@t3tools/shared/model";
+} from "@starcode/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { UnifiedSettings } from "@starcode/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import {
@@ -22,12 +22,17 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  isLaunchableProviderDriver,
+  type ProviderInstanceEntry,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("pi");
 
 /**
  * Resolve the custom-model list for a given instance, preferring the
@@ -62,7 +67,7 @@ function readInstanceCustomModels(
   if (instanceId !== defaultInstanceId) {
     return [];
   }
-  const legacyProviders = settings.providers as Record<
+  const legacyProviders = settings.providers as unknown as Record<
     string,
     { readonly customModels: ReadonlyArray<string> } | undefined
   >;
@@ -285,10 +290,22 @@ export function resolveAppModelSelectionState(
   };
   const entries = deriveProviderInstanceEntries(providers);
   const selectedEntry = entries.find(
-    (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
+    (entry) =>
+      entry.instanceId === selection.instanceId &&
+      isLaunchableProviderDriver(entry.driverKind) &&
+      entry.selectable &&
+      entry.enabled &&
+      entry.isAvailable,
   );
   const entry =
-    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
+    selectedEntry ??
+    entries.find(
+      (candidate) =>
+        isLaunchableProviderDriver(candidate.driverKind) &&
+        candidate.selectable &&
+        candidate.enabled &&
+        candidate.isAvailable,
+    );
   if (entry) {
     // When the instance changed due to fallback (e.g. selected instance was disabled),
     // don't carry over the old instance's model — use the fallback instance's default.
@@ -311,19 +328,18 @@ export function resolveAppModelSelectionState(
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
   }
 
-  const provider = resolveSelectableProvider(providers, null);
-  const keptSelectedProvider = false;
-
-  // When the provider changed due to fallback (e.g. selected provider was disabled),
-  // don't carry over the old provider's model — use the fallback provider's default.
-  const selectedModel = keptSelectedProvider ? selection.model : null;
-  const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
+  // No launchable snapshot is present. Keep the unresolved selection pinned to
+  // Pi so stale Claude/Codex/Cursor/Grok discovery data can never become an
+  // executable fallback while the Pi registry is loading or unauthenticated.
+  const provider = PI_DRIVER_KIND;
+  const model =
+    DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider] ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
     model,
     models: getProviderModels(providers, provider),
-    modelOptions: keptSelectedProvider ? selection.options : undefined,
+    modelOptions: undefined,
   });
 
-  return createModelSelection(defaultInstanceIdForDriver(provider), model, modelOptionsForDispatch);
+  return createModelSelection(DEFAULT_TEXT_GENERATION_INSTANCE_ID, model, modelOptionsForDispatch);
 }

@@ -6,7 +6,7 @@ import {
   ThreadId,
   TurnId,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -43,6 +43,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
       yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_agent_runs`;
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -235,6 +236,58 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
+      yield* sql`
+        INSERT INTO projection_agent_runs (
+          parent_thread_id,
+          provider,
+          agent_run_id,
+          launch_tool_use_id,
+          task_type,
+          agent_type,
+          model,
+          description,
+          status,
+          started_at,
+          updated_at,
+          history_session_id,
+          transcript_state,
+          parent_native_session_id
+        )
+        VALUES
+          (
+            'thread-1',
+            'claude',
+            'agent-owned',
+            'tool-owned',
+            'local_agent',
+            'Explore',
+            'claude-opus-4-6',
+            'Owned agent',
+            'completed',
+            '2026-02-24T00:00:06.000Z',
+            '2026-02-24T00:00:07.000Z',
+            NULL,
+            'unavailable',
+            'native-parent'
+          ),
+          (
+            'another-thread',
+            'claude',
+            'agent-other',
+            'tool-other',
+            'local_agent',
+            'Explore',
+            NULL,
+            'Other thread agent',
+            'completed',
+            '2026-02-24T00:00:06.000Z',
+            '2026-02-24T00:00:07.000Z',
+            NULL,
+            'unavailable',
+            'native-other'
+          )
+      `;
+
       let sequence = 5;
       for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
         yield* sql`
@@ -308,10 +361,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
+          sideOfThreadId: null,
           deletedAt: null,
           messages: [
             {
@@ -346,6 +396,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          agentRuns: [
+            {
+              parentThreadId: ThreadId.make("thread-1"),
+              provider: "claude",
+              providerInstanceId: null,
+              agentRunId: "agent-owned",
+              parentAgentRunId: null,
+              launchToolUseId: "tool-owned",
+              taskType: "local_agent",
+              agentType: "Explore",
+              model: "claude-opus-4-6",
+              description: "Owned agent",
+              status: "completed",
+              startedAt: "2026-02-24T00:00:06.000Z",
+              updatedAt: "2026-02-24T00:00:07.000Z",
+              historySessionId: null,
+              transcriptState: "unavailable",
+            },
+          ],
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -361,13 +430,18 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerThreadId: "provider-thread-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+          goal: null,
         },
       ]);
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(commandReadModel.threads[0]?.agentRuns[0]?.agentRunId, "agent-owned");
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
@@ -422,14 +496,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
+          sideOfThreadId: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerThreadId: "provider-thread-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -567,115 +639,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
-    }),
-  );
-
-  it.effect("keeps settled threads in the shell snapshot with non-null settlement fields", () =>
-    Effect.gen(function* () {
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
-      const sql = yield* SqlClient.SqlClient;
-
-      yield* sql`DELETE FROM projection_projects`;
-      yield* sql`DELETE FROM projection_threads`;
-      yield* sql`DELETE FROM projection_state`;
-
-      yield* sql`
-        INSERT INTO projection_projects (
-          project_id,
-          title,
-          workspace_root,
-          default_model_selection_json,
-          scripts_json,
-          created_at,
-          updated_at,
-          deleted_at
-        )
-        VALUES (
-          'project-settled-test',
-          'Settled Test',
-          '/tmp/settled-test',
-          '{"provider":"codex","model":"gpt-5-codex"}',
-          '[]',
-          '2026-04-06T00:00:00.000Z',
-          '2026-04-06T00:00:01.000Z',
-          NULL
-        )
-      `;
-
-      yield* sql`
-        INSERT INTO projection_threads (
-          thread_id,
-          project_id,
-          title,
-          model_selection_json,
-          runtime_mode,
-          interaction_mode,
-          branch,
-          worktree_path,
-          latest_turn_id,
-          latest_user_message_at,
-          pending_approval_count,
-          pending_user_input_count,
-          has_actionable_proposed_plan,
-          created_at,
-          updated_at,
-          archived_at,
-          settled_override,
-          settled_at,
-          deleted_at
-        )
-        VALUES (
-          'thread-settled',
-          'project-settled-test',
-          'Settled Thread',
-          '{"provider":"codex","model":"gpt-5-codex"}',
-          'full-access',
-          'default',
-          NULL,
-          NULL,
-          NULL,
-          NULL,
-          0,
-          0,
-          0,
-          '2026-04-06T00:00:02.000Z',
-          '2026-04-06T00:00:05.000Z',
-          NULL,
-          'settled',
-          '2026-04-06T00:00:04.000Z',
-          NULL
-        )
-      `;
-
-      yield* sql`
-        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
-        VALUES
-          (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.threads}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
-          (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
-      `;
-
-      // Settled ≠ archived: the thread must appear in the LIVE shell
-      // snapshot, carrying its settlement fields through the row aliases.
-      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
-      assert.deepEqual(
-        shellSnapshot.threads.map((thread) => thread.id),
-        [ThreadId.make("thread-settled")],
-      );
-      assert.equal(shellSnapshot.threads[0]?.settledOverride, "settled");
-      assert.equal(shellSnapshot.threads[0]?.settledAt, "2026-04-06T00:00:04.000Z");
-
-      // And the full command read model carries them too.
-      const readModel = yield* snapshotQuery.getCommandReadModel();
-      const thread = readModel.threads.find(
-        (candidate) => candidate.id === ThreadId.make("thread-settled"),
-      );
-      assert.equal(thread?.settledOverride, "settled");
-      assert.equal(thread?.settledAt, "2026-04-06T00:00:04.000Z");
     }),
   );
 
@@ -1547,6 +1510,406 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.projects.length, 0);
       assert.equal(shellSnapshot.threads.length, 0);
+    }),
+  );
+
+  it.effect("prefers a terminal task event over progress at the same timestamp", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-subagents',
+          'Subagents',
+          '/tmp/subagents',
+          '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
+          '[]',
+          '2026-07-30T00:00:00.000Z',
+          '2026-07-30T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-terminal-tie',
+          'project-subagents',
+          'Terminal tie',
+          '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-07-30T00:00:02.000Z',
+          '2026-07-30T00:00:03.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-terminal-tie',
+          'running',
+          'claudeAgent',
+          'provider-session-terminal-tie',
+          'provider-thread-terminal-tie',
+          'full-access',
+          NULL,
+          NULL,
+          '2026-07-30T00:00:04.000Z'
+        )
+      `;
+
+      // The random lexical id for progress sorts after the terminal id. The
+      // causal winner must come from event semantics, not UUID ordering.
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            'activity-started',
+            'thread-terminal-tie',
+            NULL,
+            'info',
+            'task.started',
+            'Task started',
+            '{"taskId":"task-1","detail":"Wait for build"}',
+            NULL,
+            '2026-07-30T00:00:05.000Z'
+          ),
+          (
+            'a-terminal',
+            'thread-terminal-tie',
+            NULL,
+            'info',
+            'task.completed',
+            'Task completed',
+            '{"taskId":"task-1","status":"completed"}',
+            NULL,
+            '2026-07-30T00:00:06.000Z'
+          ),
+          (
+            'z-progress',
+            'thread-terminal-tie',
+            NULL,
+            'info',
+            'task.progress',
+            'Task progress',
+            '{"taskId":"task-1","lastToolName":"Bash"}',
+            NULL,
+            '2026-07-30T00:00:06.000Z'
+          )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(shellSnapshot.threads[0]?.subagents, undefined);
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-terminal-tie"),
+      );
+      assert.equal(threadShell._tag, "Some");
+      if (threadShell._tag === "Some") {
+        assert.equal(threadShell.value.subagents, undefined);
+      }
+    }),
+  );
+
+  it.effect("uses a newer stopped provider runtime to suppress stale projected subagents", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-stopped-subagents',
+          'Stopped subagents',
+          '/tmp/stopped-subagents',
+          '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
+          '[]',
+          '2026-07-30T01:00:00.000Z',
+          '2026-07-30T01:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-stopped-subagents',
+          'project-stopped-subagents',
+          'Stopped session',
+          '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-07-30T01:00:02.000Z',
+          '2026-07-30T01:00:03.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-stopped-subagents',
+          'ready',
+          'claudeAgent',
+          'provider-session-stopped',
+          'provider-thread-stopped',
+          'full-access',
+          NULL,
+          NULL,
+          '2026-07-30T01:00:04.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          provider_instance_id,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          'thread-stopped-subagents',
+          'claudeAgent',
+          NULL,
+          'claudeAgent',
+          'full-access',
+          'stopped',
+          '2026-07-30T01:00:06.000Z',
+          NULL,
+          '{"lastRuntimeEvent":"provider.stopAll"}'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES (
+          'activity-stale-started',
+          'thread-stopped-subagents',
+          NULL,
+          'info',
+          'task.started',
+          'Task started',
+          '{"taskId":"task-stale","detail":"Old background agent"}',
+          NULL,
+          '2026-07-30T01:00:05.000Z'
+        )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(shellSnapshot.threads[0]?.session?.status, "stopped");
+      assert.equal(shellSnapshot.threads[0]?.session?.updatedAt, "2026-07-30T01:00:06.000Z");
+      assert.equal(shellSnapshot.threads[0]?.subagents, undefined);
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-stopped-subagents"),
+      );
+      assert.equal(threadShell._tag, "Some");
+      if (threadShell._tag === "Some") {
+        assert.equal(threadShell.value.session?.status, "stopped");
+        assert.equal(threadShell.value.session?.updatedAt, "2026-07-30T01:00:06.000Z");
+        assert.equal(threadShell.value.subagents, undefined);
+      }
+
+      yield* sql`
+        UPDATE projection_thread_sessions
+        SET
+          status = 'ready',
+          updated_at = '2026-07-30T01:00:07.000Z'
+        WHERE thread_id = 'thread-stopped-subagents'
+      `;
+
+      const resumedThreadShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-stopped-subagents"),
+      );
+      assert.equal(resumedThreadShell._tag, "Some");
+      if (resumedThreadShell._tag === "Some") {
+        assert.equal(resumedThreadShell.value.session?.status, "ready");
+        assert.equal(resumedThreadShell.value.session?.updatedAt, "2026-07-30T01:00:07.000Z");
+        assert.equal(resumedThreadShell.value.subagents?.length, 1);
+      }
+
+      // A transport can emit late progress (for example, "command aborted")
+      // just after cancellation completed. The canonical AgentRun is the
+      // lifecycle authority, so that noise must not resurrect a terminal
+      // child and block managed-goal continuation forever.
+      yield* sql`
+        INSERT INTO projection_agent_runs (
+          parent_thread_id,
+          provider,
+          provider_instance_id,
+          agent_run_id,
+          parent_agent_run_id,
+          launch_tool_use_id,
+          task_type,
+          agent_type,
+          model,
+          description,
+          status,
+          started_at,
+          updated_at,
+          history_session_id,
+          transcript_state,
+          parent_native_session_id
+        ) VALUES (
+          'thread-stopped-subagents',
+          'claudeAgent',
+          'claudeAgent',
+          'task-stale',
+          NULL,
+          'task-stale',
+          'attached_agent',
+          'claude agent',
+          'claude-opus-4-6',
+          'Old background agent',
+          'stopped',
+          '2026-07-30T01:00:05.000Z',
+          '2026-07-30T01:00:08.000Z',
+          NULL,
+          'unavailable',
+          NULL
+        )
+      `;
+
+      const terminalAgentShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-stopped-subagents"),
+      );
+      assert.equal(terminalAgentShell._tag, "Some");
+      if (terminalAgentShell._tag === "Some") {
+        assert.equal(terminalAgentShell.value.subagents, undefined);
+      }
+      const terminalAgentSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(terminalAgentSnapshot.threads[0]?.subagents, undefined);
     }),
   );
 });

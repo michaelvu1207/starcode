@@ -9,8 +9,8 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { decodeJsonResult } from "@starcode/shared/schemaJson";
+import { HostProcessPlatform } from "@starcode/shared/hostProcess";
 
 export class BootstrapFdStatError extends Schema.TaggedErrorClass<BootstrapFdStatError>()(
   "BootstrapFdStatError",
@@ -95,10 +95,17 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     });
 
     const cleanup = () => {
-      stream.removeListener("error", handleError);
       input.removeListener("line", handleLine);
       input.removeListener("close", handleClose);
       input.close();
+
+      // A bootstrap fd can be a socket when the desktop process passes the
+      // envelope over an inherited pipe. Keep an error listener installed
+      // while destroying it: macOS may report a peer reset asynchronously
+      // after the envelope has already been read. Removing the last listener
+      // first turns that harmless teardown into an uncaught process error.
+      stream.removeListener("error", handleError);
+      stream.on("error", ignoreBootstrapStreamTeardownError);
       stream.destroy();
     };
 
@@ -149,6 +156,8 @@ const isUnavailableBootstrapFdError = Predicate.compose(
   Predicate.hasProperty("code"),
   (_) => _.code === "EBADF" || _.code === "ENOENT",
 );
+
+const ignoreBootstrapStreamTeardownError = () => {};
 
 const isFdReady = (fd: number) =>
   Effect.try({

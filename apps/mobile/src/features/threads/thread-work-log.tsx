@@ -100,7 +100,7 @@ export function ThreadWorkLog(props: {
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
       {!onlyToolRows ? (
-        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
+        <Text className="px-0.5 pb-0.5 font-starcode-medium text-2xs text-foreground-muted opacity-60">
           work log
         </Text>
       ) : null}
@@ -153,7 +153,7 @@ export function ThreadWorkLog(props: {
                   <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
                     <Text
                       className={cn(
-                        "font-t3-medium text-foreground",
+                        "font-starcode-medium text-foreground",
                         iconIsDestructive && "text-rose-600 dark:text-rose-400",
                       )}
                     >
@@ -166,7 +166,7 @@ export function ThreadWorkLog(props: {
 
                   <View className="shrink-0 flex-row items-center gap-px">
                     {props.copiedRowId === row.id ? (
-                      <Text className="pr-1 font-t3-medium text-3xs text-emerald-600 dark:text-emerald-400">
+                      <Text className="pr-1 font-starcode-medium text-3xs text-emerald-600 dark:text-emerald-400">
                         Copied
                       </Text>
                     ) : null}
@@ -230,11 +230,20 @@ export function ThreadWorkLog(props: {
   );
 }
 
+/**
+ * Header for a run of activities.
+ *
+ * The visible text is a sentence about what happened ("Read files, ran
+ * commands"), not a count of what is hidden — the count answers a question
+ * nobody asked. The counts survive only in the accessibility label, where
+ * "expand this" genuinely needs saying.
+ */
 export function ThreadWorkGroupToggle(props: {
   readonly expanded: boolean;
   readonly hiddenCount: number;
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onlyToolActivities: boolean;
+  readonly label: string;
   readonly onToggle: () => void;
 }) {
   const colorScheme = useColorScheme();
@@ -246,10 +255,8 @@ export function ThreadWorkGroupToggle(props: {
     : props.hiddenCount === 1
       ? "log entry"
       : "log entries";
-  const collapsedLabel = `Show ${props.hiddenCount} previous ${noun}`;
-  const expandedLabel = props.onlyToolActivities
-    ? "Show fewer tool calls"
-    : "Show fewer log entries";
+  const collapsedLabel = `${props.label}. Show ${props.hiddenCount} ${noun}`;
+  const expandedLabel = `${props.label}. Show fewer ${noun}`;
 
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
@@ -279,8 +286,8 @@ export function ThreadWorkGroupToggle(props: {
             type="monochrome"
           />
         </View>
-        <Text className="font-t3-medium text-xs text-foreground opacity-80">
-          {props.expanded ? expandedLabel : `+${props.hiddenCount} previous ${noun}`}
+        <Text className="font-starcode-medium text-xs text-foreground opacity-80" numberOfLines={1}>
+          {props.label}
         </Text>
       </Pressable>
     </View>

@@ -21,6 +21,17 @@ function getOptionValue(
 }
 
 describe("ProviderSessionStartInput", () => {
+  it("accepts an active turn for process-restart recovery", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-recovery",
+      provider: "pi",
+      activeTurnId: "turn-before-restart",
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.activeTurnId).toBe("turn-before-restart");
+  });
+
   it("accepts codex-compatible payloads", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",

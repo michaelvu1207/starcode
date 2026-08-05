@@ -3,9 +3,9 @@ import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
+} from "@starcode/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@starcode/client-runtime/errors";
+import type { ScopedThreadRef, TurnId } from "@starcode/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -179,6 +179,12 @@ interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
+  /**
+   * Fork: the panel takes its thread from the route, but in split view the
+   * second pane is not the route — without this it would render the first
+   * pane's diff. Unset everywhere else, so the route stays the source.
+   */
+  threadRefOverride?: ScopedThreadRef | null;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -187,6 +193,7 @@ export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
+  threadRefOverride = null,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -201,10 +208,11 @@ export default function DiffPanel({
   }));
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
 
-  const routeThreadRef = useParams({
+  const routeThreadRefFromParams = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
+  const routeThreadRef = threadRefOverride ?? routeThreadRefFromParams;
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;

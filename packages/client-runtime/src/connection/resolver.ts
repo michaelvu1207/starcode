@@ -1,5 +1,5 @@
-import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { RelayEnvironmentConnectScope } from "@starcode/contracts/relay";
+import { withRelayClientTracing } from "@starcode/shared/relayTracing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,6 +32,7 @@ import type {
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import * as Fleet from "./fleet.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -40,7 +41,7 @@ export class ConnectionResolver extends Context.Service<
       entry: ConnectionCatalogEntry,
     ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   }
->()("@t3tools/client-runtime/connection/resolver/ConnectionResolver") {}
+>()("@starcode/client-runtime/connection/resolver/ConnectionResolver") {}
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
@@ -88,6 +89,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const fleetCredentials = yield* Fleet.FleetConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
@@ -110,14 +112,17 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         actual: profile.environmentId,
       });
     }
-    const credential = yield* credentials.get(target.connectionId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
+    const fleetCredential = yield* fleetCredentials.get(target.connectionId);
+    const credential = yield* Option.isSome(fleetCredential)
+      ? Effect.succeed(fleetCredential.value)
+      : credentials.get(target.connectionId).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }

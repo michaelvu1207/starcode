@@ -1,6 +1,6 @@
 # Server Update Architecture
 
-T3 Code can update a connected server to the exact version of the client that detected version
+starcode can update a connected server to the exact version of the client that detected version
 drift. This path exists primarily for remote environments, where the user may not have a terminal
 open on the server machine.
 
@@ -34,7 +34,7 @@ The server resolves its capability once at startup and publishes it in the envir
 
 | Advertised value  | Process shape                                                                                 | Client behavior                                                       |
 | ----------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `boot-service`    | Linux server running under the T3-managed systemd user service                                | Call the update RPC; the service unit is replaced and restarted.      |
+| `boot-service`    | Linux server running under the starcode-managed systemd user service                          | Call the update RPC; the service unit is replaced and restarted.      |
 | `respawn`         | Published npm CLI running in the foreground on macOS or Linux                                 | Call the update RPC; the process hands off to a detached replacement. |
 | `desktop-managed` | Backend supervised by the desktop app                                                         | Tell the user to update the desktop app on the server machine.        |
 | absent            | Older server, development checkout, Windows foreground process, or an unrecognized supervisor | Offer the exact manual relaunch command.                              |
@@ -52,11 +52,11 @@ flowchart TD
     B -->|desktop-managed| C[Update desktop app on server machine]
     B -->|missing| D[Copy exact manual relaunch command]
     B -->|boot-service or respawn| E[server.updateServer]
-    E --> F[Install exact t3 version in pinned runtime]
+    E --> F[Install exact starcode version in pinned runtime]
     F --> G[Run version preflight]
     G -->|fails| H[Remove failed runtime and keep current server]
     G -->|passes| I{Handoff method}
-    I -->|boot-service| J[Rewrite and restart T3 systemd unit]
+    I -->|boot-service| J[Rewrite and restart starcode systemd unit]
     I -->|respawn| K[Start delayed replacement and exit current process]
     J --> L[Client reconnects]
     K --> L
@@ -77,18 +77,18 @@ preflight also removes the candidate runtime so retrying the same version perfor
 
 ## Host Service Lifecycle
 
-The systemd user service is a host lifecycle concern, not a T3 Connect resource. The standalone
-`t3 service install`, `uninstall`, `update`, and `status` commands own it. Install and update both
+The systemd user service is a host lifecycle concern, not a starcode Connect resource. The standalone
+`starcode service install`, `uninstall`, `update`, and `status` commands own it. Install and update both
 reconcile the unit through `BootService`; running `npx t3@latest service update` therefore pins and
 activates the latest CLI release without requiring a connected client.
 
-The `t3 connect` onboarding flow may offer service installation, but it calls the same reconciliation
-operation as `t3 service install`. Connect logout only disables cloud access and clears its
+The `starcode connect` onboarding flow may offer service installation, but it calls the same reconciliation
+operation as `starcode service install`. Connect logout only disables cloud access and clears its
 authorization; it does not uninstall the host service.
 
 ## Process Handoff
 
-For `boot-service`, the server atomically rewrites the T3-managed user unit to point at the verified
+For `boot-service`, the server atomically rewrites the starcode-managed user unit to point at the verified
 runtime, reloads systemd, and restarts the unit. Reload and restart failures restore the previous
 unit before returning an error.
 

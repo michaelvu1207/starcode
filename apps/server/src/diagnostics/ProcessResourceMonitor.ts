@@ -5,7 +5,7 @@ import {
   type ServerProcessResourceHistoryInput,
   type ServerProcessResourceHistoryResult,
   type ServerProcessResourceHistorySummary,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -58,7 +58,7 @@ export class ProcessResourceMonitor extends Context.Service<
       input: ServerProcessResourceHistoryInput,
     ) => Effect.Effect<ServerProcessResourceHistoryResult>;
   }
->()("t3/diagnostics/ProcessResourceMonitor") {}
+>()("starcode/diagnostics/ProcessResourceMonitor") {}
 
 function dateTimeFromMillis(ms: number): DateTime.Utc {
   return DateTime.makeUnsafe(ms);

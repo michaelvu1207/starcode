@@ -112,6 +112,14 @@ export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
 
+/**
+ * Identifies whether an instance is persisted in user settings or projected
+ * by the server from another durable source such as the native Pi account
+ * catalog. Older servers omit this field and therefore remain settings-owned.
+ */
+export const ServerProviderInstanceSource = Schema.Literals(["settings", "catalog"]);
+export type ServerProviderInstanceSource = typeof ServerProviderInstanceSource.Type;
+
 export const ServerProviderContinuation = Schema.Struct({
   groupKey: TrimmedNonEmptyString,
 });
@@ -183,6 +191,10 @@ export const ServerProvider = Schema.Struct({
   // Human-readable reason populated when `availability === "unavailable"`.
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  instanceSource: Schema.optional(ServerProviderInstanceSource),
+  // Compatibility aliases remain routable for historical sessions without
+  // appearing as duplicate choices for new model selections.
+  selectable: Schema.optional(Schema.Boolean),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

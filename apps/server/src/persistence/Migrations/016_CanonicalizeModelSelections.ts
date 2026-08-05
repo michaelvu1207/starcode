@@ -3,65 +3,83 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-
-  yield* sql`
-    ALTER TABLE projection_projects
-    ADD COLUMN default_model_selection_json TEXT
+  const projectColumns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_projects)
+  `;
+  const threadColumns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_threads)
   `;
 
-  yield* sql`
-    UPDATE projection_projects
-    SET default_model_selection_json = CASE
-      WHEN default_model IS NULL THEN NULL
-      ELSE json_object(
+  if (!projectColumns.some((column) => column.name === "default_model_selection_json")) {
+    yield* sql`
+      ALTER TABLE projection_projects
+      ADD COLUMN default_model_selection_json TEXT
+    `;
+  }
+
+  if (projectColumns.some((column) => column.name === "default_model")) {
+    yield* sql`
+      UPDATE projection_projects
+      SET default_model_selection_json = CASE
+        WHEN default_model IS NULL THEN NULL
+        ELSE json_object(
+          'provider',
+          CASE
+            WHEN lower(default_model) LIKE '%claude%' THEN 'claudeAgent'
+            ELSE 'codex'
+          END,
+          'model',
+          default_model
+        )
+      END
+      WHERE default_model_selection_json IS NULL
+    `;
+  }
+
+  if (!threadColumns.some((column) => column.name === "model_selection_json")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN model_selection_json TEXT
+    `;
+  }
+
+  if (threadColumns.some((column) => column.name === "model")) {
+    yield* sql`
+      UPDATE projection_threads
+      SET model_selection_json = json_object(
         'provider',
-        CASE
-          WHEN lower(default_model) LIKE '%claude%' THEN 'claudeAgent'
-          ELSE 'codex'
-        END,
-        'model',
-        default_model
-      )
-    END
-    WHERE default_model_selection_json IS NULL
-  `;
-
-  yield* sql`
-    ALTER TABLE projection_threads
-    ADD COLUMN model_selection_json TEXT
-  `;
-
-  yield* sql`
-    UPDATE projection_threads
-    SET model_selection_json = json_object(
-      'provider',
-      COALESCE(
-        (
-          SELECT provider_name
-          FROM projection_thread_sessions
-          WHERE projection_thread_sessions.thread_id = projection_threads.thread_id
+        COALESCE(
+          (
+            SELECT provider_name
+            FROM projection_thread_sessions
+            WHERE projection_thread_sessions.thread_id = projection_threads.thread_id
+          ),
+          CASE
+            WHEN lower(model) LIKE '%claude%' THEN 'claudeAgent'
+            ELSE 'codex'
+          END,
+          'codex'
         ),
-        CASE
-          WHEN lower(model) LIKE '%claude%' THEN 'claudeAgent'
-          ELSE 'codex'
-        END,
-        'codex'
-      ),
-      'model',
-      model
-    )
-    WHERE model_selection_json IS NULL
-  `;
+        'model',
+        model
+      )
+      WHERE model_selection_json IS NULL
+    `;
+  }
 
-  yield* sql`
-    ALTER TABLE projection_projects
-    DROP COLUMN default_model
-  `;
+  if (projectColumns.some((column) => column.name === "default_model")) {
+    yield* sql`
+      ALTER TABLE projection_projects
+      DROP COLUMN default_model
+    `;
+  }
 
-  yield* sql`
-    ALTER TABLE projection_threads
-    DROP COLUMN model
-  `;
+  if (threadColumns.some((column) => column.name === "model")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      DROP COLUMN model
+    `;
+  }
 
   yield* sql`
     UPDATE orchestration_events

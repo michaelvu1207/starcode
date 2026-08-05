@@ -9,6 +9,7 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 
@@ -47,6 +48,20 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
+// ---- FORK MIGRATIONS ---- keep at the true numeric tail; see 035_ForkUsage.ts
+import Migration0035 from "./Migrations/035_ForkUsage.ts";
+import Migration0036 from "./Migrations/036_ThreadMailbox.ts";
+import Migration0037 from "./Migrations/037_ProjectionThreadsTitleSource.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadMessageAuthoredBy.ts";
+import Migration0039 from "./Migrations/039_DropThreadSettleSnooze.ts";
+import Migration0040 from "./Migrations/040_ProjectionThreadsSideOf.ts";
+import Migration0042 from "./Migrations/042_ProjectionThreadGoals.ts";
+import Migration0041 from "./Migrations/041_ProjectionAgentRuns.ts";
+import Migration0043 from "./Migrations/043_AttachedAgentAttribution.ts";
+import Migration0044 from "./Migrations/044_BackfillProjectionThreadActivitySequence.ts";
+import Migration0045 from "./Migrations/045_ProjectionAgentRunOptions.ts";
+import Migration0046 from "./Migrations/046_CanonicalizeModelSelectionInstanceIds.ts";
+import Migration0047 from "./Migrations/047_CutOverActiveSelectionsToPi.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -93,6 +108,20 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
+  // ---- FORK MIGRATIONS ----
+  [35, "ForkUsage", Migration0035],
+  [36, "ThreadMailbox", Migration0036],
+  [37, "ProjectionThreadsTitleSource", Migration0037],
+  [38, "ProjectionThreadMessageAuthoredBy", Migration0038],
+  [39, "DropThreadSettleSnooze", Migration0039],
+  [40, "ProjectionThreadsSideOf", Migration0040],
+  [41, "ProjectionAgentRuns", Migration0041],
+  [42, "ProjectionThreadGoals", Migration0042],
+  [43, "AttachedAgentAttribution", Migration0043],
+  [44, "BackfillProjectionThreadActivitySequence", Migration0044],
+  [45, "ProjectionAgentRunOptions", Migration0045],
+  [46, "CanonicalizeModelSelectionInstanceIds", Migration0046],
+  [47, "CutOverActiveSelectionsToPi", Migration0047],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
@@ -110,6 +139,41 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+/** Migrator.make's default tracking table; we never pass a `table` option. */
+const MIGRATIONS_TABLE = "effect_sql_migrations";
+
+/**
+ * Fail the boot when a migration was never applied.
+ *
+ * The Migrator only runs migrations whose id is greater than the highest id
+ * already recorded, and silently skips everything at or below it. So an id
+ * that lands under a previously applied one - a renumbering, a fork/upstream
+ * merge that reuses ids, a reserved high id range - never runs and never
+ * reports anything. The tracking table is the only place that difference is
+ * visible, so compare it against the entries we intended to run.
+ */
+const assertMigrationsApplied = Effect.fn("assertMigrationsApplied")(function* ({
+  toMigrationInclusive,
+}: RunMigrationsOptions) {
+  const sql = yield* SqlClient.SqlClient;
+  const applied = yield* sql<{
+    readonly migration_id: number;
+  }>`SELECT migration_id FROM ${sql(MIGRATIONS_TABLE)}`.withoutTransform;
+  const appliedIds = new Set(applied.map((row) => row.migration_id));
+  const missing = migrationEntries
+    .filter(
+      ([id]) =>
+        (toMigrationInclusive === undefined || id <= toMigrationInclusive) && !appliedIds.has(id),
+    )
+    .map(([id, name]) => `${id}_${name}`);
+  if (missing.length > 0) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: `Migrations were skipped and never applied: ${missing.join(", ")}. Their ids are at or below the highest id in ${MIGRATIONS_TABLE}, so the Migrator passed over them. Renumber them above every applied id (they must be idempotent) rather than editing the tracking table.`,
+    });
+  }
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -120,6 +184,9 @@ export interface RunMigrationsOptions {
  * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
  * then runs any migrations with ID greater than the latest recorded migration.
  *
+ * Fails if any entry is still unrecorded afterwards - see
+ * assertMigrationsApplied.
+ *
  * Returns array of [id, name] tuples for migrations that were run.
  *
  * @returns Effect containing array of executed migrations
@@ -128,6 +195,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  yield* assertMigrationsApplied({ toMigrationInclusive });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

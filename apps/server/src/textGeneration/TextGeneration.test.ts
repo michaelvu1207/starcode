@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { describe, expect } from "vite-plus/test";
+import { describe, expect, expectTypeOf } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { ProviderInstanceId } from "@starcode/contracts";
+import { createModelSelection } from "@starcode/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -21,6 +21,8 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    generateMessageSummary: () =>
+      Effect.die("generateMessageSummary stub not configured for this test"),
     ...overrides,
   });
 
@@ -60,9 +62,13 @@ const makeStubRegistry = (
 };
 
 describe("makeTextGenerationFromRegistry", () => {
+  it("exposes Pi as the only executable text-generation provider", () => {
+    expectTypeOf<TextGeneration.TextGenerationProvider>().toEqualTypeOf<"pi">();
+  });
+
   it.effect("delegates to the matching instance's textGeneration closure", () =>
     Effect.gen(function* () {
-      const personalId = ProviderInstanceId.make("codex_personal");
+      const personalId = ProviderInstanceId.make("pi_personal");
       const personalCalls: string[] = [];
       const personal = makeStubInstance(
         personalId,
@@ -74,7 +80,7 @@ describe("makeTextGenerationFromRegistry", () => {
         }),
       );
 
-      const workId = ProviderInstanceId.make("codex_work");
+      const workId = ProviderInstanceId.make("pi_work");
       const work = makeStubInstance(
         workId,
         makeStubTextGeneration({
@@ -87,7 +93,10 @@ describe("makeTextGenerationFromRegistry", () => {
       const result = yield* tg.generateBranchName({
         cwd: process.cwd(),
         message: "Refactor the routing layer",
-        modelSelection: createModelSelection(ProviderInstanceId.make("codex_personal"), "gpt-5"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("pi_personal"),
+          "openai-codex/gpt-5.6-sol",
+        ),
       });
 
       expect(result.branch).toBe("personal-branch");

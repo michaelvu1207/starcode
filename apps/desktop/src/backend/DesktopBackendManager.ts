@@ -46,8 +46,8 @@ import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
-} from "@t3tools/contracts";
-import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
+} from "@starcode/contracts";
+import { waitForHttpReady as waitForHttpReadyShared } from "@starcode/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 
@@ -58,7 +58,11 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 // failures may instead provide their own larger retryLimit when they should
 // self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
-const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
+// First launch may need to migrate a large local database and rebuild fleet
+// projections before the descriptor endpoint can answer. Keep the splash
+// alive long enough for that legitimate work instead of leaving a healthy
+// backend running with no desktop window.
+const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(2);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
@@ -80,7 +84,7 @@ export interface DesktopBackendStartConfig {
   readonly env: Record<string, string | undefined>;
   // When true the spawner merges the desktop process.env on top of `env`;
   // when false `env` is passed verbatim. WSL mode opts out so a leaking
-  // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
+  // STARCODE_HOME can't pin the WSL backend to /mnt/c/...\.starcode.
   readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -59,7 +60,11 @@ export const AdvertisedEndpoint = Schema.Struct({
   httpBaseUrl: TrimmedNonEmptyString,
   wsBaseUrl: TrimmedNonEmptyString,
   reachability: AdvertisedEndpointReachability,
-  compatibility: AdvertisedEndpointCompatibility,
+  compatibility: AdvertisedEndpointCompatibility.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ hostedHttpsApp: "unknown" as const, desktopApp: "unknown" as const }),
+    ),
+  ),
   source: AdvertisedEndpointSource,
   status: AdvertisedEndpointStatus,
   isDefault: Schema.optional(Schema.Boolean),

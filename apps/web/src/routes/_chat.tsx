@@ -10,6 +10,7 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+import { useFocusedPaneThreadRef } from "../components/split/openThreadInFocusedPane";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -28,7 +29,6 @@ function ChatRouteGlobalShortcuts() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -42,17 +42,20 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
+  // Fork: with a split open, a command reaches the *focused* pane, so the
+  // `when:` context it is matched against has to describe that pane.
+  const focusedThreadRef = useFocusedPaneThreadRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    focusedThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, focusedThreadRef).terminalOpen
       : false,
   );
   // The `previewOpen` shortcut-context flag here uses the store-only value;
   // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
   // which we invoke via the action bus to avoid duplicating the rule.
   const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+    focusedThreadRef
+      ? selectActiveRightPanel(state.byThreadKey, focusedThreadRef) === "preview"
       : false,
   );
   useEffect(() => {
@@ -92,10 +95,10 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
-        // Sidebar v2 routes creation through the command palette whenever
-        // there is a real choice to make; v1 (and single-project setups)
-        // keep the immediate contextual create.
-        if (sidebarV2Enabled && projectGroupCount > 1) {
+        // Route creation through the command palette whenever there is a real
+        // choice to make; single-project setups keep the immediate contextual
+        // create.
+        if (projectGroupCount > 1) {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
@@ -117,7 +120,7 @@ function ChatRouteGlobalShortcuts() {
             stackedThreadToast({
               type: "info",
               title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
+              description: "Open starcode in the desktop app to use the in-app preview.",
             }),
           );
           return;
@@ -160,6 +163,7 @@ function ChatRouteGlobalShortcuts() {
     activeDraftThread,
     activeThread,
     clearSelection,
+    focusedThreadRef,
     handleNewThread,
     keybindings,
     defaultProjectRef,
@@ -167,7 +171,6 @@ function ChatRouteGlobalShortcuts() {
     projectGroupCount,
     routeThreadRef,
     selectedThreadKeysSize,
-    sidebarV2Enabled,
     terminalOpen,
   ]);
 

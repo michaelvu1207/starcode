@@ -37,6 +37,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
+  ProviderDriverKind,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -47,6 +48,7 @@ import {
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
+  PiAccountAuthError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -59,7 +61,7 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -77,7 +79,16 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import {
+  capturePiAccountAuth,
+  refreshAllPiAccountUsage,
+  startPiAccountAuth,
+} from "./provider/pi/PiAccountAuthFlow.ts";
+import { deletePiAccount } from "./provider/pi/PiAccountCatalog.ts";
+import { syncPiAccountsToFleet } from "./fleet/PiAccountFleetSync.ts";
+import { testPiAccount } from "./provider/pi/PiAccountTest.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -87,6 +98,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as PreviewPortBridge from "./preview/PortBridge.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -101,6 +113,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as UsageStore from "./usage/UsageStore.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -115,7 +128,10 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
-import * as RelayClient from "@t3tools/shared/relayClient";
+import * as RelayClient from "@starcode/shared/relayClient";
+import { permitsThreadOperation } from "./threads/ThreadCapability.ts";
+import { ThreadService } from "./threads/ThreadService.ts";
+import * as MessageSimplification from "./textGeneration/MessageSimplification.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -263,7 +279,9 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
-      | "thread.session-set";
+      | "thread.session-set"
+      | "thread.goal-updated"
+      | "thread.goal-cleared";
   }
 > {
   return (
@@ -272,7 +290,9 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
+    event.type === "thread.session-set" ||
+    event.type === "thread.goal-updated" ||
+    event.type === "thread.goal-cleared"
   );
 }
 
@@ -293,6 +313,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [WS_METHODS.messageSimplify, AuthOrchestrationOperateScope],
   [WS_METHODS.serverProbe, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
@@ -307,6 +328,12 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountAuthStart, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountAuthCapture, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountDelete, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountTest, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountUsageRefresh, AuthOrchestrationOperateScope],
+  [WS_METHODS.piAccountSync, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -348,6 +375,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
   [WS_METHODS.previewList, AuthOrchestrationReadScope],
   [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewCreatePortBridgeTicket, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationFocusHost, AuthOrchestrationOperateScope],
@@ -401,6 +429,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  usageStore: UsageStore.UsageStore["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -408,6 +437,7 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const threadService = yield* ThreadService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -417,8 +447,10 @@ const makeWsRpcLayer = (
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
+      const previewPortBridge = yield* PreviewPortBridge.PreviewPortBridgeRegistry;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -979,7 +1011,7 @@ const makeWsRpcLayer = (
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
+              yield* threadService.dispatchCreate({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
@@ -1029,7 +1061,7 @@ const makeWsRpcLayer = (
 
             yield* runSetupProgram();
 
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
+            return yield* threadService.startTurn(finalTurnStartCommand);
           });
 
           return yield* bootstrapProgram.pipe(
@@ -1046,16 +1078,54 @@ const makeWsRpcLayer = (
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                  ),
-                );
+        const threadOperation =
+          normalizedCommand.type === "thread.create"
+            ? "create"
+            : normalizedCommand.type === "thread.turn.start"
+              ? "turn"
+              : normalizedCommand.type === "thread.archive" ||
+                  normalizedCommand.type === "thread.unarchive"
+                ? "archive"
+                : null;
+        if (
+          threadOperation !== null &&
+          !permitsThreadOperation(
+            { kind: "environment", scopes: new Set(currentSession.scopes) },
+            { operation: threadOperation },
+          )
+        ) {
+          return Effect.fail(
+            toDispatchCommandError(
+              new Error(`Thread ${threadOperation} is not permitted for this session.`),
+              "Thread operation is not permitted",
+            ),
+          );
+        }
+        const dispatchEffect: Effect.Effect<
+          { readonly sequence: number },
+          OrchestrationDispatchCommandError
+        > = Effect.gen(function* () {
+          if (normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap) {
+            return yield* dispatchBootstrapTurnStart(normalizedCommand);
+          }
+          if (normalizedCommand.type === "thread.create") {
+            return yield* threadService.dispatchCreate(normalizedCommand);
+          }
+          if (normalizedCommand.type === "thread.turn.start") {
+            return yield* threadService.startTurn(normalizedCommand);
+          }
+          if (
+            normalizedCommand.type === "thread.archive" ||
+            normalizedCommand.type === "thread.unarchive"
+          ) {
+            return yield* threadService.setArchived(normalizedCommand);
+          }
+          return yield* orchestrationEngine.dispatch(normalizedCommand);
+        }).pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+          ),
+        );
 
         return startup
           .enqueueCommand(dispatchEffect)
@@ -1106,6 +1176,21 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.messageSimplify]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.messageSimplify,
+            MessageSimplification.simplifyAssistantMessage(input).pipe(
+              Effect.provideService(
+                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                projectionSnapshotQuery,
+              ),
+              Effect.provideService(
+                ProviderInstanceRegistry.ProviderInstanceRegistry,
+                providerInstanceRegistry,
+              ),
+            ),
+            { "rpc.aggregate": "message" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1521,6 +1606,173 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.piAccountAuthStart]: ({ provider }) =>
+          observeRpcEffect(
+            WS_METHODS.piAccountAuthStart,
+            Effect.tryPromise({
+              try: () => startPiAccountAuth(provider),
+              catch: (cause) =>
+                Schema.is(PiAccountAuthError)(cause)
+                  ? cause
+                  : new PiAccountAuthError({
+                      reason: "launch_failed",
+                      message: "OAuth could not start.",
+                    }),
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.piAccountAuthCapture]: ({ attemptId }) =>
+          observeRpcEffect(
+            WS_METHODS.piAccountAuthCapture,
+            Effect.tryPromise({
+              try: () =>
+                capturePiAccountAuth({
+                  attemptId,
+                  stateDir: config.stateDir,
+                  secretsDir: config.secretsDir,
+                }),
+              catch: (cause) =>
+                Schema.is(PiAccountAuthError)(cause)
+                  ? cause
+                  : new PiAccountAuthError({
+                      reason: "capture_failed",
+                      message: "Authentication could not be captured.",
+                    }),
+            }).pipe(
+              Effect.tap((result) =>
+                result.status === "captured"
+                  ? Effect.all([
+                      providerRegistry.refresh().pipe(Effect.asVoid),
+                      syncPiAccountsToFleet.pipe(
+                        Effect.catchCause(() =>
+                          Effect.logWarning("Automatic Pi account sync failed after sign-in"),
+                        ),
+                        Effect.forkDetach,
+                        Effect.asVoid,
+                      ),
+                      result.rateLimits && result.instanceId
+                        ? usageStore
+                            .recordRateLimits({
+                              providerInstanceId: result.instanceId,
+                              driver: ProviderDriverKind.make("pi"),
+                              snapshot: result.rateLimits,
+                            })
+                            .pipe(
+                              Effect.mapError(
+                                () =>
+                                  new PiAccountAuthError({
+                                    reason: "capture_failed",
+                                    message:
+                                      "Authentication was captured, but its usage snapshot could not be saved.",
+                                  }),
+                              ),
+                            )
+                        : Effect.void,
+                    ]).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+              Effect.map(({ rateLimits: _rateLimits, ...result }) => result),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.piAccountDelete]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.piAccountDelete,
+            Effect.tryPromise({
+              try: async () => {
+                await deletePiAccount({
+                  instanceId,
+                  stateDir: config.stateDir,
+                  secretsDir: config.secretsDir,
+                });
+                await Effect.runPromise(providerRegistry.refresh());
+                return { instanceId };
+              },
+              catch: (cause) =>
+                new PiAccountAuthError({
+                  reason: "not_found",
+                  message: cause instanceof Error ? cause.message : "Account could not be removed.",
+                }),
+            }).pipe(
+              Effect.tap(() =>
+                syncPiAccountsToFleet.pipe(
+                  Effect.catchCause(() =>
+                    Effect.logWarning("Automatic Pi account sync failed after account removal"),
+                  ),
+                  Effect.forkDetach,
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.piAccountTest]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.piAccountTest,
+            Effect.tryPromise({
+              try: () =>
+                testPiAccount({
+                  instanceId,
+                  stateDir: config.stateDir,
+                  secretsDir: config.secretsDir,
+                }),
+              catch: (cause) =>
+                Schema.is(PiAccountAuthError)(cause)
+                  ? cause
+                  : new PiAccountAuthError({
+                      reason: "test_failed",
+                      message: "The sample request failed.",
+                    }),
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.piAccountUsageRefresh]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.piAccountUsageRefresh,
+            Effect.tryPromise({
+              try: () =>
+                refreshAllPiAccountUsage({
+                  stateDir: config.stateDir,
+                  secretsDir: config.secretsDir,
+                }),
+              catch: () =>
+                new PiAccountAuthError({
+                  reason: "test_failed",
+                  message: "Usage refresh could not start.",
+                }),
+            }).pipe(
+              Effect.flatMap((outcomes) =>
+                Effect.forEach(
+                  outcomes,
+                  (outcome) =>
+                    outcome.status === "refreshed"
+                      ? usageStore
+                          .recordRateLimits({
+                            providerInstanceId: outcome.instanceId,
+                            driver: ProviderDriverKind.make("pi"),
+                            snapshot: outcome.snapshot,
+                          })
+                          .pipe(Effect.orElseSucceed(() => undefined))
+                      : Effect.void,
+                  { concurrency: "unbounded", discard: true },
+                ).pipe(Effect.as(outcomes)),
+              ),
+              Effect.map((outcomes) => ({
+                refreshed: outcomes.filter((outcome) => outcome.status === "refreshed").length,
+                unavailable: outcomes.filter((outcome) => outcome.status === "unavailable").length,
+                failed: outcomes.filter((outcome) => outcome.status === "failed").length,
+                failures: outcomes.flatMap((outcome) =>
+                  outcome.status === "failed"
+                    ? [{ instanceId: outcome.instanceId, message: outcome.message }]
+                    : [],
+                ),
+              })),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.piAccountSync]: (_input) =>
+          observeRpcEffect(WS_METHODS.piAccountSync, syncPiAccountsToFleet, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -1937,6 +2189,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewCreatePortBridgeTicket]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewCreatePortBridgeTicket,
+            previewPortBridge.issue(input),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -2086,7 +2344,9 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const previewPortBridge = yield* PreviewPortBridge.PreviewPortBridgeRegistry;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const usageStore = yield* UsageStore.UsageStore;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2106,9 +2366,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, usageStore).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                Layer.succeed(PreviewPortBridge.PreviewPortBridgeRegistry, previewPortBridge),
+              ),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(

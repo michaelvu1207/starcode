@@ -1,4 +1,9 @@
-import { AuthSessionId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  ProviderInstanceId,
+  ThreadId,
+  type AuthEnvironmentScope,
+} from "@starcode/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -216,11 +221,12 @@ describe("persistence error correlation", () => {
       `;
 
       const validThreadId = ThreadId.make("thread-valid");
+      const historicalAccountId = ProviderInstanceId.make("ccc_openai_aaaaaaaaaaaaaaaaaaaaaaaa");
       yield* runtimes.upsert({
         threadId: validThreadId,
-        providerName: "codex",
-        providerInstanceId: null,
-        adapterKey: "codex",
+        providerName: "pi",
+        providerInstanceId: historicalAccountId,
+        adapterKey: "pi",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt,
@@ -230,9 +236,14 @@ describe("persistence error correlation", () => {
 
       const listed = yield* runtimes.list();
       assert.deepStrictEqual(
-        listed.map((runtime) => runtime.threadId),
-        [validThreadId],
+        listed.map((runtime) => [runtime.threadId, runtime.providerInstanceId]),
+        [[validThreadId, historicalAccountId]],
       );
+      const loaded = yield* runtimes.getByThreadId({ threadId: validThreadId });
+      assert.strictEqual(loaded._tag, "Some");
+      if (loaded._tag === "Some") {
+        assert.strictEqual(loaded.value.providerInstanceId, historicalAccountId);
+      }
 
       yield* sql`DROP TABLE provider_session_runtime`;
       const sqlFailure = yield* Effect.flip(

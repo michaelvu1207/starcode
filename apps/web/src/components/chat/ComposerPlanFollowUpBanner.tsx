@@ -3,8 +3,10 @@ import { Badge } from "../ui/badge";
 
 export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
   planTitle,
+  suggestedGoal,
 }: {
   planTitle: string | null;
+  suggestedGoal: string | null;
 }) {
   return (
     <div className="px-4 py-3.5 sm:px-5 sm:py-4">
@@ -20,9 +22,11 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{planTitle}</span>
         ) : null}
       </div>
-      {/* <div className="mt-2 text-xs text-muted-foreground">
-        Review the plan
-      </div> */}
+      {suggestedGoal ? (
+        <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/75">Suggested goal:</span> {suggestedGoal}
+        </p>
+      ) : null}
     </div>
   );
 });

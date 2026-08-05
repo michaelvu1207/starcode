@@ -1,0 +1,105 @@
+/**
+ * Fork-owned styling for the projects surfaces.
+ *
+ * Writes nothing into `starcode-theme.css` — F13's lesson. Everything here
+ * reads tokens that file publishes and stops there, so a restyle moves these
+ * surfaces without anyone editing this file.
+ *
+ * Two ideas only:
+ *   - a card is a plate: a bordered surface with the engraving vocabulary's
+ *     corner marks, held below the border it sits beside;
+ *   - a project's accent is a hue rotation applied to ink, never a literal
+ *     colour, so a project can be distinguishable without leaving the palette.
+ */
+
+.sc-project-card {
+  position: relative;
+  isolation: isolate;
+}
+
+/* The plate corners, at card scale. Same two shapes the sidebar inset and the
+   composer use, inset far enough that a title never collides with them. */
+.sc-project-card::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+  background-color: var(--sc-glyph-ink);
+  -webkit-mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  mask-image: var(--sc-glyph-corner-tl), var(--sc-glyph-corner-br);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-position:
+    top left,
+    bottom right;
+  mask-position:
+    top left,
+    bottom right;
+  -webkit-mask-size: 22px 22px;
+  mask-size: 22px 22px;
+}
+
+/* The marks arrive on hover rather than sitting on every card at rest. A grid
+   of twelve cards each wearing four brackets is a lattice, not ornament; one
+   card wearing them is the card you are pointing at. */
+.sc-project-card:hover::after,
+.sc-project-card:focus-visible::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-project-card::after {
+    transition: none;
+  }
+}
+
+/**
+ * The accent.
+ *
+ * `--sc-project-hue` is set inline per card from the slug hash. Rotating ink
+ * rather than naming a colour means the marker sits at whatever chroma the
+ * theme is already using — it cannot come out neon in light mode or muddy in
+ * dark — and a project stays recognisable across both.
+ */
+.sc-project-mark {
+  /* Butter, not ink. `--sc-glyph-ink` is deliberately near-neutral, and
+     hue-rotating a neutral produces another neutral — the first version of this
+     rendered every project the same grey. The wordmark's gold is the theme's one
+     chromatic constant, so rotating *it* gives distinct hues that cannot leave
+     the palette's chroma level. */
+  color: color-mix(in srgb, var(--sc-butter) 55%, var(--sc-ink-900));
+  filter: hue-rotate(var(--sc-project-hue, 0deg));
+}
+
+.dark .sc-project-mark {
+  color: var(--sc-butter);
+  opacity: 0.85;
+}
+
+/**
+ * An uploaded icon leaves the accent alone.
+ *
+ * The rotation above exists to tint a monochrome constellation, and it applies
+ * to whatever the wrapper renders — including an `<img>`. It has to be undone
+ * *here*, on the wrapper, and not on the image: a filter on an ancestor applies
+ * to the rendered result of its whole subtree, so `filter: none` on the child
+ * cannot escape it. The first version of this tried exactly that and shipped a
+ * gold logo rendered green.
+ *
+ * The dark-mode dimming goes with it. It sits engraved marks at the right
+ * weight against the sky; an operator who uploaded their project's logo asked
+ * for that logo, not for a faded copy of it.
+ */
+.sc-project-mark:has(img) {
+  filter: none;
+}
+
+/* Specificity, not repetition: `:has()` takes the weight of its argument, so
+   `.sc-project-mark:has(img)` alone loses the opacity to `.dark
+   .sc-project-mark` above and the logo stays dimmed. */
+.dark .sc-project-mark:has(img) {
+  opacity: 1;
+}

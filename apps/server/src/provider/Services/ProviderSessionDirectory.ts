@@ -4,7 +4,7 @@ import type {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import * as Option from "effect/Option";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -62,9 +62,19 @@ export interface ProviderSessionDirectoryShape {
     ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
     ProviderSessionDirectoryPersistenceError
   >;
+
+  readonly hasTerminalAttachedAgentProjection: (input: {
+    readonly parentThreadId: ThreadId;
+    readonly provider: ProviderDriverKind;
+    readonly agentRunId: string;
+  }) => Effect.Effect<boolean, ProviderSessionDirectoryPersistenceError>;
+
+  readonly hasRecoverableProjectedTurn: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProviderSessionDirectoryPersistenceError>;
 }
 
 export class ProviderSessionDirectory extends Context.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
->()("t3/provider/Services/ProviderSessionDirectory") {}
+>()("starcode/provider/Services/ProviderSessionDirectory") {}

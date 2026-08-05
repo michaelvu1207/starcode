@@ -5,11 +5,16 @@ const DEFAULT_RUNTIME_MODE = "full-access";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_thread_sessions)
+  `;
 
-  yield* sql`
+  if (!columns.some((column) => column.name === "runtime_mode")) {
+    yield* sql`
       ALTER TABLE projection_thread_sessions
       ADD COLUMN runtime_mode TEXT NOT NULL DEFAULT 'full-access'
     `;
+  }
 
   yield* sql`
     UPDATE projection_thread_sessions

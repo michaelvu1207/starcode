@@ -1,12 +1,10 @@
 import { useCallback, type ComponentType } from "react";
 import {
-  ArchiveIcon,
   ArrowLeftIcon,
-  BotIcon,
-  FlaskConicalIcon,
+  CableIcon,
+  GaugeIcon,
   GitBranchIcon,
   KeyboardIcon,
-  Link2Icon,
   Settings2Icon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -20,16 +18,17 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "../ui/sidebar";
-import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import {
+  StarcodeConnectSidebarAvatar,
+  StarcodeConnectSidebarSignIn,
+} from "../clerk/StarcodeConnectSidebarSignIn";
 
 export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/keybindings"
-  | "/settings/providers"
-  | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/beta"
-  | "/settings/archived";
+  | "/settings/usage"
+  | "/settings/source-control";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
@@ -38,11 +37,9 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
-  { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Connections & Accounts", to: "/settings/connections", icon: CableIcon },
+  { label: "Usage", to: "/settings/usage", icon: GaugeIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
-  { label: "Connections", to: "/settings/connections", icon: Link2Icon },
-  { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
-  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -105,7 +102,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-2">
-        <T3ConnectSidebarSignIn />
+        <StarcodeConnectSidebarSignIn />
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
           <SidebarMenu className="min-w-0">
             <SidebarMenuItem>
@@ -119,7 +116,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          <T3ConnectSidebarAvatar />
+          <StarcodeConnectSidebarAvatar />
         </div>
       </SidebarFooter>
     </>

@@ -1,11 +1,10 @@
-import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import type { ArchivedSnapshotEntry } from "@starcode/client-runtime/state/threads";
 import {
   scopeProject,
   scopeThreadShell,
   type EnvironmentProject,
   type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+} from "@starcode/client-runtime/state/shell";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -31,7 +30,6 @@ function matchesQuery(value: string | null, query: string): boolean {
 export function buildArchivedThreadGroups(input: {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly environmentLabels: Readonly<Record<string, string>>;
-  readonly environmentId: EnvironmentId | null;
   readonly searchQuery: string;
   readonly sortOrder: ArchivedThreadSortOrder;
 }): ReadonlyArray<ArchivedThreadGroup> {
@@ -39,10 +37,6 @@ export function buildArchivedThreadGroups(input: {
   const groups: ArchivedThreadGroup[] = [];
 
   for (const entry of input.snapshots) {
-    if (input.environmentId !== null && input.environmentId !== entry.environmentId) {
-      continue;
-    }
-
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
     const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of entry.snapshot.threads) {

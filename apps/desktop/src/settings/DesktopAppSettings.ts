@@ -3,8 +3,8 @@ import {
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
-} from "@t3tools/contracts";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
+} from "@starcode/contracts";
+import { fromLenientJson } from "@starcode/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -42,6 +42,10 @@ export interface DesktopSettings {
   // this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
+  // Discord rich presence. Off by default because a presence is visible to
+  // every member of every server the user is in, and nothing about installing
+  // starcode implies consent to broadcast that you are using it.
+  readonly discordPresenceEnabled: boolean;
 }
 
 export interface DesktopSettingsChange {
@@ -77,6 +81,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslBackendEnabled: false,
   wslDistro: null,
   wslOnly: false,
+  discordPresenceEnabled: false,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -101,6 +106,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  discordPresenceEnabled: Schema.optionalKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -167,13 +173,16 @@ export class DesktopAppSettings extends Context.Service<
     readonly setWslOnly: (
       enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setDiscordPresenceEnabled: (
+      enabled: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly applyWslWindowsFallback: Effect.Effect<
       DesktopSettingsChange,
       DesktopSettingsWriteError
     >;
     readonly applyWslWindowsFallbackInMemory: Effect.Effect<DesktopSettingsChange>;
   }
->()("@t3tools/desktop/settings/DesktopAppSettings") {}
+>()("@starcode/desktop/settings/DesktopAppSettings") {}
 
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
   return {
@@ -229,6 +238,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    discordPresenceEnabled: parsed.discordPresenceEnabled === true,
   };
 }
 
@@ -267,6 +277,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
+  }
+  if (settings.discordPresenceEnabled !== defaults.discordPresenceEnabled) {
+    document.discordPresenceEnabled = settings.discordPresenceEnabled;
   }
 
   return document;
@@ -355,6 +368,15 @@ function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSetting
     : {
         ...settings,
         wslOnly: enabled,
+      };
+}
+
+function setDiscordPresenceEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
+  return settings.discordPresenceEnabled === enabled
+    ? settings
+    : {
+        ...settings,
+        discordPresenceEnabled: enabled,
       };
 }
 
@@ -532,6 +554,10 @@ export const make = Effect.gen(function* () {
       persist((settings) => setWslOnly(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
       ),
+    setDiscordPresenceEnabled: (enabled) =>
+      persist((settings) => setDiscordPresenceEnabled(settings, enabled)).pipe(
+        Effect.withSpan("desktop.settings.setDiscordPresenceEnabled", { attributes: { enabled } }),
+      ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -573,6 +599,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
+        setDiscordPresenceEnabled: (enabled) =>
+          update((settings) => setDiscordPresenceEnabled(settings, enabled)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });

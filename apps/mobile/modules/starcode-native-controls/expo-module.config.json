@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["StarcodeNativeControlsModule", "StarcodeKeyboardCommandsModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.starcodenativecontrols.StarcodeNativeControlsModule"]
+  }
+}

@@ -14,13 +14,21 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ThreadGoal,
+  ThreadGoalField,
+  ThreadGoalObjective,
+  ThreadGoalSummaryField,
+} from "./threadGoal.ts";
+import { HistorySessionId } from "./historyIds.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -225,9 +233,41 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+/**
+ * Who wrote a user message.
+ *
+ * The role says `user` for both, because to the provider they are the same
+ * thing: text that arrived from outside the model. This says which outside.
+ *
+ * It exists because agent-to-agent delivery makes another agent's words a
+ * first-class user message — persisted, replayed, read by the titler, shown in
+ * the transcript — and until now the only way to tell was to look for the
+ * envelope's opening tag in the text. That worked and was a string check
+ * standing in for a fact the event should have carried, in two places that had
+ * to agree about it forever.
+ *
+ * Decoding defaults to `operator` so every message written before this field
+ * existed keeps loading, and means the safe thing: unknown provenance is
+ * treated as the operator's, which is the reading that grants no special
+ * handling rather than the one that silently withholds it.
+ */
+export const OrchestrationMessageAuthor = Schema.Literals(["operator", "agent", "system"]);
+export type OrchestrationMessageAuthor = typeof OrchestrationMessageAuthor.Type;
+
+/**
+ * Optional rather than defaulted-and-required, so the dozens of places that
+ * construct a turn-start or a message-sent payload — the socket handler, history
+ * import, every test fixture — keep compiling unchanged. Absent means the same
+ * thing as `operator`, and only the two writers that deliver between threads
+ * ever set it, which keeps the field's meaning tied to the one path that has
+ * something to say about authorship.
+ */
+const OrchestrationMessageAuthorField = Schema.optional(OrchestrationMessageAuthor);
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
+  authoredBy: OrchestrationMessageAuthorField,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
@@ -274,6 +314,8 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  /** Provider-native parent session currently mapped to this Starcode thread. */
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -323,6 +365,54 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+/** Open provider driver kind with legacy Claude/Codex literals preserved for source compatibility. */
+export const AgentRunProvider = Schema.Union([
+  Schema.Literals(["claude", "codex", "claudeAgent", "cursor", "grok", "pi"]),
+  ProviderDriverKind,
+]);
+export type AgentRunProvider = typeof AgentRunProvider.Type;
+
+export const AgentRunStatus = Schema.Literals([
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type AgentRunStatus = typeof AgentRunStatus.Type;
+
+export const AgentRunTranscriptState = Schema.Literals(["linked", "pending", "unavailable"]);
+export type AgentRunTranscriptState = typeof AgentRunTranscriptState.Type;
+
+/**
+ * One provider-native agent owned by one Starcode parent thread.
+ *
+ * `agentRunId` is the provider lifecycle task id and is stable across status
+ * updates. `launchToolUseId` is proof that the launch belongs to the parent
+ * thread, not the row identity. Native history is attached only after exact
+ * provider-specific correlation.
+ */
+export const AgentRun = Schema.Struct({
+  parentThreadId: ThreadId,
+  provider: AgentRunProvider,
+  providerInstanceId: Schema.optional(Schema.NullOr(ProviderInstanceId)),
+  agentRunId: TrimmedNonEmptyString,
+  parentAgentRunId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  launchToolUseId: Schema.NullOr(TrimmedNonEmptyString),
+  taskType: Schema.NullOr(TrimmedNonEmptyString),
+  agentType: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  /** Canonical launch options; absent only on legacy rows that predate option attribution. */
+  options: Schema.optional(ProviderOptionSelections),
+  description: Schema.NullOr(TrimmedNonEmptyString),
+  status: AgentRunStatus,
+  startedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  historySessionId: Schema.NullOr(HistorySessionId),
+  transcriptState: AgentRunTranscriptState,
+});
+export type AgentRun = typeof AgentRun.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -342,10 +432,120 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * Who last named a thread.
+ *
+ * Exists so an automatic rename can tell whether it would be overwriting
+ * another automatic rename or a decision a person made. Nothing in the command
+ * distinguished those before, which is why the first-turn titler could only
+ * ever replace the literal default: any other title might have been typed.
+ *
+ * - `default`  the placeholder a new thread is born with, and the title an
+ *              agent passes to `thread_create` — chosen without knowing what
+ *              the work turns out to be.
+ * - `generated` the first-turn titler's guess from the opening message.
+ * - `plan`     the heading of the plan the thread proposed, which is a better
+ *              description of the work than a guess made before it started.
+ * - `manual`   a person typed it. Never overwritten by anything automatic.
+ */
+export const ThreadTitleSource = Schema.Literals(["default", "generated", "plan", "manual"]);
+export type ThreadTitleSource = typeof ThreadTitleSource.Type;
+
+/**
+ * The provenance to assume when none was recorded.
+ *
+ * `generated` rather than `manual`, for the same reason migration 037 backfills
+ * that way: the first-turn titler runs on every thread, so an unrecorded title
+ * is overwhelmingly likely to be its work, and the cost of guessing wrong is a
+ * single recoverable rename rather than a feature that never fires.
+ */
+export function resolveThreadTitleSource(
+  titleSource: ThreadTitleSource | undefined,
+): ThreadTitleSource {
+  return titleSource ?? "generated";
+}
+
+/** Titles an automatic rename may replace. A person's title is not among them. */
+export const AUTOMATIC_THREAD_TITLE_SOURCES: ReadonlyArray<ThreadTitleSource> = [
+  "default",
+  "generated",
+  "plan",
+];
+
+/**
+ * The thread this one is a *side* of — a scratch fork opened beside its parent
+ * and thrown away when its panel closes.
+ *
+ * Non-null is what makes a thread invisible: side threads are filed under a
+ * project like any other thread and would otherwise appear in the sidebar, the
+ * command palette and every picker, which is the opposite of what "ask a quick
+ * question without derailing this" means. Every list that renders threads to a
+ * person filters on this, and `isListableThread` below is the single place that
+ * rule is written down.
+ *
+ * A thread id rather than a boolean, and that is the whole reason this is not
+ * spelled `isSide`. The panel that hosts a side thread has to know which parent
+ * it belongs to in order to re-open it after a reload, and a boolean would have
+ * forced a second lookup table on the client that could disagree with the
+ * server about who owns what.
+ *
+ * Optional rather than defaulted-and-required, for the reason `titleSource`
+ * gives a few fields above: a required field would force every construction
+ * site in the codebase to name a parent it has no opinion about, and that is
+ * how a field like this gets copy-pasted wrong. Absent and null mean the same
+ * thing — an ordinary thread — because a reader that had to distinguish "not a
+ * side thread" from "this server predates side threads" would answer both by
+ * showing the thread, so collapsing them loses nothing. `isListableThread`
+ * below is where that collapse is written down; readers should go through it
+ * rather than testing the field themselves.
+ */
+export const SideOfThreadId = Schema.optional(Schema.NullOr(ThreadId));
+
+/**
+ * The same field on a persisted event, where absent is not an option worth
+ * keeping.
+ *
+ * An event is replayed rather than re-sent, so "this payload predates side
+ * threads" is a real and permanent state of the store rather than a version
+ * skew that resolves itself — and it means exactly `null`. Defaulting it at the
+ * schema keeps every replay of an old `thread.created` producing a concrete
+ * answer instead of pushing an `undefined` through the projector.
+ */
+export const SideOfThreadIdEvent = Schema.NullOr(ThreadId).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+/**
+ * Whether a thread belongs in a list a person reads.
+ *
+ * The one rule, in one place, because the alternative is what this codebase
+ * already learned from `archivedAt`: the same predicate open-coded in the
+ * sidebar, the palette, the project home and three pickers, where adding a
+ * second reason to hide a thread means finding all six. A side thread that
+ * leaked into the sidebar would not look like a bug — it would look like a
+ * stray thread the user has to clean up, which is exactly the friction `/side`
+ * exists to remove.
+ *
+ * Takes the fields structurally rather than a whole thread so the shell, the
+ * detail and the client's own row types can all pass what they have.
+ */
+export function isListableThread(thread: {
+  readonly archivedAt: string | null;
+  readonly sideOfThreadId?: string | null | undefined;
+}): boolean {
+  return thread.archivedAt === null && (thread.sideOfThreadId ?? null) === null;
+}
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  // Optional rather than defaulted-and-required: a required field would force
+  // every construction site in the codebase to name a provenance it does not
+  // know, and payloads from a server that predates it would stop decoding.
+  // Absent means "provenance unrecorded", which readers treat as `generated` —
+  // see resolveThreadTitleSource.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -353,28 +553,21 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadId,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  // Snooze is an overlay on the active lifecycle, not a fourth destination:
-  // a snoozed thread stays "active" in the model and is only suppressed from
-  // the inbox until snoozedUntil passes (or the thread raises its hand).
-  // Optional so payloads from pre-snooze servers still decode.
-  snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
-  snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
+  agentRuns: Schema.Array(AgentRun).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  goal: ThreadGoalField,
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -398,10 +591,55 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+// Row-level rollup of a thread's most recent agent task list (TodoWrite /
+// update_plan, surfaced as `turn.plan.updated`). The full step list lives in
+// the thread's activities; shells carry only what a sidebar row can render.
+export const OrchestrationThreadPlanSummary = Schema.Struct({
+  total: NonNegativeInt,
+  completed: NonNegativeInt,
+  // The step a viewer would call "what it's doing now": the first in-progress
+  // step, or the first pending one when nothing is explicitly in progress.
+  // Null once every step is complete.
+  activeStep: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationThreadPlanSummary = typeof OrchestrationThreadPlanSummary.Type;
+
+// Row-level rollup of the subagents a thread has in flight, so a sidebar can
+// show them as child rows without opening the thread and reading its
+// activities. Only *live* agents appear: a finished one would otherwise
+// accumulate on the shell for the life of the thread, and the place to read
+// finished work is the thread's own activity stream.
+export const OrchestrationThreadSubagent = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  // The Task `tool_use` id, which is how this agent's transcript rows are
+  // attributed (`parentToolUseId` on activity payloads). Null when the task
+  // events never reported one, in which case the agent is listable but its
+  // transcript cannot be isolated.
+  toolUseId: Schema.NullOr(TrimmedNonEmptyString),
+  // Nullable rather than defaulted: an agent that never reported a description
+  // still deserves a row, and the client picks a label from `subagentType`.
+  description: Schema.NullOr(TrimmedNonEmptyString),
+  subagentType: Schema.NullOr(TrimmedNonEmptyString),
+  status: Schema.Literals(["running", "paused"]),
+  isBackgrounded: Schema.Boolean,
+  // What it is doing this second — the difference between "three agents are
+  // running" and knowing whether any of them is stuck.
+  lastToolName: Schema.NullOr(TrimmedNonEmptyString),
+  totalTokens: Schema.NullOr(NonNegativeInt),
+  startedAt: IsoDateTime,
+});
+export type OrchestrationThreadSubagent = typeof OrchestrationThreadSubagent.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  // Optional rather than defaulted-and-required: a required field would force
+  // every construction site in the codebase to name a provenance it does not
+  // know, and payloads from a server that predates it would stop decoding.
+  // Absent means "provenance unrecorded", which readers treat as `generated` —
+  // see resolveThreadTitleSource.
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -409,21 +647,25 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadId,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
-  snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  // Optional so payloads from servers that predate the summary still decode;
+  // clients render the row's task-progress bar only when it is present.
+  planSummary: Schema.optional(Schema.NullOr(OrchestrationThreadPlanSummary)),
+  // Same reasoning as planSummary: omitted, not empty-arrayed, when the thread
+  // has no live subagents, so shells stay byte-identical to what a server
+  // without this rollup sends. Clients render child rows only when present and
+  // non-empty.
+  subagents: Schema.optional(Schema.Array(OrchestrationThreadSubagent)),
+  goalSummary: ThreadGoalSummaryField,
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -554,6 +796,8 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Omitted means an ordinary thread. See `SideOfThreadId`. */
+  sideOfThreadId: Schema.optional(ThreadId),
   createdAt: IsoDateTime,
 });
 
@@ -575,48 +819,17 @@ const ThreadUnarchiveCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
-const ThreadSettleCommand = Schema.Struct({
-  type: Schema.Literal("thread.settle"),
-  commandId: CommandId,
-  threadId: ThreadId,
-});
-
-const ThreadUnsettleCommand = Schema.Struct({
-  type: Schema.Literal("thread.unsettle"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  // Commands only carry "user": activity un-settles are decided server-side
-  // (the decider emits thread.unsettled(reason: "activity") events directly,
-  // never through this command), so a client cannot forge the neutral reset.
-  reason: Schema.Literal("user"),
-});
-
-const ThreadSnoozeCommand = Schema.Struct({
-  type: Schema.Literal("thread.snooze"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  // The wake time. Event-based wake conditions (PR merged, review posted)
-  // will arrive as an optional condition field alongside this; time-based
-  // snooze is just the first kind of condition.
-  snoozedUntil: IsoDateTime,
-});
-
-const ThreadUnsnoozeCommand = Schema.Struct({
-  type: Schema.Literal("thread.unsnooze"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  // Commands only carry "user": activity wakes are decided server-side (the
-  // decider emits thread.unsnoozed(reason: "activity") directly), and timer
-  // wakes need no event at all — clients derive visibility from snoozedUntil,
-  // so a passed wake time simply stops classifying as snoozed.
-  reason: Schema.Literal("user"),
-});
-
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Omitted means a person typed the title — the decider defaults it to
+   * `manual`. Server-side renamers pass their own source explicitly, so the
+   * safe reading is the one a client gets for free.
+   */
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -672,6 +885,13 @@ export const ThreadTurnStartCommand = Schema.Struct({
   message: Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
+    /**
+     * Set by the server, never by a client. The only callers that pass `agent`
+     * are the two writers that deliver a message from one thread to another,
+     * both of which run in-process; a command arriving over HTTP or the socket
+     * omits it and decodes to `operator`.
+     */
+    authoredBy: OrchestrationMessageAuthorField,
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
@@ -683,6 +903,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  goalObjective: Schema.optional(ThreadGoalObjective),
   createdAt: IsoDateTime,
 });
 
@@ -702,6 +923,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  goalObjective: Schema.optional(ThreadGoalObjective),
   createdAt: IsoDateTime,
 });
 
@@ -710,6 +932,29 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+/** Continue one provider-native AgentRun without creating another top-level thread. */
+export const ThreadAgentTurnStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.agent.turn.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  agentRunId: TrimmedNonEmptyString,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+  }),
+  createdAt: IsoDateTime,
+});
+
+/** Interrupt only the selected AgentRun turn; the attached session remains resumable. */
+export const ThreadAgentTurnInterruptCommand = Schema.Struct({
+  type: Schema.Literal("thread.agent.turn.interrupt"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  agentRunId: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
 });
 
@@ -746,6 +991,30 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadGoalSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  objective: ThreadGoalObjective,
+  tokenBudget: Schema.optional(Schema.NullOr(PositiveInt)),
+  createdAt: IsoDateTime,
+});
+
+const ThreadGoalStatusSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal-status.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  status: Schema.Literals(["active", "paused"]),
+  createdAt: IsoDateTime,
+});
+
+const ThreadGoalClearCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.clear"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -754,19 +1023,20 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
-  ThreadSettleCommand,
-  ThreadUnsettleCommand,
-  ThreadSnoozeCommand,
-  ThreadUnsnoozeCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadAgentTurnStartCommand,
+  ThreadAgentTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadGoalSetCommand,
+  ThreadGoalStatusSetCommand,
+  ThreadGoalClearCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -779,19 +1049,20 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
-  ThreadSettleCommand,
-  ThreadUnsettleCommand,
-  ThreadSnoozeCommand,
-  ThreadUnsnoozeCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadAgentTurnStartCommand,
+  ThreadAgentTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadGoalSetCommand,
+  ThreadGoalStatusSetCommand,
+  ThreadGoalClearCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -860,6 +1131,15 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadGoalSyncCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.sync"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  goal: Schema.NullOr(ThreadGoal),
+  observedAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -868,6 +1148,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadGoalSyncCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -885,16 +1166,14 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
-  "thread.settled",
-  "thread.unsettled",
-  "thread.snoozed",
-  "thread.unsnoozed",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
+  "thread.agent-turn-start-requested",
+  "thread.agent-turn-interrupt-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
@@ -904,6 +1183,11 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.goal-set-requested",
+  "thread.goal-status-set-requested",
+  "thread.goal-clear-requested",
+  "thread.goal-updated",
+  "thread.goal-cleared",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -948,6 +1232,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sideOfThreadId: SideOfThreadIdEvent,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -968,38 +1253,10 @@ export const ThreadUnarchivedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
-export const ThreadSettledPayload = Schema.Struct({
-  threadId: ThreadId,
-  settledAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-
-export const ThreadUnsettledPayload = Schema.Struct({
-  threadId: ThreadId,
-  reason: Schema.Literals(["user", "activity"]),
-  updatedAt: IsoDateTime,
-});
-
-export const ThreadSnoozedPayload = Schema.Struct({
-  threadId: ThreadId,
-  snoozedUntil: IsoDateTime,
-  snoozedAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-
-export const ThreadUnsnoozedPayload = Schema.Struct({
-  threadId: ThreadId,
-  // user: explicit "wake now". activity: real work arrived (user message /
-  // session coming alive) and the decider cleared the snooze — mirrors
-  // thread.unsettled's activity resets. Timer wakes emit no event: clients
-  // derive them from snoozedUntil passing.
-  reason: Schema.Literals(["user", "activity"]),
-  updatedAt: IsoDateTime,
-});
-
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  titleSource: Schema.optional(ThreadTitleSource),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1024,6 +1281,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   role: OrchestrationMessageRole,
+  authoredBy: OrchestrationMessageAuthorField,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
@@ -1042,12 +1300,27 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  goalObjective: Schema.optional(ThreadGoalObjective),
   createdAt: IsoDateTime,
 });
 
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadAgentTurnStartRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  agentRunId: TrimmedNonEmptyString,
+  messageId: MessageId,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadAgentTurnInterruptRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  agentRunId: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
 });
 
@@ -1084,6 +1357,34 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+});
+
+export const ThreadGoalSetRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  objective: ThreadGoalObjective,
+  tokenBudget: Schema.optional(Schema.NullOr(PositiveInt)),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalStatusSetRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  status: Schema.Literals(["active", "paused"]),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalClearRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  goal: ThreadGoal,
+});
+
+export const ThreadGoalClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  observedAt: IsoDateTime,
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
@@ -1166,26 +1467,6 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
-    type: Schema.Literal("thread.settled"),
-    payload: ThreadSettledPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("thread.unsettled"),
-    payload: ThreadUnsettledPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("thread.snoozed"),
-    payload: ThreadSnoozedPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("thread.unsnoozed"),
-    payload: ThreadUnsnoozedPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
     type: Schema.Literal("thread.meta-updated"),
     payload: ThreadMetaUpdatedPayload,
   }),
@@ -1213,6 +1494,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-interrupt-requested"),
     payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.agent-turn-start-requested"),
+    payload: ThreadAgentTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.agent-turn-interrupt-requested"),
+    payload: ThreadAgentTurnInterruptRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1258,6 +1549,31 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-set-requested"),
+    payload: ThreadGoalSetRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-status-set-requested"),
+    payload: ThreadGoalStatusSetRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-clear-requested"),
+    payload: ThreadGoalClearRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-updated"),
+    payload: ThreadGoalUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-cleared"),
+    payload: ThreadGoalClearedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

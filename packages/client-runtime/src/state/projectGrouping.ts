@@ -1,6 +1,6 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
-import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@starcode/contracts";
+import type { ClientSettings } from "@starcode/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";

@@ -4,18 +4,39 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-} from "@t3tools/shared/model";
+} from "@starcode/shared/model";
+import { CLAUDE_CONTEXT_OPTION_ID } from "@starcode/shared/claudeContextLimit";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+  type TraitsDescriptorFilter,
+} from "./TraitsPicker";
+
+/**
+ * Fork: context gets its own popover row, so the traits control renders
+ * everything except it and a second, filtered instance renders it.
+ *
+ * Two ids because two providers name the same idea differently: Claude's fork
+ * control is `context` (one number — 200k / 600k / 1M — that decides both the
+ * API window and where the transcript compacts), while Cursor still declares
+ * an upstream `contextWindow`. Either one belongs in the Context row.
+ */
+const CONTEXT_DESCRIPTOR_IDS = [CLAUDE_CONTEXT_OPTION_ID, "contextWindow"] as const;
+
+function isContextDescriptorId(id: string): boolean {
+  return (CONTEXT_DESCRIPTOR_IDS as ReadonlyArray<string>).includes(id);
+}
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -56,9 +77,12 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const { provider, model, models, modelOptions, promptInjectionState = "none" } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
   const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
+  // The composer's trigger summarizes reasoning, so the context row's own
+  // descriptor is skipped: on a model with no reasoning option (Haiku) it would
+  // otherwise be the first select and the trigger would read "Haiku 4.5 · 200k".
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && !isContextDescriptorId(descriptor.id),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
@@ -80,9 +104,27 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   };
 }
 
+/**
+ * Fork: whether the selected model offers a context choice at all. Models that
+ * do not (custom Claude slugs, whose window we cannot know) fall back to the
+ * instance default, which the row states as a read-only chip.
+ */
+export function getComposerContextState(input: ComposerProviderStateInput): {
+  readonly hasSelector: boolean;
+} {
+  const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
+  const descriptors = getProviderOptionDescriptors({ caps, selections: input.modelOptions });
+  return {
+    hasSelector: descriptors.some(
+      (candidate) => candidate.type === "select" && isContextDescriptorId(candidate.id),
+    ),
+  };
+}
+
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  filter: TraitsDescriptorFilter = {},
 ): ReactNode {
   const {
     provider,
@@ -98,7 +140,7 @@ function renderTraitsControl(
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
     !hasTarget ||
-    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt })
+    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt, ...filter })
   ) {
     return null;
   }
@@ -113,6 +155,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...filter}
     />
   );
 }
@@ -122,5 +165,14 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 }
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsPicker, input);
+  return renderTraitsControl(TraitsPicker, input, {
+    excludeDescriptorIds: CONTEXT_DESCRIPTOR_IDS,
+  });
+}
+
+/** The context selector alone, for the popover's own context row. */
+export function renderProviderContextPicker(input: TraitsRenderInput): ReactNode {
+  return renderTraitsControl(TraitsPicker, input, {
+    includeDescriptorIds: CONTEXT_DESCRIPTOR_IDS,
+  });
 }

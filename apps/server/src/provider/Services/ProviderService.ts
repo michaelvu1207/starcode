@@ -23,7 +23,9 @@ import type {
   ProviderStopSessionInput,
   ThreadId,
   ProviderTurnStartResult,
-} from "@t3tools/contracts";
+  ProviderSetGoalInput,
+  ThreadGoal,
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -105,6 +107,14 @@ export interface ProviderServiceShape {
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
 
+  readonly getGoal: (threadId: ThreadId) => Effect.Effect<ThreadGoal | null, ProviderServiceError>;
+
+  readonly setGoal: (
+    input: ProviderSetGoalInput,
+  ) => Effect.Effect<ThreadGoal, ProviderServiceError>;
+
+  readonly clearGoal: (threadId: ThreadId) => Effect.Effect<void, ProviderServiceError>;
+
   /**
    * Canonical provider runtime event stream.
    *
@@ -117,5 +127,5 @@ export interface ProviderServiceShape {
  * ProviderService - Service tag for provider orchestration.
  */
 export class ProviderService extends Context.Service<ProviderService, ProviderServiceShape>()(
-  "t3/provider/Services/ProviderService",
+  "starcode/provider/Services/ProviderService",
 ) {}

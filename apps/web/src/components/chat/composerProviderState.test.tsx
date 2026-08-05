@@ -4,13 +4,16 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@starcode/contracts";
 import {
+  getComposerContextState,
   getComposerPromptInjectionState,
   getComposerProviderState,
+  renderProviderContextPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -244,5 +247,94 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+});
+
+describe("the composer's context row", () => {
+  const contextOptions = [
+    { id: "200k", label: "200k" },
+    { id: "600k", label: "600k", isDefault: true },
+    { id: "1m", label: "1M" },
+  ];
+
+  it("finds the selector under Claude's `context` id", () => {
+    expect(
+      getComposerContextState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith([selectDescriptor("context", contextOptions)]),
+        modelOptions: undefined,
+      }).hasSelector,
+    ).toBe(true);
+  });
+
+  it("finds it under Cursor's `contextWindow` id too", () => {
+    expect(
+      getComposerContextState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor("contextWindow", [{ id: "1m", label: "1M", isDefault: true }]),
+        ]),
+        modelOptions: undefined,
+      }).hasSelector,
+    ).toBe(true);
+  });
+
+  it("reports no selector when the model declares neither", () => {
+    expect(
+      getComposerContextState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith([selectDescriptor("effort", [{ id: "high", label: "High" }])]),
+        modelOptions: undefined,
+      }).hasSelector,
+    ).toBe(false);
+  });
+
+  it("splits the context choice out of the reasoning trigger and into its own row", () => {
+    const args = {
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([selectDescriptor("context", contextOptions)]),
+      modelOptions: undefined,
+      draftId: DraftId.make("draft-context"),
+      prompt: "",
+      onPromptChange: () => {},
+    };
+
+    // `context` is the only descriptor, so the reasoning control has nothing
+    // left to show while the context row has exactly it.
+    expect(renderProviderTraitsPicker(args)).toBeNull();
+    expect(renderProviderContextPicker(args)).not.toBeNull();
+  });
+
+  it("stays out of the reasoning summary on a model with no reasoning option", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        booleanDescriptor("thinking"),
+        selectDescriptor("context", contextOptions),
+      ]),
+      modelOptions: undefined,
+    });
+
+    // Otherwise the composer trigger would read "Haiku 4.5 · 200k · Full".
+    expect(state.promptEffort).toBeNull();
+  });
+
+  it("degrades a stale choice onto a model that no longer offers it", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("context", [{ id: "200k", label: "200k", isDefault: true }]),
+      ]),
+      modelOptions: selections(["context", "600k"]),
+    });
+
+    // What the row shows and what gets dispatched are the same value.
+    expect(state.modelOptionsForDispatch).toEqual(selections(["context", "200k"]));
   });
 });

@@ -27,9 +27,6 @@ const mobileEndorsementRows = [
       <span class="hero-float-mark hf-codex" title="Codex">
         <img src="/harnesses/openai_dark.svg" alt="" />
       </span>
-      <span class="hero-float-mark hf-opencode" title="OpenCode">
-        <img src="/harnesses/opencode-dark.svg" alt="" />
-      </span>
       <span class="hero-float-mark hf-cursor" title="Cursor">
         <img src="/harnesses/cursor_light.svg" alt="" />
       </span>
@@ -44,7 +41,7 @@ const mobileEndorsementRows = [
       </h1>
 
       <p class="hero-sub">
-        Orchestrate Claude Code, Codex, OpenCode, Cursor, and Grok from one surface.
+        Orchestrate Claude Code, Codex, Cursor, and Grok from one surface.
         Bring your own subscription. Fork the whole thing.
       </p>
 
@@ -72,7 +69,7 @@ const mobileEndorsementRows = [
         <figure class="hero-screenshot-frame">
           <img
             src="/updated-screenshot.webp"
-            alt="T3 Code app showing multiple coding agent threads in one workspace"
+            alt="starcode app showing multiple coding agent threads in one workspace"
             width="2508"
             height="1682"
             loading="eager"
@@ -175,8 +172,8 @@ const mobileEndorsementRows = [
       <div class="section-head">
         <h2>Bring your own sub</h2>
         <p>
-          T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
-          Cursor, or Grok with the credentials you already have — we orchestrate
+          starcode doesn't resell tokens. Plug in Claude Code, Codex, Cursor, or
+          Grok with the credentials you already have — we orchestrate
           them, you keep your plan.
         </p>
       </div>
@@ -194,13 +191,6 @@ const mobileEndorsementRows = [
           <div class="harness-meta">
             <div class="harness-name">Codex CLI</div>
             <div class="harness-tag">codex login</div>
-          </div>
-        </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/opencode-dark.svg" alt="" /></div>
-          <div class="harness-meta">
-            <div class="harness-name">OpenCode</div>
-            <div class="harness-tag">opencode auth</div>
           </div>
         </div>
         <div class="harness">
@@ -304,11 +294,11 @@ const mobileEndorsementRows = [
           </div>
           <div class="open-term-body">
             <div><span class="prompt">$</span> gh repo fork pingdotgg/t3code --clone</div>
-            <div class="dim">✓ Cloned t3code into ./t3code</div>
-            <div><span class="prompt">$</span> cd t3code &amp;&amp; vp install</div>
+            <div class="dim">✓ Cloned starcode into ./starcode</div>
+            <div><span class="prompt">$</span> cd starcode &amp;&amp; vp install</div>
             <div class="dim">✓ 1 284 packages installed in 4.2s</div>
             <div><span class="prompt">$</span> vp run dev</div>
-            <div class="dim">▲ T3 Code dev server → <span class="accent">http://localhost:4001</span></div>
+            <div class="dim">▲ starcode dev server → <span class="accent">http://localhost:4001</span></div>
             <div class="cursor"><span class="prompt">$</span><span class="caret"></span></div>
           </div>
         </div>
@@ -361,7 +351,7 @@ const mobileEndorsementRows = [
         Your agents deserve better than a terminal.
       </h2>
       <p class="cta-sub">
-        T3 Code is free, open source and fast. Install it, plug in the harness
+        starcode is free, open source and fast. Install it, plug in the harness
         you already pay for, and let your agents get to work.
       </p>
       <div class="cta-actions">
@@ -625,7 +615,6 @@ const mobileEndorsementRows = [
 
   .hero-float-mark.hf-claude   { background: radial-gradient(circle at 30% 25%, rgba(217, 119, 87, 0.22), rgba(20, 20, 24, 0.92) 65%); top: 8%;  left: 7%;  animation-delay: 0s;    transform: rotate(-8deg); }
   .hero-float-mark.hf-codex    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 6%;  right: 7%; animation-delay: -2.5s; transform: rotate(6deg); }
-  .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.06), rgba(20, 20, 24, 0.92) 65%); top: 30%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); }
   .hero-float-mark.hf-cursor   { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 30%; right: 5%; animation-delay: -7s;   transform: rotate(-5deg); }
   .hero-float-mark.hf-grok     { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 52%; left: 6%;  animation-delay: -1.2s; transform: rotate(3deg); }
 
@@ -634,7 +623,6 @@ const mobileEndorsementRows = [
     .hero-float-mark img { width: 42px; height: 42px; }
     .hero-float-mark.hf-claude   { top: 4%;  left: 3%; }
     .hero-float-mark.hf-codex    { top: 2%;  right: 3%; }
-    .hero-float-mark.hf-opencode { top: 26%; left: 2%; }
     .hero-float-mark.hf-cursor   { top: 24%; right: 2%; }
     .hero-float-mark.hf-grok     { top: 48%; left: 2%;  transform: rotate(3deg); }
   }
@@ -671,7 +659,7 @@ const mobileEndorsementRows = [
       height: 44px;
     }
 
-    /* Three stacked on the left, two on the right — keeps the center CTA clear. */
+    /* Two stacked on each side keep the center CTA clear. */
     .hero-float-mark.hf-claude {
       top: 44px;
       left: 10px;
@@ -683,13 +671,6 @@ const mobileEndorsementRows = [
       left: 4px;
       right: auto;
       transform: rotate(-4deg);
-    }
-
-    .hero-float-mark.hf-opencode {
-      top: 474px;
-      left: 4px;
-      right: auto;
-      transform: rotate(-6deg);
     }
 
     .hero-float-mark.hf-codex {
@@ -715,7 +696,6 @@ const mobileEndorsementRows = [
       border-radius: 14px;
     }
 
-    .hero-float-mark.hf-opencode,
     .hero-float-mark.hf-cursor {
       top: 580px;
       width: 52px;
@@ -723,16 +703,11 @@ const mobileEndorsementRows = [
       border-radius: 14px;
     }
 
-    .hero-float-mark.hf-opencode {
-      left: 0;
-    }
-
     .hero-float-mark.hf-cursor {
       right: 0;
     }
 
     .hero-float-mark.hf-grok img,
-    .hero-float-mark.hf-opencode img,
     .hero-float-mark.hf-cursor img {
       width: 30px;
       height: 30px;
