@@ -12,7 +12,10 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { deriveProviderInstanceConfigMap } from "../Layers/ProviderInstanceRegistryHydration.ts";
+import {
+  deriveProviderInstanceConfigMap,
+  resolveRefreshedPiAccountRegistry,
+} from "../Layers/ProviderInstanceRegistryHydration.ts";
 import { makePiModelRuntime, piModelSlug } from "./PiModels.ts";
 import {
   discoverPiAccounts,
@@ -71,6 +74,40 @@ const oauthSecret = (providerId: "anthropic" | "openai-codex", marker: string) =
 });
 
 describe("Pi account catalog bridge", () => {
+  it("rebuilds the provider map from a newly discovered current Codex login", async () => {
+    const id = ProviderInstanceId.make("starcode_openai_ffffffffffffffffffffffff");
+    let discoveryCalls = 0;
+    const resolved = await resolveRefreshedPiAccountRegistry({
+      stateDir: "/state",
+      secretsDir: "/secrets",
+      settings: DEFAULT_SERVER_SETTINGS,
+      discoverAccounts: async (input) => {
+        discoveryCalls += 1;
+        expect(input).toEqual({ stateDir: "/state", secretsDir: "/secrets" });
+        return [
+          {
+            id,
+            label: "current@simforge.ai",
+            provider: "openai",
+            status: "ready",
+            sourceActive: true,
+            agentDir: "/state/pi/current",
+            hasUsableCredential: true,
+            credentialSource: "codex",
+          },
+        ];
+      },
+    });
+
+    expect(discoveryCalls).toBe(1);
+    expect(resolved.accounts.map((entry) => entry.label)).toEqual(["current@simforge.ai"]);
+    expect(resolved.configMap[id]).toMatchObject({
+      driver: "pi",
+      displayName: "current@simforge.ai · Current Codex login",
+      config: { catalogAccountId: id },
+    });
+  });
+
   it("exports and imports usable accounts without placing secrets in discovery metadata", () =>
     withFixture(async (source) => {
       const id = ProviderInstanceId.make("starcode_openai_eeeeeeeeeeeeeeeeeeeeeeee");

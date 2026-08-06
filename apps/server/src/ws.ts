@@ -80,6 +80,7 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
+import { resolveRefreshedPiAccountRegistry } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import {
   capturePiAccountAuth,
@@ -1770,9 +1771,39 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.piAccountSync]: (_input) =>
-          observeRpcEffect(WS_METHODS.piAccountSync, syncPiAccountsToFleet, {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.piAccountSync,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  () =>
+                    new PiAccountAuthError({
+                      reason: "sync_failed",
+                      message: "Starcode settings could not be read while refreshing accounts.",
+                    }),
+                ),
+              );
+              const resolved = yield* Effect.tryPromise({
+                try: () =>
+                  resolveRefreshedPiAccountRegistry({
+                    stateDir: config.stateDir,
+                    secretsDir: config.secretsDir,
+                    settings,
+                  }),
+                catch: () =>
+                  new PiAccountAuthError({
+                    reason: "sync_failed",
+                    message: "Current Claude Code and Codex logins could not be refreshed.",
+                  }),
+              });
+              if (providerInstanceRegistry.reconcileConfiguration) {
+                yield* providerInstanceRegistry.reconcileConfiguration(resolved.configMap);
+              }
+              yield* providerRegistry.refresh();
+              return yield* syncPiAccountsToFleet;
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

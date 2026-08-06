@@ -2116,15 +2116,18 @@ export function ConnectionsSettings({
         if (isAtomCommandInterrupted(result)) return;
         throw squashAtomCommandFailure(result);
       }
+      await refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
       const synced = result.value.targets.filter((target) => target.status === "synced").length;
       const pending = result.value.targets.length - synced;
       toastManager.add({
         type: pending > 0 ? "warning" : "success",
-        title: `Accounts synced to ${synced} ${synced === 1 ? "connection" : "connections"}`,
+        title: "Accounts refreshed",
         description:
           pending > 0
-            ? `${pending} offline or unavailable ${pending === 1 ? "connection is" : "connections are"} pending.`
-            : `${result.value.exported} subscription ${result.value.exported === 1 ? "account is" : "accounts are"} available across the fleet.`,
+            ? `${result.value.exported} subscriptions found; ${synced} connections updated and ${pending} pending.`
+            : synced > 0
+              ? `${result.value.exported} subscription ${result.value.exported === 1 ? "account is" : "accounts are"} current across ${synced} remote ${synced === 1 ? "connection" : "connections"}.`
+              : `${result.value.exported} subscription ${result.value.exported === 1 ? "account was" : "accounts were"} found.`,
       });
     } catch (error) {
       toastManager.add({
@@ -2135,7 +2138,7 @@ export function ConnectionsSettings({
     } finally {
       setIsSyncingPiAccounts(false);
     }
-  }, [primaryEnvironmentId, syncPiAccounts]);
+  }, [primaryEnvironmentId, refreshProviders, syncPiAccounts]);
   const removePiAccount = useCallback(
     async (instanceId: ProviderInstanceId) => {
       if (!primaryEnvironmentId) return;
@@ -3466,7 +3469,7 @@ export function ConnectionsSettings({
                 <ChevronsLeftRightEllipsisIcon
                   className={cn("size-3", isSyncingPiAccounts && "animate-pulse")}
                 />
-                <span className={cn(fleetCompact && "sr-only")}>Sync accounts</span>
+                <span>Refresh accounts</span>
               </Button>
             ) : null}
             <Button

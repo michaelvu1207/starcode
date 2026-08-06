@@ -17,7 +17,11 @@
  *
  * @module provider/Services/ProviderInstanceRegistry
  */
-import type { ProviderInstanceId, ServerProvider } from "@starcode/contracts";
+import type {
+  ProviderInstanceConfigMap,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@starcode/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as PubSub from "effect/PubSub";
@@ -27,6 +31,13 @@ import type * as Stream from "effect/Stream";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 
 export interface ProviderInstanceRegistryShape {
+  /**
+   * Reconcile an explicitly refreshed configuration snapshot. Settings
+   * hydration uses the private mutator; this public entry point exists for
+   * user-requested account rescans that must add or remove live instances
+   * immediately without restarting the server.
+   */
+  readonly reconcileConfiguration?: (configMap: ProviderInstanceConfigMap) => Effect.Effect<void>;
   /**
    * Look up one instance by id. Returns `undefined` (not Option) when the
    * id is unknown — callers branch on falsy and emit

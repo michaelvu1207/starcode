@@ -205,25 +205,42 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const SettingsWatcherLive = (discoveredPiAccounts: ReadonlyArray<DiscoveredPiAccount>) =>
+const SettingsWatcherLive = (config: { readonly stateDir: string; readonly secretsDir: string }) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator;
       const serverSettings = yield* ServerSettingsService;
       yield* serverSettings.streamChanges.pipe(
         Stream.runForEach((next) =>
-          mutator
-            .reconcile(deriveProviderInstanceConfigMap(next, discoveredPiAccounts))
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-              ),
+          Effect.tryPromise(() =>
+            resolveRefreshedPiAccountRegistry({ ...config, settings: next }),
+          ).pipe(
+            Effect.flatMap((resolved) => mutator.reconcile(resolved.configMap)),
+            Effect.catchCause((cause) =>
+              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
             ),
+          ),
         ),
         Effect.forkScoped,
       );
     }),
   );
+
+export async function resolveRefreshedPiAccountRegistry(input: {
+  readonly stateDir: string;
+  readonly secretsDir: string;
+  readonly settings: ServerSettings;
+  readonly discoverAccounts?: typeof discoverPiAccounts;
+}) {
+  const accounts = await (input.discoverAccounts ?? discoverPiAccounts)({
+    stateDir: input.stateDir,
+    secretsDir: input.secretsDir,
+  });
+  return {
+    accounts,
+    configMap: deriveProviderInstanceConfigMap(input.settings, accounts),
+  };
+}
 
 /**
  * Hydrate `ProviderInstanceRegistry` from `ServerSettings` and keep it in
@@ -266,7 +283,9 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     });
-
-    return SettingsWatcherLive(discoveredPiAccounts).pipe(Layer.provideMerge(mutableLayer));
+    return SettingsWatcherLive({
+      stateDir: serverConfig.stateDir,
+      secretsDir: serverConfig.secretsDir,
+    }).pipe(Layer.provideMerge(mutableLayer));
   }),
 ) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
