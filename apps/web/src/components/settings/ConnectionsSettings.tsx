@@ -3606,13 +3606,6 @@ export function ConnectionsSettings({
                 >
                   {fleetCompact ? (
                     <div className="flex min-w-0 items-center gap-1 px-1">
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          provider.status === "ready" ? "bg-success" : "bg-warning",
-                        )}
-                        aria-hidden
-                      />
                       <span className="min-w-0 flex-1 truncate text-xs font-medium">
                         {instance.displayName ?? connection.familyLabel}
                       </span>
@@ -3668,18 +3661,6 @@ export function ConnectionsSettings({
                       >
                         <Trash2Icon className="size-3.5" />
                       </Button>
-                      <Switch
-                        checked={instance.enabled ?? true}
-                        onCheckedChange={(checked) =>
-                          updateSettings({
-                            providerInstances: {
-                              ...settings.providerInstances,
-                              [provider.instanceId]: { ...instance, enabled: Boolean(checked) },
-                            },
-                          })
-                        }
-                        aria-label={`Enable ${instance.displayName ?? connection.familyLabel}`}
-                      />
                     </div>
                   ) : (
                     <ProviderInstanceCard
